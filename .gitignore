@@ -1,0 +1,15 @@
+[Bb]in/
+[Oo]bj/
+*.user
+*.suo
+*.pdb
+
+# Claude session transcripts, not source
+*.txt
+
+# large source images (icon.png in HexiumDist/ is the packaged one)
+icon_hd.jpg
+icon_hd.png
+
+# built distribution archives (attached to GitHub Releases instead)
+HexiumDist/*.zip
