@@ -4,7 +4,7 @@ Rebuilt from scratch for the 1.3.0 API contract (`/api/state` as an envelope
 with a `players` map, no more live-vitals fields that a dedicated server can
 never populate). One file, no build step, no network request except to the
 configured API host (this page's own origin by default, or the base-URL
-override — see below). Roughly 45 KB.
+override — see below). Roughly 50 KB.
 
 ## What survived, what didn't
 
