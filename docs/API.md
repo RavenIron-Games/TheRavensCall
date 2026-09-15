@@ -12,7 +12,7 @@ and the page stay open. Ordinal string compare.
 
 | Route | Body |
 |---|---|
-| `GET /`, `/index`, `*.html` | the dashboard page, `text/html; charset=utf-8`. Disk override first: `BepInEx/config/TheRavensCall/theravenscall.html`, then the plugin folder, then 404. (The dashboard rebuild PR adds a copy embedded in the DLL as the final fallback; not in this build.) |
+| `GET /`, `/index`, `*.html` | the dashboard page, `text/html; charset=utf-8`. Disk override first: `BepInEx/config/TheRavensCall/theravenscall.html`, then the plugin folder, then the copy embedded in the DLL (`Companion.ReadEmbeddedHtml()`), then 404 only if that embedded read itself fails. A served disk copy that predates 1.3.0 (missing the `<meta name="theravenscall-api">` marker) logs one warning per server run telling the admin to delete it. |
 | `GET /api/health` | `{"status":"ok","version":"1.3.0"}` |
 | `GET /api/state` | **1.3.0: exactly the BarrkBOT export** (the same string written to `BepInEx/config/TheRavensCall/BarrkBOT_data1.json`), shape below. Built on the main thread every `StatsPushIntervalSeconds` (10 s) in `PollAllPlayers`, unconditionally (the file needs it either way); primed once at boot after `PlayerRegistry.LoadAll` (`PrimeStateCache`); before that prime (and if it ever throws) the body is the same envelope with `players: {}`, `online_count: 0` and an empty `generated_at`, so the shape never changes over the endpoint's lifetime. The worker thread only ever hands out the cached string; before the first prime it serves `{}`. |
 | `GET /api/gamedata` | the contents of `BarrkBOT_data2.json`: `{"items":[...],"recipes":[...],"buildables":[...],"updated_at":"<ISO-8601 UTC>"}`, written once at boot by `WriteGameData` when `ObjectDB` is ready. Until that write has happened the body is the literal `{"recipes":[],"items":[],"buildables":[]}` with no `updated_at`. `recipes[]` = `{slug, recipe_key, name, category, amount, station, ingredients:[{slug,name,qty}]}`; `items[]` = `{slug, name, category}`; `buildables[]` = `{name, category, ingredients:[{slug,name,qty}]}` (one entry per piece across every `ItemDrop`'s `m_buildPieces`; no `slug` on the buildable itself, only on its ingredients). Empty arrays until written. |
@@ -51,7 +51,7 @@ Every row is `PlayerRegistry.ToJson(rec)` (PlayerRegistry.cs ~line 380), nothing
 | `gear_tier` | int | **always 0 on a dedicated server** (needs a client report that does not exist yet, HANDOFF.md) |
 | `active_title` | string | |
 | `titles_earned` | string[] | |
-| `biomes_discovered` | string[] | `Heightmap.Biome` names |
+| `biomes_discovered` | string[] | not `Heightmap.Biome` names — the nine `BiomeAndGearTracking.NormalizeBiome` spellings (`Meadows`, `BlackForest`, `Swamp`, `Mountain`, `Plains`, `Ocean`, `Mistlands`, `Ashlands`, `DeepNorth`); anything that method doesn't recognise passes through raw |
 | `boss_kills_credited` | int | |
 | `creature_kills` | `{ "<key>": int }` | keyed by Saga.cs's own `CreatureKeyMap` short name (`OnCreatureKill`: exact prefab match, then prefix, then substring), **not** `Companion.FriendlyCreatureName` (that map is only used for `death_history.killer` text) — falls back to the raw prefab name when nothing in `CreatureKeyMap` matches |
 | `session_kills` | int | |

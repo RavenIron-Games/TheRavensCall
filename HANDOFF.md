@@ -348,9 +348,10 @@ above.
   player's row shows the same world-wide list. This is inherited from the original
   SteveCompanionMod (confirmed via the original source dump), not a new regression, but it's more
   visible now that the dashboard genuinely shows multiple simultaneous players instead of one.
-- `theravenscall.html`'s GitHub feedback buttons and the wizard's "Built by" link still point at
+- ~~`theravenscall.html`'s GitHub feedback buttons and the wizard's "Built by" link still point at
   `github.com/NomadicWar/SteveCompanion` — no RavenIron repo URL was given, so nothing was
-  invented. Update `GITHUB_REPO` (search the HTML for it) once one exists.
+  invented. Update `GITHUB_REPO` (search the HTML for it) once one exists.~~ (done in 1.3.0: the
+  rebuilt page's feedback link points at `github.com/RavenIron-Games/TheRavensCall/issues`.)
 - `icon.png` in `HexiumDist/` is an ImageMagick-generated placeholder ("RC" monogram) — user said
   they're doing the real one themselves. Re-zip after it's replaced (see the Python `zipfile`
   snippet used this session, since neither `zip` nor `unzip` exist in this environment).

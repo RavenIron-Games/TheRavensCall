@@ -2,8 +2,9 @@
 
 Rebuilt from scratch for the 1.3.0 API contract (`/api/state` as an envelope
 with a `players` map, no more live-vitals fields that a dedicated server can
-never populate). One file, no build step, no network request except the
-mod's own API. Roughly 45 KB.
+never populate). One file, no build step, no network request except to the
+configured API host (this page's own origin by default, or the base-URL
+override — see below). Roughly 45 KB.
 
 ## What survived, what didn't
 
@@ -13,8 +14,9 @@ Six tabs, all keyed off fields a dedicated server can actually observe:
 Everything else from the old page is gone, because a dedicated server has no
 API to see any of it: **Map, Boats, Tamed, Fishing (the food list — not the
 `caught_fish` tag list, which stays), Food, Timers, the inventory/vitals
-widgets, and the setup wizard.** The old page also pulled two Google Fonts
-over the network and pointed its feedback link at
+widgets, and the setup wizard.** The old page also pulled three Google Fonts
+families (`Bebas Neue`, `Inter`, `JetBrains Mono`) over the network and
+pointed its feedback link at
 `github.com/NomadicWar/SteveCompanion` (a stale fork name); both are gone —
 system font stack only, feedback goes to
 `github.com/RavenIron-Games/TheRavensCall/issues`.
@@ -37,7 +39,8 @@ system font stack only, feedback goes to
 
 Gear icon opens a panel with two fields, both persisted in
 `localStorage` (`trc_base_url`, `trc_token`) and never sent anywhere except
-as the `X-Api-Token` request header on this mod's own API:
+as the `X-Api-Token` request header on whatever host the base-URL override
+names (blank = this page's own origin):
 
 - **Base URL override** — only needed when the file is opened directly
   (`file://...`) instead of served by the mod; blank means "this page's own
@@ -45,17 +48,30 @@ as the `X-Api-Token` request header on this mod's own API:
 - **API token** — matches the server's `HttpApiToken` config value, if set.
 
 A 401 response from `/api/state` opens the settings panel automatically with
-a one-line explanation, exactly per the contract. Saving re-polls
-immediately.
+a one-line explanation, exactly per the contract — but only the *first*
+time: a flag (`settingsAutoOpened`) suppresses repeat auto-opens until the
+next successful poll or a save, and `openSettings()` itself only seeds the
+two inputs from stored state when the panel is going from closed to open. A
+server that stays unreachable used to reopen the panel (and blow away a
+half-typed token) on every failed 10 s poll; now it opens once and leaves
+whatever's in the fields alone. Saving re-polls immediately.
 
 ## Polling
 
 `/api/state` is polled every 10 s (`AbortSignal.timeout(8000)` per request),
-matching `StatsPushIntervalSeconds`. To avoid collapsing an open "more
-counters" disclosure or resetting scroll position on every tick, a poll
-result that is byte-identical to the last one only refreshes the header's
-"updated Ns ago" text, not the whole tab body. `/api/gamedata` is fetched
-once at load, best-effort — the page is fully usable without it.
+matching `StatsPushIntervalSeconds`. `generated_at` changes on every tick
+regardless of whether anything else did, so a byte-identical comparison
+against the raw response never actually skips a re-render against a live
+server. The page instead strips `generated_at` (`stripGeneratedAt()`, a
+regex on the raw text) before comparing, and only re-renders the tab body
+when the rest of the payload actually changed — otherwise it just refreshes
+the header's "updated Ns ago" text. Because a real re-render can still
+happen at any tick, `render()` separately remembers which `<details
+data-details-key="...">` disclosures (currently just the "N more counters"
+one on Combat) are open before replacing `#app`'s innerHTML, and reopens the
+matching ones afterward — so an open disclosure survives a genuine data
+change, not just a quiet tick. `/api/gamedata` is fetched once at load,
+best-effort — the page is fully usable without it.
 
 On any fetch failure (timeout, network error, non-401 HTTP error), the last
 known good data stays on screen, the connection dot turns red, and an inline
@@ -67,24 +83,45 @@ successful poll.
 
 - **Combat**: rule-1 kills/deaths, boss progress strip (7 canonical keys),
   `creature_kills` table (own display-name map for the ~30 keys
-  `Saga.cs`'s `CreatureKeyMap` produces, falling back to a
-  prettified raw key — see VERIFY note below), then — only once
-  `vanilla_stats` is non-empty — this-session block, boss activity
-  (`bosses_summoned`, `guardian_powers_used`), and vanilla stats (a curated
-  "highlighted" set plus the rest under a disclosure). When `vanilla_stats`
-  is empty, those three crow-only sections are replaced by one notice; the
-  boss strip and `creature_kills` table still show, since both come from the
-  server's own narrative tracking, not the crow.
-- **Death**: rule-1 death total, `deaths_narrative` shown alongside only
-  when it differs (with an explanation of why), `death_history` newest
-  first (relative + absolute timestamp, killer, biome, rounded x/z), and an
-  explicit "last 10 only" note.
-- **Progression**: title + earned titles, biome strip (9 biomes, lit/unlit),
-  skills (sorted by level, bars from `skill_progress`, replaced by the crow
-  notice when `skill_levels` is empty — a missing skill reads as "never
-  raised", never as 0), caught fish as tags, first seen, playtime, and a
-  permanent "not reported" note for `gear_tier` explaining the dedicated
-  server has no API for it at all.
+  `Saga.cs`'s `CreatureKeyMap` produces — `SeekerBrute` and `SeekerSoldier`
+  each get their own label — falling back to a prettified raw key — see
+  VERIFY note below), then **unconditionally** the this-session block
+  (`session_kills`, damage dealt/taken/blocked, blocks, parries) — these are
+  populated directly by each combat/damage event as the server credits it,
+  not by the periodic `vanilla_stats` StatSnapshot, so they must not wait on
+  `vanilla_stats` before showing. Only once `vanilla_stats` is non-empty:
+  boss activity (`bosses_summoned`, `guardian_powers_used`, genuinely crow
+  V2-only) and vanilla stats (a curated "highlighted" set plus the rest
+  under a disclosure; a numeric-string key the server's enum can't name,
+  e.g. `"3968"`, is dropped rather than rendered, per the contract). When
+  `vanilla_stats` is empty, those two crow-only sections are replaced by one
+  notice; the boss strip, `creature_kills` table and this-session block
+  still show regardless.
+- **Death**: rule-1 death total, `deaths_lifetime` shown alongside as
+  "Server-observed deaths" only when it differs from the rule-1 figure
+  above (with an explanation that it's the server's own directly-observed
+  count, a fallback only). It used to show `deaths_narrative` labeled
+  "Server-narrated deaths" with a Discord/Chronicle explanation —
+  `deaths_narrative` and `deaths_lifetime` are incremented on the same
+  lines in `Saga.cs` (`HandlePlayerDeath` and `CreditPlayerDeath`), so
+  they're always equal and the narration claim was simply wrong. Then
+  `death_history` newest first (relative + absolute timestamp, killer,
+  biome, rounded x/z), and an explicit "last 10 only" note.
+- **Progression**: title + earned titles, biome strip (the nine
+  `BiomeAndGearTracking.NormalizeBiome` spellings — `Meadows`, `BlackForest`,
+  `Swamp`, `Mountain`, `Plains`, `Ocean`, `Mistlands`, `Ashlands`,
+  `DeepNorth` — lit/unlit), skills (sorted by level, a numeric-string key
+  the server's enum can't name is dropped; bars from `skill_progress`,
+  read as a fraction when ≤1 and as an already-computed percent when >1,
+  per the contract; replaced by the crow notice when `skill_levels` is
+  empty — a missing skill reads as "never raised", never as 0), caught fish
+  as tags (`caught_fish` values are lowercased localisation tokens like
+  `$item_fish1`; resolved against `/api/gamedata`'s `items[].slug`
+  case-insensitively to show `items[].name`, falling back to a prettified
+  token with the `$item_` prefix stripped when gamedata has no match), first
+  seen, playtime, and `gear_tier`'s stored value alongside a permanent "not
+  reported" note explaining the dedicated server has no API to read a
+  player's equipped inventory at all.
 - **Crafting**: item counters, `resources_harvested` table sorted by amount
   — the whole tab becomes the crow notice when the player has never synced,
   since every field on it comes from a crow report.
@@ -137,6 +174,19 @@ successful poll.
 so the file travels inside `TheRavensCall.dll` regardless of what the store
 zip includes.
 
+**Upgrade hazard:** every pre-1.3.0 install that ever had a dashboard got it
+by an admin hand-placing `theravenscall.html` at one of the two disk
+locations above — the store zip never shipped the loose file. That old file
+still shadows the new bundled page after an upgrade, and it cannot read the
+1.3.0 `/api/state` shape, so its dashboard is silently dead forever. The
+1.3.0 page carries `<meta name="theravenscall-api" content="1.3">` in its
+`<head>`; when `ProcessRequest` serves a disk copy without that string in
+its bytes, it logs one warning per server run (a static
+`_warnedStaleDiskDashboard` bool) naming the path and telling the admin to
+delete it so the bundled 1.3.0 page loads instead. The disk-override
+contract itself is unchanged — the disk copy is still served, just with a
+warning now.
+
 ## Previewing without a live server
 
 1. Copy `theravenscall.html` to a scratch folder as `index.html`.
@@ -146,10 +196,16 @@ zip includes.
 3. `python -m http.server 8765` (or `python3`) from that folder, or any
    static file server that serves extensionless files as-is.
 4. Open `http://localhost:8765`. The fixture has three players: **Ragnvald**
-   (online, full crow data — vanilla stats, skills, 3 deaths, 5 bosses),
-   **Bjorn** (offline, has crow data from a past session), and **Sigrun**
-   (online, has never run WhereTheCrowFlies — exercises the rule-2 notices
-   on Combat/Progression/Crafting/Build).
+   (online, full crow data — vanilla stats, skills, 3 deaths, 5 bosses, an
+   `Ashlands` biome, a `Cooking` skill with `skill_progress` above 1 to
+   exercise the percent-not-fraction path, numeric-string keys in
+   `vanilla_stats`/`skill_levels` to exercise the hide-unnamed-counters
+   path, and `caught_fish` tokens that partly resolve against the gamedata
+   fixture and partly fall back to a prettified token), **Bjorn** (offline,
+   has crow data from a past session, one resolvable `caught_fish` token),
+   and **Sigrun** (online, has never run WhereTheCrowFlies — exercises the
+   rule-2 notices on Combat/Progression/Crafting/Build, but still shows a
+   populated this-session block on Combat since that doesn't need the crow).
 
 A real deployment needs no `api/` folder at all — `/api/state` and
 `/api/gamedata` are served live by the mod.
@@ -158,10 +214,6 @@ A real deployment needs no `api/` folder at all — `/api/state` and
 
 - Fixed 10 s poll only; no manual refresh button (matches
   `StatsPushIntervalSeconds`, but there's no way to force an early check).
-- The byte-identical-skip optimization means a raid that starts and ends
-  between two ticks with no other field changing (unlikely in practice,
-  since `generated_at` always changes) would not be missed — `generated_at`
-  changes every tick, so this is theoretical, not a real gap.
 - No offline caching between page loads (a hard refresh always shows
   "Connecting…" until the first poll lands); only within-session state is
   preserved.
