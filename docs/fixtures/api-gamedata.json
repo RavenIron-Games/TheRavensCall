@@ -1,0 +1,33 @@
+{
+  "items": [
+    {"slug": "Wood", "name": "Wood", "category": "Material"},
+    {"slug": "Stone", "name": "Stone", "category": "Material"},
+    {"slug": "FineWood", "name": "Core Wood", "category": "Material"},
+    {"slug": "Flint", "name": "Flint", "category": "Material"},
+    {"slug": "Copper", "name": "Copper", "category": "Material"},
+    {"slug": "Iron", "name": "Iron", "category": "Material"},
+    {"slug": "Raspberry", "name": "Raspberries", "category": "Consumable"},
+    {"slug": "SwordIron", "name": "Iron Sword", "category": "Weapon"}
+  ],
+  "recipes": [
+    {
+      "slug": "Hammer", "recipe_key": "Recipe_Hammer", "name": "Hammer", "category": "Tools",
+      "amount": 1, "station": "",
+      "ingredients": [{"slug": "Wood", "name": "Wood", "qty": 3}]
+    },
+    {
+      "slug": "SwordIron", "recipe_key": "Recipe_SwordIron", "name": "Iron Sword", "category": "Weapons",
+      "amount": 1, "station": "Forge",
+      "ingredients": [
+        {"slug": "Iron", "name": "Iron", "qty": 20},
+        {"slug": "LeatherScraps", "name": "Leather Scraps", "qty": 4}
+      ]
+    }
+  ],
+  "buildables": [
+    {"name": "Wood Wall", "category": "Building", "ingredients": [{"slug": "Wood", "name": "Wood", "qty": 2}]},
+    {"name": "Stone Wall 4x2", "category": "Building", "ingredients": [{"slug": "Stone", "name": "Stone", "qty": 8}]},
+    {"name": "Workbench", "category": "Crafting", "ingredients": [{"slug": "Wood", "name": "Wood", "qty": 10}]}
+  ],
+  "updated_at": "2026-09-15T12:00:00.0000000Z"
+}
