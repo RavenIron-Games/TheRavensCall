@@ -233,9 +233,10 @@ Set `WebhookUrl` under `[Discord]` in `BepInEx/config/com.raveniron.theravenscal
 A full player-stats dashboard served directly by the mod's built-in HTTP server:
 
 - Open `http://localhost:2112` on the server machine. Since 1.2.4 the server listens on localhost only unless `HttpBindAllInterfaces = true`; the API hands every known player's stats, skills, titles and death coordinates to anyone who can reach the port, so open it to the network only behind a firewall or with `HttpApiToken` set.
-- Shows **every player** who has ever joined the realm: online status, lifetime kills and deaths (the crow-reported totals once a player runs WhereTheCrowFlies), titles, biomes, skills, boss kills, death history, fish caught, and the harvest, craft and build counters. A dedicated server has no live vitals, inventories or positions to show, and since 1.3.0 the API does not pretend otherwise.
-- Includes JSON API endpoints: `/api/state`, `/api/gamedata`, and `/api/health`. With `HttpApiToken` set, `/api/state`, `/api/gamedata` and `/api/pins` need `?token=<value>` (or an `X-Api-Token` header); `/api/health` and the page itself stay open. The bundled page does not send a token, so its live data stops loading while one is set.
+- Shows **every player** who has ever joined the realm across six tabs — **Combat, Death, Progression, Crafting, Build, Raw** — covering online status, lifetime kills and deaths (the crow-reported totals once a player runs WhereTheCrowFlies), titles, biomes, skills, boss kills, death history, fish caught, and the harvest, craft and build counters. A dedicated server has no live vitals, inventories or positions to show, and since 1.3.0 the API does not pretend otherwise.
+- Includes JSON API endpoints: `/api/state`, `/api/gamedata`, and `/api/health`. With `HttpApiToken` set, `/api/state`, `/api/gamedata` and `/api/pins` need `?token=<value>` (or an `X-Api-Token` header); `/api/health` and the page itself stay open. Since 1.3.0 the bundled page holds the token in its own settings panel (gear icon, top right) — enter it there and it's kept in the browser and sent as an `X-Api-Token` header on every request; a 401 opens that panel automatically the first time.
 - Can be toggled off with `EnableHttpServer = false` if only file export is desired.
+- **Upgrading from 1.2.x:** delete any `theravenscall.html` you placed in `BepInEx/config/TheRavensCall/` or next to the DLL. A copy from before 1.3.0 still overrides the bundled page, cannot read the 1.3.0 `/api/state` shape, and makes the server log one warning per run naming the file.
 
 ---
 
@@ -302,7 +303,9 @@ BepInEx/config/TheRavensCall/
 ├── players/                    ← Persistent JSON record per player
 ├── Chronicle/
 │   └── TheRavensCall_Chronicle_2026-08-17.log
-├── theravenscall.html          ← Embedded dashboard web UI
+├── theravenscall.html          ← OPTIONAL: only needed to override the dashboard page,
+│                                   which has shipped embedded inside TheRavensCall.dll since 1.3.0;
+│                                   a copy from before 1.3.0 shadows the bundled page - delete it
 ├── lore.txt                    ← Lore broadcast repository
 └── seasons.json                ← Active and historical season metadata
 ```

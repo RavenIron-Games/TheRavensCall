@@ -1,0 +1,35 @@
+{
+  "items": [
+    {"slug": "$item_Wood", "name": "Wood", "category": "Material"},
+    {"slug": "$item_Stone", "name": "Stone", "category": "Material"},
+    {"slug": "$item_FineWood", "name": "Core Wood", "category": "Material"},
+    {"slug": "$item_Flint", "name": "Flint", "category": "Material"},
+    {"slug": "$item_Copper", "name": "Copper", "category": "Material"},
+    {"slug": "$item_Iron", "name": "Iron", "category": "Material"},
+    {"slug": "$item_Raspberry", "name": "Raspberries", "category": "Consumable"},
+    {"slug": "$item_SwordIron", "name": "Iron Sword", "category": "OneHandedWeapon"},
+    {"slug": "$item_fish1", "name": "Fish Type 1", "category": "Material"},
+    {"slug": "$item_fish2", "name": "Fish Type 2", "category": "Material"}
+  ],
+  "recipes": [
+    {
+      "slug": "$item_Hammer", "recipe_key": "Recipe_Hammer", "name": "Hammer", "category": "Tool",
+      "amount": 1, "station": "Hand",
+      "ingredients": [{"slug": "$item_Wood", "name": "Wood", "qty": 3}]
+    },
+    {
+      "slug": "$item_SwordIron", "recipe_key": "Recipe_SwordIron", "name": "Iron Sword", "category": "OneHandedWeapon",
+      "amount": 1, "station": "Forge",
+      "ingredients": [
+        {"slug": "$item_Iron", "name": "Iron", "qty": 20},
+        {"slug": "$item_LeatherScraps", "name": "Leather Scraps", "qty": 4}
+      ]
+    }
+  ],
+  "buildables": [
+    {"name": "Wood Wall", "category": "Building", "ingredients": [{"slug": "$item_Wood", "name": "Wood", "qty": 2}]},
+    {"name": "Stone Wall 4x2", "category": "Building", "ingredients": [{"slug": "$item_Stone", "name": "Stone", "qty": 8}]},
+    {"name": "Workbench", "category": "Crafting", "ingredients": [{"slug": "$item_Wood", "name": "Wood", "qty": 10}]}
+  ],
+  "updated_at": "2026-09-15T12:00:00.0000000Z"
+}

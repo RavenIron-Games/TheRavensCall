@@ -22,6 +22,11 @@ namespace TheRavensCall
         internal static Companion Instance;
         internal static ManualLogSource Log;
         internal static bool _recipesPushed = false;
+        // Logged once per server run, the first time a disk-override
+        // theravenscall.html is served that predates the 1.3.0 marker meta
+        // tag — it can't read the new /api/state shape, so its dashboard is
+        // permanently dead until the admin deletes it (review 2026-09-15).
+        private static bool _warnedStaleDiskDashboard = false;
 
         // /api/state is served from this string, rebuilt on the main thread by
         // PollAllPlayers every StatsPushIntervalSeconds. The HTTP worker
@@ -153,7 +158,7 @@ namespace TheRavensCall
                 // CORS headers so browser can fetch from file:// or any origin
                 ctx.Response.AddHeader("Access-Control-Allow-Origin", "*");
                 ctx.Response.AddHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-                ctx.Response.AddHeader("Access-Control-Allow-Headers", "Content-Type");
+                ctx.Response.AddHeader("Access-Control-Allow-Headers", "Content-Type, X-Api-Token");
 
                 if (ctx.Request.HttpMethod == "OPTIONS")
                 { ctx.Response.StatusCode = 204; ctx.Response.Close(); return; }
@@ -200,7 +205,11 @@ namespace TheRavensCall
                 }
                 else if (path == "/" || path == "/index" || path.EndsWith(".html"))
                 {
-                    // Serve HTML from OutputDir, then plugin dir as fallback
+                    // Serve HTML from OutputDir, then plugin dir, then the
+                    // copy embedded in this DLL as the final fallback — a
+                    // fresh install's zip has not always shipped the loose
+                    // file, and the embedded copy means the dashboard still
+                    // comes up even then.
                     string htmlPath = Path.Combine(OutputDir, "theravenscall.html");
                     if (!File.Exists(htmlPath))
                     {
@@ -211,12 +220,27 @@ namespace TheRavensCall
                     {
                         ctx.Response.ContentType = "text/html; charset=utf-8";
                         body = File.ReadAllBytes(htmlPath);
+                        if (!_warnedStaleDiskDashboard && !ContainsApiMarker(body))
+                        {
+                            _warnedStaleDiskDashboard = true;
+                            Log.LogWarning("theravenscall.html on disk (" + htmlPath + ") predates 1.3.0 and cannot read the new /api/state shape. " +
+                                "Delete it so the bundled 1.3.0 page (embedded in this DLL, or the plugin/OutputDir copy shipped with the release) is served instead.");
+                        }
                     }
                     else
                     {
-                        ctx.Response.StatusCode = 404;
-                        body = Encoding.UTF8.GetBytes("<h2>stevecompanion.html not found.<br>Place it in: " + OutputDir + "</h2>");
-                        ctx.Response.ContentType = "text/html";
+                        byte[] embedded = ReadEmbeddedHtml();
+                        if (embedded != null)
+                        {
+                            ctx.Response.ContentType = "text/html; charset=utf-8";
+                            body = embedded;
+                        }
+                        else
+                        {
+                            ctx.Response.StatusCode = 404;
+                            body = Encoding.UTF8.GetBytes("<h2>theravenscall.html not found.<br>Place it in: " + OutputDir + "</h2>");
+                            ctx.Response.ContentType = "text/html";
+                        }
                     }
                 }
                 else
@@ -233,6 +257,43 @@ namespace TheRavensCall
             {
                 Log.LogError("HTTP request error: " + ex.Message);
                 try { ctx.Response.StatusCode = 500; ctx.Response.Close(); } catch { }
+            }
+        }
+
+        // The 1.3.0 page carries <meta name="theravenscall-api" content="1.3">
+        // in its head. A disk override written before that (the only way any
+        // existing install ever got a dashboard — the store zip never shipped
+        // the loose file) has no such tag and silently shadows the bundled
+        // page while being unable to read the new /api/state shape.
+        private static bool ContainsApiMarker(byte[] htmlBytes)
+        {
+            try { return Encoding.UTF8.GetString(htmlBytes).IndexOf("theravenscall-api", StringComparison.OrdinalIgnoreCase) >= 0; }
+            catch { return true; } // don't warn on a read we can't even inspect
+        }
+
+        // Last-resort source for the dashboard page: the copy embedded in
+        // this DLL via <EmbeddedResource LogicalName="theravenscall.html">
+        // in the csproj. Only reached when neither disk override location
+        // (OutputDir, then the plugin folder) has the file. Returns null on
+        // any failure so the caller can fall back to the 404 text.
+        private static byte[] ReadEmbeddedHtml()
+        {
+            try
+            {
+                using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("theravenscall.html"))
+                {
+                    if (stream == null) return null;
+                    using (var mem = new MemoryStream())
+                    {
+                        stream.CopyTo(mem);
+                        return mem.ToArray();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.LogError("Embedded theravenscall.html read failed: " + ex.Message);
+                return null;
             }
         }
 

@@ -34,6 +34,15 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Bundles the dashboard page inside the DLL so a fresh install still
+         serves it even if theravenscall.html never lands next to the
+         plugin on disk (the store zip has historically not included it).
+         Companion.cs's ProcessRequest falls back to this manifest resource
+         only after checking the disk override locations. -->
+    <EmbeddedResource Include="theravenscall.html" LogicalName="theravenscall.html" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- BepInEx + Harmony -->
     <Reference Include="BepInEx">
       <HintPath>..\libs-Tools\BepInEx.dll</HintPath>
