@@ -21,6 +21,9 @@
 ### Dashboard
 - (filled in by the dashboard rebuild PR)
 
+### 🔧 Changed
+- `HexiumDist/plugins/TheRavensCall.dll` is **not** rebuilt in this change; it is still the 1.2.2 Linux build, now two minor versions behind, and must be rebuilt at release.
+
 ---
 
 ## 🟢 [1.2.4] — The Raven Bars the Door

@@ -33,6 +33,11 @@ namespace TheRavensCall
         // so gating the rebuild behind a "was it requested" flag (the old
         // _stateWanted mechanism) no longer saves any work and was dropped.
         internal static volatile string _stateCache;
+        // Served until PrimeStateCache has run (or if it throws): the same
+        // envelope PlayerRegistry.BuildBarrkBotJson emits, with no players,
+        // so /api/state has one shape for its whole lifetime. Keep in step
+        // with that method.
+        internal const string EmptyStateJson = "{\"generated_at\":\"\",\"world_name\":\"\",\"day\":0,\"online_count\":0,\"raid_active\":false,\"raid_type\":\"\",\"players\":{}}";
 
         // HTTP server
         private HttpListener _listener;
@@ -172,9 +177,9 @@ namespace TheRavensCall
                 {
                     ctx.Response.ContentType = "application/json";
                     // Main-thread cache, never a live walk of the registry
-                    // from this worker thread (see _stateCache). Empty-object
-                    // fallback keeps this valid JSON before the first prime.
-                    body = Encoding.UTF8.GetBytes(_stateCache ?? "{}");
+                    // from this worker thread (see _stateCache). Before the
+                    // first prime the empty envelope keeps the shape invariant.
+                    body = Encoding.UTF8.GetBytes(_stateCache ?? EmptyStateJson);
                 }
                 else if (path == "/api/gamedata")
                 {
