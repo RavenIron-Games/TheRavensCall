@@ -1,4 +1,4 @@
-﻿using BepInEx;
+using BepInEx;
 using BepInEx.Logging;
 using HarmonyLib;
 using System;
@@ -311,7 +311,10 @@ namespace TheRavensCall
             }
             return sb.ToString();
         }
-        public static string F(float v) => v.ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
+        // Never emit the bare NaN/Infinity tokens: they are not JSON, a strict
+        // reader rejects the whole export, and the loader would parse them
+        // straight back in (review 2026-09-15).
+        public static string F(float v) => (float.IsNaN(v) || float.IsInfinity(v)) ? "0.0" : v.ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
 
         public static string Loc(string key)
         {

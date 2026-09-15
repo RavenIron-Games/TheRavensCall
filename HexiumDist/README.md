@@ -7,7 +7,7 @@
 [![Companion](https://img.shields.io/badge/Client_Companion-WhereTheCrowFlies-blue.svg)]()
 [![Framework](https://img.shields.io/badge/Requires-BepInEx-red.svg)]()
 [![Publisher](https://img.shields.io/badge/RavenIron-Release-8B6F1F.svg)]()
-[![Version](https://img.shields.io/badge/Version-1.2.2-lightgrey.svg)]()
+[![Version](https://img.shields.io/badge/Version-1.2.3-lightgrey.svg)]()
 
 **RavenIron's server admin & analytics engine: aggregates player telemetry from *WhereTheCrowFlies*, chronicles realm history, and feeds live web dashboards and Discord AI bots.**
 

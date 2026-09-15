@@ -231,7 +231,7 @@ namespace TheRavensCall
                 string val = raw.Substring(colon + 1).Trim();
                 if (!string.IsNullOrEmpty(mapKey) &&
                     float.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float n))
-                    result[mapKey] = n;
+                    { if (!float.IsNaN(n) && !float.IsInfinity(n)) result[mapKey] = n; } // skip poisoned values (review 2026-09-15)
             }
             return result;
         }

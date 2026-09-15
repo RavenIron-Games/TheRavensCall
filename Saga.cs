@@ -33,7 +33,7 @@ namespace TheRavensCall
     {
         public const string PluginGUID = "com.raveniron.theravenscall";
         public const string PluginName = "TheRavensCall";
-        public const string PluginVersion = "1.2.2";
+        public const string PluginVersion = "1.2.3";
 
         internal static ManualLogSource Log;
         internal static Plugin Instance;
@@ -250,6 +250,17 @@ namespace TheRavensCall
             return false;
         }
 
+        // ── Second half of that trust boundary: a self-report must name the
+        // reporting peer's own character. m_playerName is what the peer sent
+        // in PeerInfo (its profile name), the same string Player.GetPlayerName
+        // returns on that client, so the two are expected to match exactly
+        // modulo case (the registry is case-insensitive too). ────────────────
+        public static bool IsSelfReport(ZNetPeer reporter, string reportedName)
+        {
+            if (reporter == null || string.IsNullOrEmpty(reportedName) || string.IsNullOrEmpty(reporter.m_playerName)) return false;
+            return string.Equals(reporter.m_playerName, reportedName, StringComparison.OrdinalIgnoreCase);
+        }
+
         public static HitData GetLastHit(Character c)
         {
             try { return HarmonyLib.AccessTools.Field(typeof(Character), "m_lastHit")?.GetValue(c) as HitData; }
@@ -343,7 +354,15 @@ namespace TheRavensCall
             {
                 if (!Plugin.IsServer()) return;
                 var peer = ZNet.instance?.GetPeers()?.Find(p => p.m_rpc == rpc);
-                if (peer == null || _fired.Contains(peer.m_uid)) return;
+                // RPC_PeerInfo returns early on every rejection (wrong password,
+                // version mismatch, banned, server full, bad session ticket)
+                // BEFORE it assigns m_uid/m_playerName, and a Harmony postfix
+                // still runs. A rejected peer therefore arrives here with
+                // m_uid == 0 and an empty name; without this guard every such
+                // rejection became a permanent "A Viking" record in the
+                // registry and the BarrkBOT export (review 2026-09-15).
+                // ZNetPeer.IsReady() is exactly m_uid != 0.
+                if (peer == null || !peer.IsReady() || _fired.Contains(peer.m_uid)) return;
                 _fired.Add(peer.m_uid);
                 JoinTimes[peer.m_uid] = DateTime.UtcNow;
 
@@ -521,6 +540,11 @@ namespace TheRavensCall
     // real Player instance — inventory, swim state) that the RPC path,
     // which only carries a name and a client-computed cause string,
     // can't reproduce. See CombatCredit.CreditPlayerDeath for that path. ──
+    // Character.OnDeath is virtual and Player overrides it WITHOUT calling
+    // base (Player.OnDeath in the 1.0.12 decompile), so this patch only ever
+    // runs for creatures. The player branch that used to live in this Prefix
+    // could never fire; player deaths get their own target, Patch_PlayerDeath
+    // below (review 2026-09-15).
     [HarmonyPatch(typeof(Character), "OnDeath")]
     public static class Patch_CharacterDeath
     {
@@ -531,7 +555,7 @@ namespace TheRavensCall
         private static readonly Dictionary<int, float> _recentDeaths = new Dictionary<int, float>();
         private const float DEATH_DEDUP_WINDOW = 3f;
 
-        private static bool AlreadyProcessed(Character c)
+        internal static bool AlreadyProcessed(Character c)
         {
             float now = Time.realtimeSinceStartup;
             foreach (var key in new List<int>(_recentDeaths.Keys))
@@ -548,13 +572,8 @@ namespace TheRavensCall
             try
             {
                 if (!Plugin.IsServer()) return;
+                if (__instance is Player) return; // Patch_PlayerDeath (unreachable here anyway, see the class comment)
                 if (AlreadyProcessed(__instance)) return;
-
-                if (__instance is Player victim)
-                {
-                    HandlePlayerDeath(victim);
-                    return;
-                }
 
                 string prefab = __instance.gameObject.name.Replace("(Clone)", "").Trim();
                 var hit = Plugin.GetLastHit(__instance);
@@ -570,9 +589,13 @@ namespace TheRavensCall
             catch (Exception ex) { Plugin.Log.LogWarning($"[TheRavensCall] CharacterDeath error: {ex.Message}"); }
         }
 
-        private static void HandlePlayerDeath(Player victim)
+        internal static void HandlePlayerDeath(Player victim)
         {
             string name = victim.GetPlayerName();
+            // Shares CombatEventDedup with CombatCredit.CreditPlayerDeath so a
+            // listen host that also runs WhereTheCrowFlies cannot credit the
+            // same death twice (once here, once from its own RPC report).
+            if (CombatEventDedup.AlreadyProcessed("death", name, "", victim.transform.position)) return;
             string cause = Plugin.GetDeathCause(victim);
             var rec = PlayerRegistry.Get(name);
 
@@ -595,6 +618,29 @@ namespace TheRavensCall
         }
     }
 
+    // ── The player half of the death patch. Same dormant-on-a-dedicated-
+    // server status as Patch_CharacterDeath (no Player instance ever exists
+    // headless), kept as the same insurance; on any topology where it does
+    // fire, Player.OnDeath is the method that actually runs for a player. ──
+    [HarmonyPatch(typeof(Player), nameof(Player.OnDeath))]
+    public static class Patch_PlayerDeath
+    {
+        private static void Prefix(Player __instance)
+        {
+            try
+            {
+                if (!Plugin.IsServer() || __instance == null) return;
+                // Player.OnDeath is invoked on every client's copy of the
+                // player and gates on ownership inside; a prefix runs before
+                // that gate, so match it here (the client twin does the same).
+                if (!__instance.IsOwner()) return;
+                if (Patch_CharacterDeath.AlreadyProcessed(__instance)) return;
+                Patch_CharacterDeath.HandlePlayerDeath(__instance);
+            }
+            catch (Exception ex) { Plugin.Log.LogWarning($"[TheRavensCall] PlayerDeath error: {ex.Message}"); }
+        }
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     // COMBAT CREDIT — shared by the dormant Character.Damage/OnDeath/
     // FishingFloat patches above and CombatReportReceiver below. Every entry
@@ -605,6 +651,18 @@ namespace TheRavensCall
     // ═════════════════════════════════════════════════════════════════════════
     public static class CombatCredit
     {
+        private const float BossDedupBucketMeters = 64f;
+
+        // Wire floats are attacker-controlled. NaN/Infinity assigned here
+        // would be written into the export as bare NaN/Infinity tokens (not
+        // JSON) and parsed straight back in on the next boot (review
+        // 2026-09-15). Every apply loop below skips non-finite values and
+        // clamps the rest.
+        private const float MaxStatMagnitude = 1e9f;
+        private const float MaxSkillLevel = 1000f;   // vanilla caps at 100; tolerant of skill-cap mods
+        private const float MaxSkillProgress = 100f; // vanilla sends a 0..1 fraction; tolerant of a percent
+        private static bool Finite(float v) => !float.IsNaN(v) && !float.IsInfinity(v);
+
         public static void CreditCreatureKill(string name, string prefab, Vector3 position)
         {
             if (TitleSystem.BossTitles.ContainsKey(prefab)) { CreditBossKill(prefab, position, name); return; }
@@ -617,7 +675,9 @@ namespace TheRavensCall
             rec.Dirty = true;
             MilestoneTracker.OnKill(name, rec);
             TitleSystem.OnCreatureKill(name, prefab, rec);
-            PlayerRegistry.Save(rec);
+            // Flushed by the poll tick's SaveDirty like every V2 credit path;
+            // a synchronous save per accepted kill report was a disk-write
+            // amplifier for a forging client (review 2026-09-15).
         }
 
         public static void CreditBossKill(string prefab, Vector3 position, string killerName)
@@ -627,7 +687,11 @@ namespace TheRavensCall
             // call paths (dormant patch vs. RPC report) can resolve that name
             // differently for the same physical death — the dedup should
             // still catch it as one event.
-            if (CombatEventDedup.AlreadyProcessed("boss", "", prefab, position)) return;
+            // 64 m buckets, not the default 4 m: position comes off the wire, so
+            // a 4 m bucket let a forging client mint a fresh key with a few
+            // metres of jitter per packet (review 2026-09-15). A real boss
+            // cannot die twice within 3 s and 64 m.
+            if (CombatEventDedup.AlreadyProcessed("boss", "", prefab, position, BossDedupBucketMeters)) return;
 
             string bossDisplayName = TitleSystem.GetBossDisplayName(prefab);
             string bossKey = BossKeys.Resolve(prefab);
@@ -643,7 +707,7 @@ namespace TheRavensCall
                 if (bossKey != null) rec.DefeatedBosses.Add(bossKey);
                 rec.Dirty = true;
                 TitleSystem.OnBossKill(p.name, prefab, rec);
-                PlayerRegistry.Save(rec);
+                // Dirty only; SaveDirty flushes it (see CreditCreatureKill).
                 if (namedKiller == null) namedKiller = p.name;
             }
 
@@ -795,7 +859,11 @@ namespace TheRavensCall
         {
             if (stats == null || stats.Count == 0) return;
             var rec = PlayerRegistry.Get(name);
-            foreach (var kv in stats) rec.VanillaStats[kv.Key] = kv.Value;
+            foreach (var kv in stats)
+            {
+                if (!Finite(kv.Value)) continue;
+                rec.VanillaStats[kv.Key] = Mathf.Clamp(kv.Value, -MaxStatMagnitude, MaxStatMagnitude);
+            }
             rec.Dirty = true;
         }
 
@@ -813,8 +881,9 @@ namespace TheRavensCall
             var rec = PlayerRegistry.Get(name);
             foreach (var kv in deltas)
             {
+                if (!Finite(kv.Value)) continue;
                 rec.VanillaStats.TryGetValue(kv.Key, out float cur);
-                rec.VanillaStats[kv.Key] = cur + kv.Value;
+                rec.VanillaStats[kv.Key] = Mathf.Clamp(cur + kv.Value, -MaxStatMagnitude, MaxStatMagnitude);
             }
             rec.Dirty = true;
         }
@@ -827,8 +896,12 @@ namespace TheRavensCall
         {
             if ((levels == null || levels.Count == 0) && (progress == null || progress.Count == 0)) return;
             var rec = PlayerRegistry.Get(name);
-            if (levels != null) foreach (var kv in levels) rec.SkillLevels[kv.Key] = kv.Value;
-            if (progress != null) foreach (var kv in progress) rec.SkillProgress[kv.Key] = kv.Value;
+            if (levels != null)
+                foreach (var kv in levels)
+                    if (Finite(kv.Value)) rec.SkillLevels[kv.Key] = Mathf.Clamp(kv.Value, 0f, MaxSkillLevel);
+            if (progress != null)
+                foreach (var kv in progress)
+                    if (Finite(kv.Value)) rec.SkillProgress[kv.Key] = Mathf.Clamp(kv.Value, 0f, MaxSkillProgress);
             rec.Dirty = true;
         }
     }
@@ -846,13 +919,13 @@ namespace TheRavensCall
         private static readonly Dictionary<string, float> _recent = new Dictionary<string, float>();
         private const float WINDOW = 3f;
 
-        public static bool AlreadyProcessed(string kind, string attacker, string prefab, Vector3 pos)
+        public static bool AlreadyProcessed(string kind, string attacker, string prefab, Vector3 pos, float bucketMeters = 4f)
         {
             float now = Time.realtimeSinceStartup;
             foreach (var key in new List<string>(_recent.Keys))
                 if (now - _recent[key] > WINDOW) _recent.Remove(key);
 
-            string posKey = $"{Mathf.Round(pos.x / 4f)}:{Mathf.Round(pos.y / 4f)}:{Mathf.Round(pos.z / 4f)}";
+            string posKey = $"{Mathf.Round(pos.x / bucketMeters)}:{Mathf.Round(pos.y / bucketMeters)}:{Mathf.Round(pos.z / bucketMeters)}";
             string eventKey = $"{kind}|{attacker}|{prefab}|{posKey}";
             if (_recent.ContainsKey(eventKey)) return true;
             _recent[eventKey] = now;
@@ -878,6 +951,29 @@ namespace TheRavensCall
             }
             _windows[sender] = (w.count + 1, w.windowStart);
             return w.count + 1 > MaxPerSecond;
+        }
+
+        // One boss-kill credit per sender per boss prefab per window. A real
+        // boss dies once, and a V2 client's V1 dual-send of the same kill is
+        // collapsed by CombatEventDedup anyway. Keyed by prefab as well as
+        // sender because the reporter is the corpse's ZDO owner, not the
+        // killer, and one peer can legitimately own two different bosses'
+        // corpses inside ten seconds; a second report of the SAME boss from
+        // one peer inside the window is forgery, and every accepted one fans
+        // out into a per-player credit for everyone in radius plus a Discord
+        // POST (review 2026-09-15).
+        private const float BossCreditWindowSeconds = 10f;
+        private static readonly Dictionary<string, float> _lastBossCredit = new Dictionary<string, float>();
+
+        public static bool AllowBossCredit(long sender, string prefab)
+        {
+            float now = Time.realtimeSinceStartup;
+            foreach (var k in new List<string>(_lastBossCredit.Keys))
+                if (now - _lastBossCredit[k] > BossCreditWindowSeconds) _lastBossCredit.Remove(k);
+            string key = $"{sender}|{prefab}";
+            if (_lastBossCredit.ContainsKey(key)) return false;
+            _lastBossCredit[key] = now;
+            return true;
         }
     }
 
@@ -965,6 +1061,19 @@ namespace TheRavensCall
                 var reporterPeer = ZNet.instance?.GetPeer(sender);
                 if (reporterPeer == null) return;
 
+                // Self-reports (death, damage batch, fish) must name the
+                // reporter's own character. Only a kill may legitimately name
+                // someone else: the creature's ZDO owner reports it and the
+                // killer can be another player. Before this check, any
+                // connected player could credit or overwrite any other online
+                // player's record (review 2026-09-15).
+                if (eventType != 1 && !Plugin.IsSelfReport(reporterPeer, attackerName))
+                {
+                    if (Plugin.LogCombatReports.Value)
+                        Plugin.Log.LogWarning($"[TheRavensCall] combat report dropped — '{attackerName}' is not the reporter ({reporterPeer.m_playerName})");
+                    return;
+                }
+
                 if (!Plugin.TryVerifyConnectedPlayer(attackerName, out string verified, out _))
                 {
                     if (Plugin.LogCombatReports.Value)
@@ -982,7 +1091,14 @@ namespace TheRavensCall
                     // backward compat, and CombatEventDedup (keyed on
                     // kind+attacker+prefab+position, 3s window) collapses
                     // the redundant arrival regardless of which lands first.
-                    case 1: CombatCredit.CreditCreatureKill(verified, prefabOrCause, position); break;
+                    case 1:
+                        if (TitleSystem.BossTitles.ContainsKey(prefabOrCause) && !CombatReportRateLimiter.AllowBossCredit(sender, prefabOrCause))
+                        {
+                            if (Plugin.LogCombatReports.Value) Plugin.Log.LogWarning($"[TheRavensCall] boss kill report dropped — budget exceeded for sender {sender}");
+                            break;
+                        }
+                        CombatCredit.CreditCreatureKill(verified, prefabOrCause, position);
+                        break;
                     case 2: CombatCredit.CreditPlayerDeath(verified, position, prefabOrCause); break;
                     // Damage has no such dedup (a batch is a rolling sum, not
                     // a discrete event — see CreditDamage's own comment). A
@@ -1058,23 +1174,27 @@ namespace TheRavensCall
                 int schema = pkg.ReadInt();
                 if (schema != SchemaVersion) return; // unknown future schema: ignore, never guess
 
-                if (ZNet.instance?.GetPeer(sender) == null) return;
+                // The reporter's peer is the identity every self-report is
+                // bound to below; the payload name alone was never enough
+                // (review 2026-09-15).
+                var reporterPeer = ZNet.instance?.GetPeer(sender);
+                if (reporterPeer == null) return;
 
                 byte eventType = pkg.ReadByte();
                 switch (eventType)
                 {
-                    case 1: HandleKill(pkg); break;
-                    case 2: HandleDeath(pkg); break;
-                    case 3: HandleDamageDefenseBatch(pkg); break;
-                    case 4: HandleFishCatch(pkg); break;
-                    case 5: HandleBuilding(pkg); break;
-                    case 6: HandleCrafting(pkg); break;
-                    case 7: HandleHarvesting(pkg); break;
-                    case 8: HandleConsumables(pkg); break;
-                    case 9: HandleWorldEvent(pkg); break;
-                    case 10: HandleStatSyncDelta(pkg); break;
-                    case 11: HandleStatSnapshot(pkg); break;
-                    case 12: HandleSkillSnapshot(pkg); break;
+                    case 1: HandleKill(sender, pkg); break;
+                    case 2: HandleDeath(reporterPeer, pkg); break;
+                    case 3: HandleDamageDefenseBatch(reporterPeer, pkg); break;
+                    case 4: HandleFishCatch(reporterPeer, pkg); break;
+                    case 5: HandleBuilding(reporterPeer, pkg); break;
+                    case 6: HandleCrafting(reporterPeer, pkg); break;
+                    case 7: HandleHarvesting(reporterPeer, pkg); break;
+                    case 8: HandleConsumables(reporterPeer, pkg); break;
+                    case 9: HandleWorldEvent(reporterPeer, pkg); break;
+                    case 10: HandleStatSyncDelta(reporterPeer, pkg); break;
+                    case 11: HandleStatSnapshot(reporterPeer, pkg); break;
+                    case 12: HandleSkillSnapshot(reporterPeer, pkg); break;
                     default:
                         if (Plugin.LogCombatReports.Value) Plugin.Log.LogWarning($"[TheRavensCall] event report: unknown eventType {eventType}");
                         break;
@@ -1098,7 +1218,24 @@ namespace TheRavensCall
             return true;
         }
 
-        private static void HandleKill(ZPackage pkg)
+        // Every event type except Kill is a self-report: the name in the
+        // payload must be the reporting peer's own character, not merely
+        // some connected player's. Kill keeps the connected-name check
+        // because the creature's ZDO owner reports it and the killer can
+        // legitimately be someone else (review 2026-09-15).
+        private static bool VerifySelf(ZNetPeer reporter, string reportedName, out string verified)
+        {
+            verified = null;
+            if (!Plugin.IsSelfReport(reporter, reportedName))
+            {
+                if (Plugin.LogCombatReports.Value)
+                    Plugin.Log.LogWarning($"[TheRavensCall] event report dropped — '{reportedName}' is not the reporter ({reporter?.m_playerName})");
+                return false;
+            }
+            return Verify(reportedName, out verified);
+        }
+
+        private static void HandleKill(long sender, ZPackage pkg)
         {
             string attackerName = Cap(pkg.ReadString(), 32);
             string victimPrefab = Cap(pkg.ReadString(), 64);
@@ -1110,10 +1247,15 @@ namespace TheRavensCall
             pkg.ReadString();  // biome
 
             if (!Verify(attackerName, out string verified)) return;
+            if (TitleSystem.BossTitles.ContainsKey(victimPrefab) && !CombatReportRateLimiter.AllowBossCredit(sender, victimPrefab))
+            {
+                if (Plugin.LogCombatReports.Value) Plugin.Log.LogWarning($"[TheRavensCall] boss kill report dropped — budget exceeded for sender {sender}");
+                return;
+            }
             CombatCredit.CreditCreatureKill(verified, victimPrefab, position);
         }
 
-        private static void HandleDeath(ZPackage pkg)
+        private static void HandleDeath(ZNetPeer reporter, ZPackage pkg)
         {
             string victimName = Cap(pkg.ReadString(), 32);
             string cause = Cap(pkg.ReadString(), 64);
@@ -1121,11 +1263,11 @@ namespace TheRavensCall
             pkg.ReadString();  // killerPlayer
             pkg.ReadString();  // biome
 
-            if (!Verify(victimName, out string verified)) return;
+            if (!VerifySelf(reporter, victimName, out string verified)) return;
             CombatCredit.CreditPlayerDeath(verified, position, cause);
         }
 
-        private static void HandleDamageDefenseBatch(ZPackage pkg)
+        private static void HandleDamageDefenseBatch(ZNetPeer reporter, ZPackage pkg)
         {
             string playerName = Cap(pkg.ReadString(), 32);
             pkg.ReadVector3(); // position
@@ -1140,7 +1282,7 @@ namespace TheRavensCall
             int parries = pkg.ReadInt();
             float dmgBlocked = pkg.ReadSingle();
 
-            if (!Verify(playerName, out string verified)) return;
+            if (!VerifySelf(reporter, playerName, out string verified)) return;
             V2DamageTracker.MarkSeen(verified); // tells V1's damage case this player's dual-sent V1 copy is redundant
             float dmgDealt = Mathf.Clamp(dealtCreatures + dealtPlayers, 0f, 20000f);
             float dmgTaken = Mathf.Clamp(takenCreatures + takenPlayers + takenEnv, 0f, 20000f);
@@ -1148,7 +1290,7 @@ namespace TheRavensCall
             CombatCredit.CreditBlockDefense(verified, blocks, parries, Mathf.Clamp(dmgBlocked, 0f, 20000f));
         }
 
-        private static void HandleFishCatch(ZPackage pkg)
+        private static void HandleFishCatch(ZNetPeer reporter, ZPackage pkg)
         {
             string playerName = Cap(pkg.ReadString(), 32);
             string fishPrefab = Cap(pkg.ReadString(), 64);
@@ -1157,11 +1299,11 @@ namespace TheRavensCall
             pkg.ReadSingle();  // weight
             pkg.ReadString();  // biome
 
-            if (!Verify(playerName, out string verified)) return;
+            if (!VerifySelf(reporter, playerName, out string verified)) return;
             CombatCredit.CreditFish(verified, fishPrefab);
         }
 
-        private static void HandleBuilding(ZPackage pkg)
+        private static void HandleBuilding(ZNetPeer reporter, ZPackage pkg)
         {
             string playerName = Cap(pkg.ReadString(), 32);
             pkg.ReadString();  // piecePrefab
@@ -1169,11 +1311,11 @@ namespace TheRavensCall
             byte action = pkg.ReadByte();
             pkg.ReadString();  // category
 
-            if (!Verify(playerName, out string verified)) return;
+            if (!VerifySelf(reporter, playerName, out string verified)) return;
             CombatCredit.CreditBuilding(verified, action);
         }
 
-        private static void HandleCrafting(ZPackage pkg)
+        private static void HandleCrafting(ZNetPeer reporter, ZPackage pkg)
         {
             string playerName = Cap(pkg.ReadString(), 32);
             pkg.ReadString();  // itemPrefab
@@ -1183,11 +1325,11 @@ namespace TheRavensCall
             int amount = pkg.ReadInt();
             pkg.ReadString();  // stationName
 
-            if (!Verify(playerName, out string verified)) return;
+            if (!VerifySelf(reporter, playerName, out string verified)) return;
             CombatCredit.CreditCrafting(verified, action, amount);
         }
 
-        private static void HandleHarvesting(ZPackage pkg)
+        private static void HandleHarvesting(ZNetPeer reporter, ZPackage pkg)
         {
             string playerName = Cap(pkg.ReadString(), 32);
             string resourceName = Cap(pkg.ReadString(), 64);
@@ -1195,11 +1337,11 @@ namespace TheRavensCall
             pkg.ReadByte();    // sourceType — ResourcesHarvested is a flat count per resource, not split by source
             int amount = pkg.ReadInt();
 
-            if (!Verify(playerName, out string verified)) return;
+            if (!VerifySelf(reporter, playerName, out string verified)) return;
             CombatCredit.CreditHarvest(verified, resourceName, amount);
         }
 
-        private static void HandleConsumables(ZPackage pkg)
+        private static void HandleConsumables(ZNetPeer reporter, ZPackage pkg)
         {
             string playerName = Cap(pkg.ReadString(), 32);
             pkg.ReadString();  // itemPrefab
@@ -1209,11 +1351,11 @@ namespace TheRavensCall
             pkg.ReadSingle();  // stamina
             pkg.ReadSingle();  // eitr
 
-            if (!Verify(playerName, out string verified)) return;
+            if (!VerifySelf(reporter, playerName, out string verified)) return;
             CombatCredit.CreditConsumable(verified);
         }
 
-        private static void HandleWorldEvent(ZPackage pkg)
+        private static void HandleWorldEvent(ZNetPeer reporter, ZPackage pkg)
         {
             string playerName = Cap(pkg.ReadString(), 32);
             string eventName = Cap(pkg.ReadString(), 32);
@@ -1221,13 +1363,13 @@ namespace TheRavensCall
             pkg.ReadString();  // targetOrDetails
             pkg.ReadString();  // biome
 
-            if (!Verify(playerName, out string verified)) return;
+            if (!VerifySelf(reporter, playerName, out string verified)) return;
             CombatCredit.CreditWorldEvent(verified, eventName);
         }
 
         // Applied incrementally — see the class header note on why both this
         // and HandleStatSnapshot feed VanillaStats.
-        private static void HandleStatSyncDelta(ZPackage pkg)
+        private static void HandleStatSyncDelta(ZNetPeer reporter, ZPackage pkg)
         {
             string playerName = Cap(pkg.ReadString(), 32);
             pkg.ReadVector3(); // position
@@ -1241,11 +1383,11 @@ namespace TheRavensCall
                 deltas[((PlayerStatType)statId).ToString()] = delta;
             }
 
-            if (!Verify(playerName, out string verified)) return;
+            if (!VerifySelf(reporter, playerName, out string verified)) return;
             CombatCredit.ApplyVanillaStatDeltas(verified, deltas);
         }
 
-        private static void HandleStatSnapshot(ZPackage pkg)
+        private static void HandleStatSnapshot(ZNetPeer reporter, ZPackage pkg)
         {
             string playerName = Cap(pkg.ReadString(), 32);
             pkg.ReadVector3(); // position
@@ -1259,11 +1401,11 @@ namespace TheRavensCall
                 stats[((PlayerStatType)statId).ToString()] = value;
             }
 
-            if (!Verify(playerName, out string verified)) return;
+            if (!VerifySelf(reporter, playerName, out string verified)) return;
             CombatCredit.ApplyVanillaStats(verified, stats);
         }
 
-        private static void HandleSkillSnapshot(ZPackage pkg)
+        private static void HandleSkillSnapshot(ZNetPeer reporter, ZPackage pkg)
         {
             string playerName = Cap(pkg.ReadString(), 32);
             pkg.ReadVector3(); // position
@@ -1281,7 +1423,7 @@ namespace TheRavensCall
                 progress[name] = pct;
             }
 
-            if (!Verify(playerName, out string verified)) return;
+            if (!VerifySelf(reporter, playerName, out string verified)) return;
             CombatCredit.ApplySkillLevels(verified, levels, progress);
         }
     }
