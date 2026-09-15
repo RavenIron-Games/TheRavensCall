@@ -10,7 +10,7 @@ Written 2026-09-15 for the first live run of the two review batches (TheRavensCa
 | same folder | `theravenscall.html`, `manifest.json` | repo root / HexiumDist | |
 | Gale `testing` profile, `BepInEx\plugins\RavenIronStudios-WhereTheCrowFlies\` | `WhereTheCrowFlies.dll` | main bdcebb7, Release build | `ccdd6fa99caac6b318c3e9765ff8d8ca` |
 | `Storm10\BepInEx\config\com.raveniron.theravenscall.cfg` | pre-seeded with `[Combat] LogCombatReports = true`; BepInEx fills every other key with its default on first boot | | |
-| `Storm10\adminlist.txt` | `Steam_76561198392625778` (Don, plays as Nomadtest) — needed for the console command step | | |
+| `Storm10\saves\adminlist.txt` (the `-savedir`; the copy in the server root is never read) | `76561198392625778` and `V_76561198392625778` (Don, plays as Nomadtest) plus the same two forms of `76561198224105156` — needed for the console command step | | |
 
 Neither mod had ever been installed on Storm10 or the `testing` profile before this session. The Discord webhook is left empty; the Chronicle line and the "Discord webhook" log line stand in for it unless a test webhook is configured.
 
@@ -101,7 +101,7 @@ Don played on the `testing` profile against pid 33384 for 44 minutes. Times belo
 | 8 | PASS | Full-inventory craft attempt: record untouched, no crafting report. |
 | 9 | PASS with one anomaly | Skill snapshot arrived on its 5-minute clock (crafting progress 0.3 after the arrows) and the stat deltas work (`Jumps` 108 to 118 within 10 s of ten jumps). Anomaly: the vanilla `Crafts`/`CraftAmmo`/`CraftsOrUpgrades` counters never moved for the 12:17 crafts, through both the delta path and at least one later snapshot, while the 12:34 single batch moved all three by one within 10 s. Not reproduced; the mod's own `items_crafted` was right both times. |
 | 10 | PASS | `ravenscall season start Test` typed on the client 12:23:52: server logged `Season started: Test`, Chronicle switched to `Chronicle\seasons\Test\`, narration fired; `ravenscall season end` 12:34:57 closed it and the Chronicle switched back. |
-| 11 | NOT RUN | Server was restarted with the admin entry removed and the bind/token settings on, but Don closed the session before rejoining. Admin entry and defaults restored. |
+| 11 | NOT RUN | Server was restarted with the bind/token settings on, but Don closed the session before rejoining. The "admin entry removed" for that restart was taken out of `Storm10\adminlist.txt` in the server root, which the server does not read (it reads the `-savedir` copy, `Storm10\saves\adminlist.txt`, where both of Don's entries still stood), so the gate was never actually closed; a real run needs that file edited. Defaults restored. |
 | 12 | PASS | With Don online: `GET /` 200 (252,104 bytes), `/api/health` `{"status":"ok","version":"1.2.4"}`, `/api/state` one row with live counters, `/api/pins` and `/api/gamedata` 200. |
 | 13 | PASS | `http://192.168.12.140:2112/` (this machine's LAN address) refused under the default. Tested from the server machine, not a phone. |
 | 14 | PASS | `HttpBindAllInterfaces = true`: log says `listening on http://localhost:2112 and every interface`; the LAN address serves the page. |
