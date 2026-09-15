@@ -38,7 +38,7 @@ To provide seamless, 100% accurate tracking without missing a single event, the 
 
 2. **[WhereTheCrowFlies](https://valheim.thunderstore.io/package/RavenIron/WhereTheCrowFlies) (Client Companion Mod)**
    - Installed on **Player Game Clients**.
-   - Lightweight, zero-overhead client mod that hooks local simulation events (kills, deaths with cause resolution, damage dealt/taken, bosses slain, fish caught, gear tier, and every vanilla stat, ~205 on Valheim 1.0).
+   - Lightweight, zero-overhead client mod that hooks local simulation events (kills, deaths with cause resolution, damage dealt/taken, bosses slain, fish caught, and every vanilla stat, ~205 on Valheim 1.0).
    - Batches continuous telemetry into efficient 10-second updates and transmits them via routed RPC to The Raven's Call.
    - **Safe Everywhere**: When connecting to vanilla or unmodded servers, client RPC calls silently discard with zero errors, zero latency, and zero log noise.
 
@@ -145,7 +145,7 @@ Every player's record is verified against active server connections:
 
   "kills_narrative": 341,
   "deaths_narrative": 12,
-  "gear_tier": 5,
+  "gear_tier": 0,
   "active_title": "Wolf Hunter",
   "titles_earned": ["Boar Hunter", "Wolf Hunter", "Stag Breaker"],
   "biomes_discovered": ["Meadows", "BlackForest", "Swamp", "Mountain"],
@@ -159,7 +159,7 @@ Every player's record is verified against active server connections:
   "deaths_lifetime": 12,
 
   "bosses_defeated": ["eikthyr", "elder", "bonemass", "moder"],
-  "caught_fish": ["fish_1", "fish_3", "fish_9"],
+  "caught_fish": ["$item_fish1", "$item_fish3"],
 
   "death_history": [
     {

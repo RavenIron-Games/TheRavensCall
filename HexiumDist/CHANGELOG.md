@@ -9,7 +9,7 @@
 
 ## 🟢 [1.3.0] — The Raven Speaks Plainly
 
-*`/api/state` is now exactly the BarrkBOT export — the owner's word, 2026-09-15: "drop the aliases." Breaking for anything reading the old shape; the bundled dashboard page was the only consumer, and its rebuild is a separate PR. Pairs with WhereTheCrowFlies 1.1.3; nothing on the wire between the client mod and server changes.*
+*`/api/state` is now exactly the BarrkBOT export — the owner's word, 2026-09-15: "drop the aliases." Breaking for anything reading the old shape; the bundled dashboard page was the only consumer, and its rebuild is a separate PR. Works with WhereTheCrowFlies 1.1.1 (the published client) and newer; nothing on the wire between the client mod and server changes.*
 
 ### ⚠️ Changed, read this
 - **`/api/state` dropped the legacy dashboard shape and now returns exactly the BarrkBOT export** — the same envelope already written to `BarrkBOT_data1.json` every poll tick: `{generated_at, world_name, day, online_count, raid_active, raid_type, players:{"<name>": PlayerRecord, ...}}`, one `PlayerRegistry.ToJson` row per known player, keyed by name. `raid_active`/`raid_type` move from the removed per-player `combat{}` alias up to this top-level envelope, where they always actually lived (world state, not per-player).
