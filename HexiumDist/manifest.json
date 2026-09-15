@@ -1,6 +1,6 @@
 {
   "name": "TheRavensCall",
-  "version_number": "1.2.3",
+  "version_number": "1.2.4",
   "website_url": "https://ravenirongames.rglmobile1.workers.dev/",
   "description": "Server admin & analytics mod. Pairs with client mod WhereTheCrowFlies to track player kills, deaths, bosses, gear, and playtime. Narrates to Discord and Chronicle logs, with a web dashboard and BarrkBOT JSON export.",
   "dependencies": [
