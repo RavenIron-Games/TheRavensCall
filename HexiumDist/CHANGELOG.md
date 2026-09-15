@@ -7,6 +7,27 @@
 
 ---
 
+## 🟢 [1.2.4] — The Raven Bars the Door
+
+*The should-fix batch from the 2026-09-15 review. 1.2.3 was never released, so this can ship as the first build after 1.2.2. Nothing on the wire changes shape and no BarrkBOT field is renamed. Pairs with WhereTheCrowFlies 1.1.3 for the console routing; every older client still works.*
+
+### ⚠️ Changed, read this
+- **The dashboard and API now listen on localhost only by default.** They used to bind every interface (`http://+:port`) with no login, handing every known player's stats, skills, titles and death coordinates to anyone who could reach the port. Set `HttpBindAllInterfaces = true` to restore network access, ideally with the new `HttpApiToken`, which gates `/api/state`, `/api/gamedata` and `/api/pins` behind `?token=` or an `X-Api-Token` header. `/api/health` and the page stay open. The bundled page does not send a token, so its live data stops loading while one is set.
+
+### 🩹 Fixed
+- **Discord masked-link injection.** Character names and death causes reached the webhook embed with only quote escaping, so a name shaped like `[text](url)` posted a clickable link under the bot's identity. `[`, `]` and the backtick are now backslash-escaped for Discord before the JSON escaping, and newlines are JSON-escaped too.
+- **Exports are written atomically.** `players/*.json`, `BarrkBOT_data1.json` and `BarrkBOT_data2.json` were truncate-then-write, and the loader treated a truncated tail as "never set", so a crash mid-write silently zeroed a player. All three now go through a temp file and a rename, the way the contract already documents Fatty doing it. A truncated player file found on boot is reported, copied aside as `.corrupt`, and the player starts fresh instead of silently losing fields.
+- **The HTTP worker no longer walks live game state.** `/api/state` used to build its rows on a thread-pool thread while the main thread wrote the same dictionaries; it is now served from a string built on the main thread: primed at boot after the registry loads, then rebuilt by the poll tick only after a request has been served, so an unwatched dashboard costs nothing. (`/api/pins` still reads the minimap on the worker, which a dedicated server never has, so it returns an empty list there.)
+- **`ravenscall season start | end` can now be run from a client.** The command is flagged server-only and remote; with the WhereTheCrowFlies 1.1.3 routing stub, an admin typing it in their own console has it sent to the server, checked against the admin list, and run there. On the dedicated server console it works as before.
+- **Death and fish credits no longer save inline.** Both still did a synchronous file write per accepted report; they now mark the record dirty for the poll tick like every other credit path. A sender also gets one credited death per five seconds, since a real player cannot die twice in that window and each accepted death is a Discord post.
+- **Names with filename-invalid characters no longer double-record.** The registry key was read back off the sanitized file name, so `Od:in` loaded as `Od_in` and then got a second record when the real player joined, both saving over one file. The key now comes from the file's own `name` field. Windows reserved device names (`CON`, `COM1`, ...) are prefixed so those players can be saved at all.
+- **Docs said 105 vanilla stats.** Valheim 1.0 has about 205; the handoff and README now say so, and that the count is read off the wire.
+
+### 🔧 Changed
+- `HexiumDist/plugins/TheRavensCall.dll` is **not** rebuilt in this change; it is still the 1.2.2 Linux build and needs rebuilding at release.
+
+---
+
 ## 🟢 [1.2.3] — The Raven Checks the Messenger
 
 *Five findings from the 2026-09-15 review of the pair, all on the server. Nothing on the wire changes shape and no BarrkBOT field is renamed; a 1.1.1 client still talks to this server unchanged.*

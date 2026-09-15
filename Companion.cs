@@ -23,6 +23,15 @@ namespace TheRavensCall
         internal static ManualLogSource Log;
         internal static bool _recipesPushed = false;
 
+        // /api/state is served from this string, rebuilt on the main thread by
+        // PollAllPlayers every StatsPushIntervalSeconds. The HTTP worker
+        // threads used to walk PlayerRegistry and its per-record dictionaries
+        // while the main thread was writing them (review 2026-09-15).
+        internal static volatile string _stateCache;
+        // Set by a served /api/state request; the poll tick rebuilds the cache
+        // only when it is set, so an unwatched dashboard costs nothing.
+        internal static volatile bool _stateWanted = true;
+
         // HTTP server
         private HttpListener _listener;
         private Thread _serverThread;
@@ -79,13 +88,18 @@ namespace TheRavensCall
                 int port = Plugin.HttpServerPort.Value;
                 _listener = new HttpListener();
                 _listener.Prefixes.Add("http://localhost:" + port + "/");
-                _listener.Prefixes.Add("http://+:" + port + "/");
+                // Every interface only on request: the API serves every known
+                // player's stats, skills, titles and death coordinates with no
+                // login (review 2026-09-15). See HttpBindAllInterfaces and
+                // HttpApiToken in the config.
+                bool bindAll = Plugin.HttpBindAllInterfaces != null && Plugin.HttpBindAllInterfaces.Value;
+                if (bindAll) _listener.Prefixes.Add("http://+:" + port + "/");
                 _listener.Start();
                 _serverThread = new Thread(HandleRequests) { IsBackground = true, Name = "SteveHTTP" };
                 _serverThread.Start();
-                string localIp = GetLocalIP();
-                Log.LogInfo("HTTP server listening on http://localhost:" + port);
-                Log.LogInfo("Mobile devices: http://" + localIp + ":" + port);
+                Log.LogInfo("HTTP server listening on http://localhost:" + port + (bindAll ? " and every interface" : " (localhost only; set HttpBindAllInterfaces=true to expose it)"));
+                if (bindAll) Log.LogInfo("Mobile devices: http://" + GetLocalIP() + ":" + port);
+                if (!string.IsNullOrEmpty(Plugin.HttpApiToken?.Value)) Log.LogInfo("HTTP API token required on /api/state, /api/gamedata and /api/pins.");
             }
             catch (Exception ex)
             {
@@ -140,11 +154,25 @@ namespace TheRavensCall
                 if (path == "/favicon.ico")
                 { ctx.Response.StatusCode = 204; ctx.Response.Close(); return; }
 
+                if (!ApiTokenOk(ctx, path))
+                {
+                    byte[] denied = Encoding.UTF8.GetBytes("{\"error\":\"token required\"}");
+                    ctx.Response.StatusCode = 401;
+                    ctx.Response.ContentType = "application/json";
+                    ctx.Response.ContentLength64 = denied.Length;
+                    ctx.Response.OutputStream.Write(denied, 0, denied.Length);
+                    ctx.Response.Close();
+                    return;
+                }
+
                 byte[] body = Encoding.UTF8.GetBytes("Not found");
                 if (path == "/api/state")
                 {
                     ctx.Response.ContentType = "application/json";
-                    body = Encoding.UTF8.GetBytes(BuildStateArray());
+                    // Main-thread cache, never a live walk of the registry
+                    // from this worker thread (see _stateCache).
+                    _stateWanted = true;
+                    body = Encoding.UTF8.GetBytes(_stateCache ?? "[]");
                 }
                 else if (path == "/api/gamedata")
                 {
@@ -199,6 +227,27 @@ namespace TheRavensCall
                 Log.LogError("HTTP request error: " + ex.Message);
                 try { ctx.Response.StatusCode = 500; ctx.Response.Close(); } catch { }
             }
+        }
+
+        // Called once from the ZNet.Awake postfix right after
+        // PlayerRegistry.LoadAll, so the first /api/state after a restart
+        // sees the historical roster instead of an empty list.
+        internal static void PrimeStateCache()
+        {
+            if (Instance == null || Plugin.EnableHttpServer == null || !Plugin.EnableHttpServer.Value) return;
+            try { _stateCache = Instance.BuildStateArray(); _stateWanted = false; }
+            catch (Exception ex) { Log.LogError("state cache prime: " + ex.Message); }
+        }
+
+        // Gate the data routes behind HttpApiToken when one is configured.
+        // /api/health and the dashboard page stay open (no player data).
+        static bool ApiTokenOk(HttpListenerContext ctx, string path)
+        {
+            string token = Plugin.HttpApiToken?.Value;
+            if (string.IsNullOrEmpty(token)) return true;
+            if (path != "/api/state" && path != "/api/gamedata" && path != "/api/pins") return true;
+            string given = ctx.Request.QueryString["token"] ?? ctx.Request.Headers["X-Api-Token"];
+            return !string.IsNullOrEmpty(given) && string.Equals(given, token, StringComparison.Ordinal);
         }
 
         // Build /api/state array directly from the in-memory PlayerRegistry —
@@ -630,7 +679,18 @@ namespace TheRavensCall
                 string worldName = ZNet.instance != null ? ZNet.instance.GetWorldName() : "Unknown";
                 int day = EnvMan.instance != null ? EnvMan.instance.GetDay() : 0;
                 string barrkBotJson = PlayerRegistry.BuildBarrkBotJson(worldName, day, online.Count);
-                File.WriteAllText(Path.Combine(OutputDir, "BarrkBOT_data1.json"), barrkBotJson, Encoding.UTF8);
+                PlayerRegistry.AtomicWrite(Path.Combine(OutputDir, "BarrkBOT_data1.json"), barrkBotJson);
+
+                // Refresh the /api/state cache here, on the main thread, so
+                // the HTTP worker never touches live registry collections.
+                // Only after a request has been served since the last build:
+                // serializing every known record each tick for nobody is waste.
+                if (Instance != null && Plugin.EnableHttpServer.Value && _stateWanted)
+                {
+                    _stateWanted = false;
+                    try { _stateCache = Instance.BuildStateArray(); }
+                    catch (Exception ex) { Log.LogError("state cache: " + ex.Message); }
+                }
 
                 Log.LogInfo($"Poll tick — {online.Count} online, {PlayerRegistry.All.Count()} known player(s).");
             }
@@ -709,7 +769,7 @@ namespace TheRavensCall
             try
             {
                 string path = Path.Combine(OutputDir, "BarrkBOT_data2.json");
-                File.WriteAllText(path, payload, Encoding.UTF8);
+                PlayerRegistry.AtomicWrite(path, payload);
                 Log.LogInfo("Game data written OK");
             }
             catch (Exception ex) { Log.LogError("WriteGameData file error: " + ex); }

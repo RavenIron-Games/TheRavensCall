@@ -33,7 +33,7 @@ namespace TheRavensCall
     {
         public const string PluginGUID = "com.raveniron.theravenscall";
         public const string PluginName = "TheRavensCall";
-        public const string PluginVersion = "1.2.3";
+        public const string PluginVersion = "1.2.4";
 
         internal static ManualLogSource Log;
         internal static Plugin Instance;
@@ -75,6 +75,8 @@ namespace TheRavensCall
         public static ConfigEntry<bool> EnableHttpServer;
         public static ConfigEntry<int> HttpServerPort;
         public static ConfigEntry<float> StatsPushIntervalSeconds;
+        public static ConfigEntry<bool> HttpBindAllInterfaces;
+        public static ConfigEntry<string> HttpApiToken;
 
         // ── Combat (client-reported — see CombatReportReceiver) ──────────────
         public static ConfigEntry<bool> AcceptClientReports;
@@ -115,6 +117,8 @@ namespace TheRavensCall
             EnableHttpServer = Config.Bind("Companion", "EnableHttpServer", true, "Run the local HTTP dashboard/API on this machine (port below)");
             HttpServerPort = Config.Bind("Companion", "HttpServerPort", 2112, "Port for the HTTP dashboard/API (also serves /api/state used to build the BarrkBOT export)");
             StatsPushIntervalSeconds = Config.Bind("Companion", "StatsPushIntervalSeconds", 10f, "How often (seconds) to snapshot every online player's state, check for new biomes/gear tiers, and refresh the BarrkBOT export file");
+            HttpBindAllInterfaces = Config.Bind("Companion", "HttpBindAllInterfaces", false, "Also listen on every network interface (http://+:port), not only localhost. Off by default since 1.2.4: the API hands every known player's stats, skills, titles and death coordinates to anyone who can reach the port, with no login. Turn on only behind a firewall or together with HttpApiToken");
+            HttpApiToken = Config.Bind("Companion", "HttpApiToken", "", "If set, /api/state, /api/gamedata and /api/pins require ?token=<this value> (or an X-Api-Token header). /api/health and the dashboard page stay open. The bundled dashboard page does not send a token, so its live data stops loading while a token is set; use this when only a bot or script reads the API");
 
             AcceptClientReports = Config.Bind("Combat", "AcceptClientReports", true, "Accept RavensCall_CombatReport_V1 RPC reports (kills/deaths/damage/fish) from players running the WhereTheCrowFlies client mod. Every report is verified against the connected-player list before anything is credited");
             LogCombatReports = Config.Bind("Combat", "LogCombatReports", false, "Log every accepted/dropped/rate-limited combat report. Verbose — enable during rollout/verification, then turn back off");
@@ -323,6 +327,7 @@ namespace TheRavensCall
                 if (!ZNet.instance.IsServer()) return;
                 Chronicle.Init();
                 PlayerRegistry.LoadAll();
+                Companion.PrimeStateCache();
                 SessionTracker.Begin();
                 SeasonSystem.Init();
                 LoreSystem.Init();
@@ -603,7 +608,7 @@ namespace TheRavensCall
             rec.TotalDeathsLifetime++;
             rec.Dirty = true;
             Companion.RecordDeathHistory(rec, victim);
-            PlayerRegistry.Save(rec);
+            // Dirty only; SaveDirty flushes it (review 2026-09-15).
 
             string title = rec.ActiveTitle;
             string displayName = string.IsNullOrEmpty(title) ? name : $"{name} the {title}";
@@ -741,7 +746,8 @@ namespace TheRavensCall
             rec.TotalDeathsLifetime++;
             rec.Dirty = true;
             Companion.RecordDeathHistoryFromReport(rec, cause, position);
-            PlayerRegistry.Save(rec);
+            // Dirty only; SaveDirty flushes it. A synchronous save per accepted
+            // death report was a disk-write amplifier (review 2026-09-15).
 
             string title = rec.ActiveTitle;
             string displayName = string.IsNullOrEmpty(title) ? name : $"{name} the {title}";
@@ -775,7 +781,7 @@ namespace TheRavensCall
             var rec = PlayerRegistry.Get(name);
             rec.CaughtFish.Add(fishSlug.ToLowerInvariant());
             rec.Dirty = true;
-            PlayerRegistry.Save(rec);
+            // Dirty only; SaveDirty flushes it (review 2026-09-15).
         }
 
         // ── V2-only credit paths below. Same batched-telemetry philosophy as
@@ -965,6 +971,25 @@ namespace TheRavensCall
         private const float BossCreditWindowSeconds = 10f;
         private static readonly Dictionary<string, float> _lastBossCredit = new Dictionary<string, float>();
 
+        // One credited death per sender per window. A real player cannot die
+        // twice in five seconds; a client varying its reported position a few
+        // metres per packet could otherwise mint a fresh death dedup key at
+        // up to 30/s, each with a death_history entry and a Discord POST
+        // (review 2026-09-15). Self-only after the sender binding, so this
+        // caps self-spam of the channel, not cross-player forgery.
+        private const float DeathCreditWindowSeconds = 5f;
+        private static readonly Dictionary<long, float> _lastDeathCredit = new Dictionary<long, float>();
+
+        public static bool AllowDeathCredit(long sender)
+        {
+            float now = Time.realtimeSinceStartup;
+            foreach (var k in new List<long>(_lastDeathCredit.Keys))
+                if (now - _lastDeathCredit[k] > DeathCreditWindowSeconds) _lastDeathCredit.Remove(k);
+            if (_lastDeathCredit.ContainsKey(sender)) return false;
+            _lastDeathCredit[sender] = now;
+            return true;
+        }
+
         public static bool AllowBossCredit(long sender, string prefab)
         {
             float now = Time.realtimeSinceStartup;
@@ -1099,7 +1124,14 @@ namespace TheRavensCall
                         }
                         CombatCredit.CreditCreatureKill(verified, prefabOrCause, position);
                         break;
-                    case 2: CombatCredit.CreditPlayerDeath(verified, position, prefabOrCause); break;
+                    case 2:
+                        if (!CombatReportRateLimiter.AllowDeathCredit(sender))
+                        {
+                            if (Plugin.LogCombatReports.Value) Plugin.Log.LogWarning($"[TheRavensCall] death report dropped — budget exceeded for sender {sender}");
+                            break;
+                        }
+                        CombatCredit.CreditPlayerDeath(verified, position, prefabOrCause);
+                        break;
                     // Damage has no such dedup (a batch is a rolling sum, not
                     // a discrete event — see CreditDamage's own comment). A
                     // V2 client dual-sends this as V1 too, and crediting it
@@ -1184,7 +1216,7 @@ namespace TheRavensCall
                 switch (eventType)
                 {
                     case 1: HandleKill(sender, pkg); break;
-                    case 2: HandleDeath(reporterPeer, pkg); break;
+                    case 2: HandleDeath(sender, reporterPeer, pkg); break;
                     case 3: HandleDamageDefenseBatch(reporterPeer, pkg); break;
                     case 4: HandleFishCatch(reporterPeer, pkg); break;
                     case 5: HandleBuilding(reporterPeer, pkg); break;
@@ -1255,7 +1287,7 @@ namespace TheRavensCall
             CombatCredit.CreditCreatureKill(verified, victimPrefab, position);
         }
 
-        private static void HandleDeath(ZNetPeer reporter, ZPackage pkg)
+        private static void HandleDeath(long sender, ZNetPeer reporter, ZPackage pkg)
         {
             string victimName = Cap(pkg.ReadString(), 32);
             string cause = Cap(pkg.ReadString(), 64);
@@ -1264,6 +1296,11 @@ namespace TheRavensCall
             pkg.ReadString();  // biome
 
             if (!VerifySelf(reporter, victimName, out string verified)) return;
+            if (!CombatReportRateLimiter.AllowDeathCredit(sender))
+            {
+                if (Plugin.LogCombatReports.Value) Plugin.Log.LogWarning($"[TheRavensCall] death report dropped — budget exceeded for sender {sender}");
+                return;
+            }
             CombatCredit.CreditPlayerDeath(verified, position, cause);
         }
 
@@ -1911,7 +1948,15 @@ namespace TheRavensCall
 
                 int color = Colors.TryGetValue(eventType, out int c) ? c : 9807270;
                 string label = eventType.Replace("_", " ");
-                string escapedMsg = message.Replace("\\", "\\\\").Replace("\"", "\\\"");
+                // Character names and death causes are player-controlled text
+                // that lands inside this embed. Discord renders masked links
+                // ([text](url)) and code spans in embed descriptions, so a
+                // name shaped like one posts a clickable link under the bot's
+                // identity (review 2026-09-15). Backslash-escape the three
+                // characters that make those, then JSON-escape as before.
+                string safeMsg = message.Replace("[", "\\[").Replace("]", "\\]").Replace("`", "\\`");
+                string escapedMsg = safeMsg.Replace("\\", "\\\\").Replace("\"", "\\\"")
+                    .Replace("\n", "\\n").Replace("\r", "\\r").Replace("\t", "\\t");
                 string payload =
                     "{\"embeds\":[{" +
                     "\"title\":\"" + label + "\"," +
@@ -2131,6 +2176,12 @@ namespace TheRavensCall
     {
         private static void Postfix()
         {
+            // onlyServer + remoteCommand: on the dedicated server console the
+            // command runs directly (IsValid is true there); typed on a client
+            // that has the WhereTheCrowFlies routing stub, Terminal.TryRunCommand
+            // sends it through ZNet.RemoteCommand, the server checks the admin
+            // list in RPC_RemoteCommand, and this action runs here. Without
+            // the stub a client never knew the name at all (review 2026-09-15).
             new Terminal.ConsoleCommand("ravenscall", "Usage: ravenscall season start [name] | ravenscall season end", args =>
             {
                 if (args.Length < 2 || args[1] != "season") { args.Context?.AddString("[TheRavensCall] Usage: ravenscall season start [name] | ravenscall season end"); return; }
@@ -2149,7 +2200,7 @@ namespace TheRavensCall
                 {
                     args.Context?.AddString("[TheRavensCall] Usage: ravenscall season start [name] | ravenscall season end");
                 }
-            });
+            }, onlyServer: true, remoteCommand: true);
         }
     }
 

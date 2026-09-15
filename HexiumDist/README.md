@@ -7,7 +7,7 @@
 [![Companion](https://img.shields.io/badge/Client_Companion-WhereTheCrowFlies-blue.svg)]()
 [![Framework](https://img.shields.io/badge/Requires-BepInEx-red.svg)]()
 [![Publisher](https://img.shields.io/badge/RavenIron-Release-8B6F1F.svg)]()
-[![Version](https://img.shields.io/badge/Version-1.2.3-lightgrey.svg)]()
+[![Version](https://img.shields.io/badge/Version-1.2.4-lightgrey.svg)]()
 
 **RavenIron's server admin & analytics engine: aggregates player telemetry from *WhereTheCrowFlies*, chronicles realm history, and feeds live web dashboards and Discord AI bots.**
 
@@ -38,7 +38,7 @@ To provide seamless, 100% accurate tracking without missing a single event, the 
 
 2. **[WhereTheCrowFlies](https://valheim.thunderstore.io/package/RavenIron/WhereTheCrowFlies) (Client Companion Mod)**
    - Installed on **Player Game Clients**.
-   - Lightweight, zero-overhead client mod that hooks local simulation events (kills, deaths with cause resolution, damage dealt/taken, bosses slain, fish caught, gear tier, and 105 vanilla stats).
+   - Lightweight, zero-overhead client mod that hooks local simulation events (kills, deaths with cause resolution, damage dealt/taken, bosses slain, fish caught, gear tier, and every vanilla stat, ~205 on Valheim 1.0).
    - Batches continuous telemetry into efficient 10-second updates and transmits them via routed RPC to The Raven's Call.
    - **Safe Everywhere**: When connecting to vanilla or unmodded servers, client RPC calls silently discard with zero errors, zero latency, and zero log noise.
 
@@ -81,7 +81,7 @@ Every death, every kill, every fallen god, every shoreline first walked — The 
 - **Gear tier**, tracked as players advance their equipment from Leather through Flametal.
 - **Titles**, earned through creature-family kill counts, boss kills, and the number of gods felled — up to and including *Slayer of Gods* for felling all seven.
 - **Damage dealt & taken**, tracked both for current sessions and lifetime cumulative combat, plus blocks, parries, and damage blocked.
-- **Every vanilla stat on your own in-game Stats screen** — kills, hits, deaths, jumps, cheats, world loads, PvP hits/kills, arrows shot, portals, distance traveled, and the rest of Valheim's ~105 built-in counters — reported as an absolute snapshot, so it backfills whatever a player had already earned before installing the mod instead of starting from zero.
+- **Every vanilla stat on your own in-game Stats screen** — kills, hits, deaths, jumps, cheats, world loads, PvP hits/kills, arrows shot, portals, distance traveled, and the rest of Valheim's ~205 built-in counters (105 before 1.0) — reported as an absolute snapshot, so it backfills whatever a player had already earned before installing the mod instead of starting from zero.
 - **Skill levels & progress**, for every skill a player has actually raised (Swords, Bows, Sneak, Jump, and the rest).
 - **Fish caught**, structures built/removed/repaired, items crafted/upgraded/repaired, resources harvested per type, food & potions consumed, bosses summoned, and guardian powers used.
 
@@ -202,7 +202,7 @@ Every player's record is verified against active server connections:
 | `session_kills` / `damage_dealt_session` / `damage_taken_session` | Session-scoped combat stats. | Resets to zero on each new player connection. |
 | `blocks_session` / `parries_session` / `damage_blocked_session` | Session-scoped defense stats. | Resets to zero on each new player connection. |
 | `playtime_seconds_lifetime` | Total accumulated play time. | Persists across server restarts. Divide by 3600 for hours. |
-| `vanilla_stats` | Every counter on the player's own in-game Stats screen — kills, hits, deaths, jumps, cheats, world loads, PvP hits/kills, arrows shot, portals, distance traveled, and the rest of Valheim's ~105 built-in `PlayerStatType` counters. | Keyed by Valheim's own enum names. Reported by the *WhereTheCrowFlies* client mod as an absolute snapshot (not deltas), so it backfills a player's true lifetime totals — including whatever they'd already earned before this mod was installed — the moment their client syncs, and can't drift from a dropped packet. Empty until a player's client has synced at least once. |
+| `vanilla_stats` | Every counter on the player's own in-game Stats screen — kills, hits, deaths, jumps, cheats, world loads, PvP hits/kills, arrows shot, portals, distance traveled, and the rest of Valheim's ~205 built-in `PlayerStatType` counters (105 before 1.0). | Keyed by Valheim's own enum names. Reported by the *WhereTheCrowFlies* client mod as an absolute snapshot (not deltas), so it backfills a player's true lifetime totals — including whatever they'd already earned before this mod was installed — the moment their client syncs, and can't drift from a dropped packet. Empty until a player's client has synced at least once. |
 | `skill_levels` / `skill_progress` | Skill level (0-100) and progress-to-next-level (0-1) per skill, e.g. `Swords`, `Bows`, `Jump`, `Sneak`. | Same absolute-snapshot reporting as `vanilla_stats`. A skill absent from both means the player has never raised it, not that it's at zero. |
 | `builds_*` / `items_*` / `resources_harvested` / `consumables_eaten` / `bosses_summoned` / `guardian_powers_used` | Lifetime activity counters — construction, crafting/upgrading/repairing, foraging/farming/sap totals per resource, food & potions consumed, bosses summoned at altars, and Forsaken guardian powers activated. | Aggregate counts only, not full histories — same bounded-footprint approach as `death_history`. |
 
@@ -232,9 +232,9 @@ Set `WebhookUrl` under `[Discord]` in `BepInEx/config/com.raveniron.theravenscal
 
 A full player-stats dashboard served directly by the mod's built-in HTTP server:
 
-- Open `http://localhost:2112` on the server machine, or `http://<server-ip>:2112` from any network browser.
+- Open `http://localhost:2112` on the server machine. Since 1.2.4 the server listens on localhost only unless `HttpBindAllInterfaces = true`; the API hands every known player's stats, skills, titles and death coordinates to anyone who can reach the port, so open it to the network only behind a firewall or with `HttpApiToken` set.
 - Displays live vitals, inventories, combat stats, death history, fishing, structure timers, boats, tamed creatures, and progression tracking for **every player** who has joined the realm.
-- Includes JSON API endpoints: `/api/state`, `/api/gamedata`, and `/api/health`.
+- Includes JSON API endpoints: `/api/state`, `/api/gamedata`, and `/api/health`. With `HttpApiToken` set, `/api/state`, `/api/gamedata` and `/api/pins` need `?token=<value>` (or an `X-Api-Token` header); `/api/health` and the page itself stay open. The bundled page does not send a token, so its live data stops loading while one is set.
 - Can be toggled off with `EnableHttpServer = false` if only file export is desired.
 
 ---
@@ -287,6 +287,8 @@ Configuration is located at `BepInEx/config/com.raveniron.theravenscall.cfg`:
 | **Narrative**| `EnableNarrativeMode` | `true` | Uses dynamic Norse flavor-text templates. |
 | **Companion**| `EnableHttpServer` | `true` | Runs the web dashboard and local HTTP API. |
 | **Companion**| `HttpServerPort` | `2112` | Port for web dashboard and API access. |
+| **Companion**| `HttpBindAllInterfaces` | `false` | Also listen on every interface. Off by default since 1.2.4; the API has no login. |
+| **Companion**| `HttpApiToken` | `""` | If set, `/api/state`, `/api/gamedata` and `/api/pins` require `?token=` or `X-Api-Token`. |
 | **Companion**| `StatsPushIntervalSeconds` | `10` | Frequency (seconds) for updating `BarrkBOT_data1.json` / `BarrkBOT_data2.json`. |
 
 ---

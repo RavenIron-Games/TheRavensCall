@@ -129,10 +129,34 @@ namespace TheRavensCall
                 Directory.CreateDirectory(PlayersDir);
                 foreach (string file in Directory.GetFiles(PlayersDir, "*.json"))
                 {
-                    string name = Path.GetFileNameWithoutExtension(file);
-                    if (string.IsNullOrEmpty(name)) continue;
-                    var rec = LoadFromDisk(name);
-                    if (rec != null) { rec.Name = name; _records[name] = rec; }
+                    // The registry key is the player's real name, read back from
+                    // the file's own "name" field. Deriving it from the file name
+                    // broke every name SanitizeForFile had to alter: "Od:in" was
+                    // loaded as "Od_in", then the real Od:in joined and got a
+                    // second record over the same file (review 2026-09-15).
+                    // Files written before this fix carry the field too, since
+                    // ToJson has always emitted it first.
+                    string fileKey = Path.GetFileNameWithoutExtension(file);
+                    if (string.IsNullOrEmpty(fileKey)) continue;
+                    string name = null;
+                    try { name = Companion.JsonGetString(File.ReadAllText(file, Encoding.UTF8), "name"); } catch { }
+                    if (string.IsNullOrEmpty(name)) name = fileKey;
+                    // A file that no longer sits where Save() will write it (a
+                    // reserved device name, now prefixed) is migrated once, so
+                    // two files can never claim one key. If the new-style file
+                    // already exists it is the live one and the leftover is
+                    // skipped, whatever order the directory enumerates in.
+                    string want = SanitizedFileName(name);
+                    bool renamed = !string.Equals(Path.GetFullPath(file), Path.GetFullPath(want), StringComparison.OrdinalIgnoreCase);
+                    if (renamed && File.Exists(want)) continue;
+                    var rec = LoadFromDisk(name, file);
+                    if (rec == null) continue;
+                    rec.Name = name; _records[name] = rec;
+                    if (renamed)
+                    {
+                        try { rec.Dirty = true; Save(rec); File.Delete(file); }
+                        catch (Exception ex) { Plugin.Log.LogWarning($"[TheRavensCall] PlayerRegistry: could not migrate {Path.GetFileName(file)} to {Path.GetFileName(want)}: {ex.Message}"); }
+                    }
                 }
                 Plugin.Log.LogInfo($"[TheRavensCall] PlayerRegistry loaded {_records.Count} player record(s).");
             }
@@ -142,22 +166,81 @@ namespace TheRavensCall
         private static string SanitizedFileName(string playerName) =>
             Path.Combine(PlayersDir, SanitizeForFile(playerName) + ".json");
 
+        // Windows reserved device names cannot be file names at all; a player
+        // called CON or COM1 could never be saved (review 2026-09-15).
+        private static readonly HashSet<string> ReservedFileNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "CON", "PRN", "AUX", "NUL",
+            "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+            "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+        };
+
         private static string SanitizeForFile(string name)
         {
             if (string.IsNullOrEmpty(name)) return "unknown";
             var sb = new StringBuilder();
             char[] invalid = Path.GetInvalidFileNameChars();
             foreach (char c in name) sb.Append(Array.IndexOf(invalid, c) >= 0 ? '_' : c);
-            return sb.ToString();
+            string s = sb.ToString();
+            return ReservedFileNames.Contains(s) ? "_" + s : s;
         }
 
-        private static PlayerRecord LoadFromDisk(string playerName)
+        // Temp file + rename, so a reader (BarrkBOT reads these off disk) can
+        // never see a half-written file, and a crash mid-write leaves the
+        // previous complete file in place instead of a truncated one that the
+        // loader would read back as "never set" (review 2026-09-15). Same
+        // UTF-8-with-BOM encoding as before; the contract documents the BOM.
+        internal static void AtomicWrite(string path, string text)
+        {
+            string tmp = path + ".tmp";
+            File.WriteAllText(tmp, text, Encoding.UTF8);
+            try
+            {
+                if (File.Exists(path)) File.Replace(tmp, path, null);
+                else File.Move(tmp, path);
+            }
+            catch (Exception)
+            {
+                // Platform without an atomic replace: move the old file aside,
+                // move the new one in, then drop the backup, so a failure at
+                // any step leaves at least one complete copy on disk. (The
+                // contract's "a missing file is loud" holds for the BarrkBOT
+                // aggregates only; nobody but this mod reads players/*.json,
+                // so a missing one there would be silent.)
+                string bak = path + ".bak";
+                if (File.Exists(path))
+                {
+                    try { File.Delete(bak); } catch { }
+                    File.Move(path, bak);
+                }
+                try { File.Move(tmp, path); }
+                catch
+                {
+                    if (File.Exists(bak) && !File.Exists(path)) File.Move(bak, path);
+                    throw;
+                }
+                try { File.Delete(bak); } catch { }
+            }
+        }
+
+        // path: pass the actual file when it is already known (LoadAll), so a
+        // record whose sanitized name changed (a reserved name) still loads.
+        private static PlayerRecord LoadFromDisk(string playerName, string path = null)
         {
             try
             {
-                string path = SanitizedFileName(playerName);
+                if (string.IsNullOrEmpty(path)) path = SanitizedFileName(playerName);
                 if (!File.Exists(path)) return null;
                 string json = File.ReadAllText(path, Encoding.UTF8);
+                if (!json.TrimEnd().EndsWith("}"))
+                {
+                    // Every accessor below treats a missing key as "never set",
+                    // so a truncated file would silently zero the player. Say
+                    // so, keep the evidence, start fresh (review 2026-09-15).
+                    Plugin.Log.LogWarning($"[TheRavensCall] PlayerRegistry: {Path.GetFileName(path)} is truncated; {playerName} starts from a fresh record. Copy kept as {Path.GetFileName(path)}.corrupt");
+                    try { File.Copy(path, path + ".corrupt", true); } catch { }
+                    return null;
+                }
 
                 var rec = new PlayerRecord
                 {
@@ -278,7 +361,7 @@ namespace TheRavensCall
             try
             {
                 Directory.CreateDirectory(PlayersDir);
-                File.WriteAllText(SanitizedFileName(rec.Name), ToJson(rec), Encoding.UTF8);
+                AtomicWrite(SanitizedFileName(rec.Name), ToJson(rec));
                 rec.Dirty = false;
             }
             catch (Exception ex) { Plugin.Log.LogWarning($"[TheRavensCall] PlayerRegistry save failed for {rec?.Name}: {ex.Message}"); }

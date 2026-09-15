@@ -196,7 +196,7 @@ docs, not a live boot.
 **Root cause, found this pass:** `WhereTheCrowFlies` had shipped a full second RPC channel,
 `RavensCall_EventReport_V2`, since its own v1.0.1 — 10 event types covering kills, deaths,
 damage/defense, fish, building, crafting, harvesting, consumables, world events, and a delta
-sync of every one of Valheim's ~105 built-in `PlayerStatType` counters. This repo's `Saga.cs`
+sync of every one of Valheim's built-in `PlayerStatType` counters (~205 since 1.0, 105 before; the count is read off the wire). This repo's `Saga.cs`
 only ever registered a listener for the old `RavensCall_CombatReport_V1` channel. Valheim
 silently no-ops an unregistered routed RPC — no error, no dropped-connection, nothing in the
 log — so every V2 packet a client sent had been vanishing since the day v1.0.1 shipped. The
@@ -248,7 +248,7 @@ of us were mid-implementation — see that repo's own HANDOFF.md for its half):
 - Both fire once immediately on `Player.OnSpawned` (quick-connect-then-alt-tab still backfills
   fast), then on their own clock — `WhereTheCrowFlies`'s `FullSyncIntervalSeconds`, default **5
   minutes**, not the 10s combat-batch tick — after the owner flagged every-10s full snapshots as
-  excessive chatter for 105 stats + skills.
+  excessive chatter for ~205 stats + skills.
 - `EventReportReceiver` **assigns** (`=`) these into `VanillaStats`/`SkillLevels` via
   `CombatCredit.ApplyVanillaStats`/`ApplySkillLevels` — every sync is a fresh ground-truth
   snapshot, immune to drift, and self-heals from a dropped packet the next time it fires.
