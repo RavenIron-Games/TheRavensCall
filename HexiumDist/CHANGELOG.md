@@ -7,6 +7,22 @@
 
 ---
 
+## 🟢 [1.2.3] — The Raven Checks the Messenger
+
+*Five findings from the 2026-09-15 review of the pair, all on the server. Nothing on the wire changes shape and no BarrkBOT field is renamed; a 1.1.1 client still talks to this server unchanged.*
+
+### 🩹 Fixed
+- **Any connected player could report for any other online player.** Both receivers resolved the sender's peer and then only checked that the *named* player was connected. A ten-line client mod could forge deaths, kills, and, worse, absolute stat and skill snapshots for anyone online, overwriting their lifetime counters. Every self-report (death, damage batch, fish, building, crafting, harvesting, consumables, world events, stat sync, stat snapshot, skill snapshot) is now bound to the reporting peer's own character name; only a kill may still name someone else, because the creature's zone owner reports it and the killer can legitimately be another player.
+- **Player deaths were dead code.** `Player.OnDeath` overrides `Character.OnDeath` without calling base, so the server's own `Character.OnDeath` patch could never see a player. The player branch now has its own `Player.OnDeath` target and shares the death dedup key with the RPC path, so a listen host running both mods cannot credit one death twice. Dormant on a dedicated server as before. **The client side of the same bug is WhereTheCrowFlies 1.1.2**: until players run that, no player death reaches this server at all.
+- **NaN and Infinity could reach the export.** Stat and skill snapshot floats were assigned unvalidated and `Companion.F` printed them as bare `NaN`/`Infinity` tokens, which is not JSON: a strict reader rejects the whole `BarrkBOT_data1.json`, and `players/*.json` parsed the tokens straight back in on the next boot. Non-finite values are now skipped on receive, the remainder clamped, the formatter never emits a bare token, and the loader drops a poisoned value instead of reloading it.
+- **Every rejected connection wrote a phantom player.** `ZNet.RPC_PeerInfo` returns before it assigns the peer id or name on a wrong password, version mismatch, ban, full server or bad session ticket, but the join postfix still ran, created a permanent `A Viking` record (and `players/A Viking.json`), narrated a join, and then swallowed every later rejection in that run. That row violated the contract's "a player absent from `players` has never been seen". The postfix now returns for a peer that is not ready. **Operator step:** delete `BepInEx/config/TheRavensCall/players/A Viking.json` once if it exists; it will not come back.
+- **Boss-kill reports were an amplifier.** The dedup key bucketed the reported position at 4 m, so a few metres of jitter per packet minted a new key; each accepted boss kill then did a synchronous file save per player in radius plus a Discord POST, at up to 30 per second per sender. The boss dedup now buckets at 64 m, kill and boss credits mark the record dirty for the poll tick instead of saving inline (as the V2-only credit paths already did; player-death and fish-catch credits still save inline), and a sender gets one credit per boss per ten seconds.
+
+### 🔧 Changed
+- `HexiumDist/plugins/TheRavensCall.dll` is **not** rebuilt in this change; it is still the 1.2.2 Linux build and needs rebuilding at release.
+
+---
+
 ## 🟢 [1.2.2] — The Raven Learns the Tenth World
 
 *Valheim 1.0.7 landed and the crow started counting a hundred new things. The raven's ledger had room for two hundred lines; the crow now sends two hundred and five.*
