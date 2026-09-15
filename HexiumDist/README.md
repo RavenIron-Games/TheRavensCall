@@ -7,7 +7,7 @@
 [![Companion](https://img.shields.io/badge/Client_Companion-WhereTheCrowFlies-blue.svg)]()
 [![Framework](https://img.shields.io/badge/Requires-BepInEx-red.svg)]()
 [![Publisher](https://img.shields.io/badge/RavenIron-Release-8B6F1F.svg)]()
-[![Version](https://img.shields.io/badge/Version-1.2.4-lightgrey.svg)]()
+[![Version](https://img.shields.io/badge/Version-1.3.0-lightgrey.svg)]()
 
 **RavenIron's server admin & analytics engine: aggregates player telemetry from *WhereTheCrowFlies*, chronicles realm history, and feeds live web dashboards and Discord AI bots.**
 
@@ -233,7 +233,7 @@ Set `WebhookUrl` under `[Discord]` in `BepInEx/config/com.raveniron.theravenscal
 A full player-stats dashboard served directly by the mod's built-in HTTP server:
 
 - Open `http://localhost:2112` on the server machine. Since 1.2.4 the server listens on localhost only unless `HttpBindAllInterfaces = true`; the API hands every known player's stats, skills, titles and death coordinates to anyone who can reach the port, so open it to the network only behind a firewall or with `HttpApiToken` set.
-- Displays live vitals, inventories, combat stats, death history, fishing, structure timers, boats, tamed creatures, and progression tracking for **every player** who has joined the realm.
+- Shows **every player** who has ever joined the realm: online status, lifetime kills and deaths (the crow-reported totals once a player runs WhereTheCrowFlies), titles, biomes, skills, boss kills, death history, fish caught, and the harvest, craft and build counters. A dedicated server has no live vitals, inventories or positions to show, and since 1.3.0 the API does not pretend otherwise.
 - Includes JSON API endpoints: `/api/state`, `/api/gamedata`, and `/api/health`. With `HttpApiToken` set, `/api/state`, `/api/gamedata` and `/api/pins` need `?token=<value>` (or an `X-Api-Token` header); `/api/health` and the page itself stay open. The bundled page does not send a token, so its live data stops loading while one is set.
 - Can be toggled off with `EnableHttpServer = false` if only file export is desired.
 

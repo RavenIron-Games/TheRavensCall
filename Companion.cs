@@ -27,10 +27,17 @@ namespace TheRavensCall
         // PollAllPlayers every StatsPushIntervalSeconds. The HTTP worker
         // threads used to walk PlayerRegistry and its per-record dictionaries
         // while the main thread was writing them (review 2026-09-15).
+        // 1.3.0: this is now exactly the BarrkBOT export string — the same
+        // one PollAllPlayers already builds and writes to BarrkBOT_data1.json
+        // every tick regardless of whether anyone is watching the dashboard,
+        // so gating the rebuild behind a "was it requested" flag (the old
+        // _stateWanted mechanism) no longer saves any work and was dropped.
         internal static volatile string _stateCache;
-        // Set by a served /api/state request; the poll tick rebuilds the cache
-        // only when it is set, so an unwatched dashboard costs nothing.
-        internal static volatile bool _stateWanted = true;
+        // Served until PrimeStateCache has run (or if it throws): the same
+        // envelope PlayerRegistry.BuildBarrkBotJson emits, with no players,
+        // so /api/state has one shape for its whole lifetime. Keep in step
+        // with that method.
+        internal const string EmptyStateJson = "{\"generated_at\":\"\",\"world_name\":\"\",\"day\":0,\"online_count\":0,\"raid_active\":false,\"raid_type\":\"\",\"players\":{}}";
 
         // HTTP server
         private HttpListener _listener;
@@ -170,9 +177,9 @@ namespace TheRavensCall
                 {
                     ctx.Response.ContentType = "application/json";
                     // Main-thread cache, never a live walk of the registry
-                    // from this worker thread (see _stateCache).
-                    _stateWanted = true;
-                    body = Encoding.UTF8.GetBytes(_stateCache ?? "[]");
+                    // from this worker thread (see _stateCache). Before the
+                    // first prime the empty envelope keeps the shape invariant.
+                    body = Encoding.UTF8.GetBytes(_stateCache ?? EmptyStateJson);
                 }
                 else if (path == "/api/gamedata")
                 {
@@ -231,11 +238,22 @@ namespace TheRavensCall
 
         // Called once from the ZNet.Awake postfix right after
         // PlayerRegistry.LoadAll, so the first /api/state after a restart
-        // sees the historical roster instead of an empty list.
+        // sees the historical roster instead of an empty envelope.
         internal static void PrimeStateCache()
         {
             if (Instance == null || Plugin.EnableHttpServer == null || !Plugin.EnableHttpServer.Value) return;
-            try { _stateCache = Instance.BuildStateArray(); _stateWanted = false; }
+            try
+            {
+                string worldName = ZNet.instance != null ? ZNet.instance.GetWorldName() : "Unknown";
+                int day = EnvMan.instance != null ? EnvMan.instance.GetDay() : 0;
+                // Plugin.GetConnectedPlayers() over a hardcoded 0: this runs
+                // from ZNet.Awake's own postfix, before ZNet has accepted any
+                // peers, so it naturally evaluates to 0 today — but reading
+                // it live keeps this the same "who's online" source
+                // PollAllPlayers uses instead of a second, driftable count.
+                int onlineCount = Plugin.GetConnectedPlayers().Count();
+                _stateCache = PlayerRegistry.BuildBarrkBotJson(worldName, day, onlineCount);
+            }
             catch (Exception ex) { Log.LogError("state cache prime: " + ex.Message); }
         }
 
@@ -248,41 +266,6 @@ namespace TheRavensCall
             if (path != "/api/state" && path != "/api/gamedata" && path != "/api/pins") return true;
             string given = ctx.Request.QueryString["token"] ?? ctx.Request.Headers["X-Api-Token"];
             return !string.IsNullOrEmpty(given) && string.Equals(given, token, StringComparison.Ordinal);
-        }
-
-        // Build /api/state array directly from the in-memory PlayerRegistry —
-        // one row per known player, merged with a live snapshot for whoever is
-        // currently online. No per-character files, no string-surgery merge:
-        // PlayerRegistry is the single source of truth (see PlayerRegistry.cs).
-        string BuildStateArray()
-        {
-            var rows = new List<string>();
-            try
-            {
-                var online = Player.GetAllPlayers().Where(p => p != null).ToList();
-                foreach (var rec in PlayerRegistry.All)
-                {
-                    var live = online.FirstOrDefault(p => p.GetPlayerName() == rec.Name);
-                    rows.Add(live != null ? BuildStateJson(live, rec) : BuildOfflineStateJson(rec));
-                }
-            }
-            catch (Exception ex) { Log.LogError("BuildStateArray: " + ex.Message); }
-
-            rows.Sort((a, b) => string.Compare(JsonGetString(b, "updated_at") ?? "", JsonGetString(a, "updated_at") ?? "", StringComparison.Ordinal));
-            return "[" + string.Join(",", rows.ToArray()) + "]";
-        }
-
-        // Minimal row for a player who isn't currently connected — persisted
-        // stats only, no live vitals/inventory to report.
-        string BuildOfflineStateJson(PlayerRecord rec)
-        {
-            var sb = new StringBuilder("{");
-            sb.Append("\"player_name\":\"" + Esc(rec.Name) + "\",");
-            sb.Append("\"world_name\":\"" + Esc(ZNet.instance != null ? ZNet.instance.GetWorldName() : "Unknown") + "\",");
-            sb.Append("\"biome\":\"Unknown\",");
-            sb.Append("\"updated_at\":\"" + Esc(rec.LastSeen) + "\"");
-            sb.Append("}");
-            return AppendRegistryFields(sb.ToString(), rec);
         }
 
         // Minimal field extractor for the HTTP server — extracts raw value (object/array/string/number)
@@ -390,266 +373,6 @@ namespace TheRavensCall
         internal static Heightmap.Biome GetBiomeAt(Vector3 position) =>
             WorldGenerator.instance != null ? WorldGenerator.instance.GetBiome(position) : Heightmap.Biome.None;
 
-        string BuildStateJson(Player player, PlayerRecord rec)
-        {
-            string playerName = player.GetPlayerName();
-            string worldName = ZNet.instance != null ? ZNet.instance.GetWorldName() : "Unknown";
-            string biome = GetBiome(player).ToString();
-            int day = EnvMan.instance != null ? EnvMan.instance.GetDay() : 0;
-
-            // Weather / time of day
-            string weatherName = "";
-            bool isDay = true, isRaining = false, isCold = false, isFreezing = false;
-            float dayFraction = 0f;
-            try
-            {
-                if (EnvMan.instance != null)
-                {
-                    var env = EnvMan.instance.GetCurrentEnvironment();
-                    if (env != null) weatherName = env.m_name;
-                    isDay = EnvMan.IsDay();
-                    isRaining = EnvMan.IsWet();
-                    isCold = EnvMan.IsCold();
-                    isFreezing = EnvMan.IsFreezing();
-                    dayFraction = EnvMan.instance.GetDayFraction();
-                }
-            }
-            catch { }
-
-            string hp = F(player.GetHealth());
-            string maxHp = F(player.GetMaxHealth());
-            string sta = F(player.GetStamina());
-            string maxSta = F(player.GetMaxStamina());
-            string eitr = F(player.GetEitr());
-            string maxEitr = F(player.GetMaxEitr());
-            string comfort = player.GetComfortLevel().ToString();
-            string weight = F(player.GetInventory().GetTotalWeight());
-            string maxWeight = F(player.GetMaxCarryWeight());
-
-            var pos = player.transform.position;
-
-            var skillsSb = new StringBuilder("[");
-            foreach (Skills.SkillType st in Enum.GetValues(typeof(Skills.SkillType)))
-            {
-                if (st == Skills.SkillType.None || st == Skills.SkillType.All) continue;
-                int lvl = (int)player.GetSkillLevel(st);
-                string pct = F(player.GetSkillFactor(st) * 100f);
-                skillsSb.Append("{\"id\":\"" + st + "\",\"name\":\"" + st + "\",\"level\":" + lvl + ",\"percent\":" + pct + "},");
-            }
-            if (skillsSb.Length > 1) skillsSb.Length--;
-            skillsSb.Append("]");
-
-            var invSb = new StringBuilder("[");
-            foreach (var item in player.GetInventory().GetAllItems())
-            {
-                string slug = Esc(item.m_shared.m_name);
-                string iname = Esc(Loc(item.m_shared.m_name));
-                string cat = item.m_shared.m_itemType.ToString();
-                invSb.Append("{\"slug\":\"" + slug + "\",\"name\":\"" + iname + "\",\"qty\":" + item.m_stack + ",\"category\":\"" + cat + "\",\"equipped\":" + B(item.m_equipped) + "},");
-            }
-            if (invSb.Length > 1) invSb.Length--;
-            invSb.Append("]");
-
-            var foodSb = new StringBuilder("[");
-            var foods = (List<Player.Food>)AccessTools.Field(typeof(Player), "m_foods").GetValue(player);
-            if (foods != null)
-            {
-                foreach (var f in foods)
-                {
-                    string fname = Esc(Loc(f.m_item?.m_shared?.m_name ?? ""));
-                    string fHp = F(f.m_item?.m_shared?.m_food ?? 0f);
-                    string fSta = F(f.m_item?.m_shared?.m_foodStamina ?? 0f);
-                    string fTime = F(f.m_time);
-                    string fMax = F(f.m_item?.m_shared?.m_foodBurnTime ?? 1800f);
-                    foodSb.Append("{\"name\":\"" + fname + "\",\"time_remaining\":" + fTime + ",\"max_time\":" + fMax + ",\"health\":" + fHp + ",\"stamina\":" + fSta + "},");
-                }
-                if (foodSb.Length > 1) foodSb.Length--;
-            }
-            foodSb.Append("]");
-
-            // Guardian power
-            string guardianName = "";
-            string guardianCooldown = "0.0";
-            string guardianMaxCooldown = "0.0";
-            try
-            {
-                var guardianSE = AccessTools.Field(typeof(Player), "m_guardianSE").GetValue(player) as StatusEffect;
-                if (guardianSE != null) guardianName = Esc(Loc(guardianSE.m_name));
-                float gcd = (float)(AccessTools.Field(typeof(Player), "m_guardianPowerCooldown").GetValue(player) ?? 0f);
-                guardianCooldown = F(gcd);
-                if (guardianSE != null) guardianMaxCooldown = F(guardianSE.m_cooldown);
-            }
-            catch { }
-            string guardian = "{\"name\":\"" + guardianName + "\",\"cooldown\":" + guardianCooldown + ",\"max_cooldown\":" + guardianMaxCooldown + "}";
-
-            // Status effects
-            var statusSb = new StringBuilder("[");
-            try
-            {
-                var seList = player.GetSEMan().GetStatusEffects();
-                var guardianSECheck = AccessTools.Field(typeof(Player), "m_guardianSE").GetValue(player) as StatusEffect;
-                bool firstSe = true;
-                foreach (var se in seList)
-                {
-                    if (se == null) continue;
-                    if (guardianSECheck != null && se == guardianSECheck) continue;
-                    string seName = Esc(Loc(se.m_name));
-                    float seTtl = se.m_ttl;
-                    float seTime = (float)(AccessTools.Field(typeof(StatusEffect), "m_time")?.GetValue(se) ?? 0f);
-                    float seRemaining = seTtl > 0 ? Mathf.Max(0f, seTtl - seTime) : 0f;
-                    if (!firstSe) statusSb.Append(",");
-                    statusSb.Append("{\"name\":\"" + seName + "\",\"ttl\":" + F(seTtl) + ",\"remaining\":" + F(seRemaining) + "}");
-                    firstSe = false;
-                }
-            }
-            catch { }
-            statusSb.Append("]");
-            long playerID = player.GetPlayerID();
-            string chests = ChestTracker.GetJson(playerID);
-            string boats = BoatTracker.GetJson(player);
-            string timers = TimerTracker.GetJson(playerID);
-
-            var sb = new StringBuilder("{");
-            sb.Append("\"player_name\":\"" + Esc(playerName) + "\",");
-            sb.Append("\"world_name\":\"" + Esc(worldName) + "\",");
-            sb.Append("\"biome\":\"" + Esc(biome) + "\",");
-            sb.Append("\"day\":" + day + ",");
-            sb.Append("\"health\":" + hp + ",");
-            sb.Append("\"max_health\":" + maxHp + ",");
-            sb.Append("\"stamina\":" + sta + ",");
-            sb.Append("\"max_stamina\":" + maxSta + ",");
-            sb.Append("\"eitr\":" + eitr + ",");
-            sb.Append("\"max_eitr\":" + maxEitr + ",");
-            sb.Append("\"comfort\":" + comfort + ",");
-            sb.Append("\"weight\":" + weight + ",");
-            sb.Append("\"max_weight\":" + maxWeight + ",");
-            sb.Append("\"guardian\":" + guardian + ",");
-            sb.Append("\"status_effects\":" + statusSb + ",");
-            sb.Append("\"position\":{\"x\":" + F(pos.x) + ",\"y\":" + F(pos.y) + ",\"z\":" + F(pos.z) + "},");
-            sb.Append("\"skills\":" + skillsSb + ",");
-            sb.Append("\"inventory\":" + invSb + ",");
-            sb.Append("\"food\":" + foodSb + ",");
-            sb.Append("\"chests\":" + chests + ",");
-            sb.Append("\"boats\":" + boats + ",");
-            sb.Append("\"timers\":" + timers + ",");
-
-            // Known recipes (unlocked via material discovery)
-            var knownRecipesSb = new StringBuilder("[");
-            try
-            {
-                var knownRecipes = AccessTools.Field(typeof(Player), "m_knownRecipes").GetValue(player) as HashSet<string>;
-                if (knownRecipes != null)
-                {
-                    bool firstKr = true;
-                    foreach (var r in knownRecipes)
-                    {
-                        if (!firstKr) knownRecipesSb.Append(",");
-                        knownRecipesSb.Append("\"" + Esc(r) + "\"");
-                        firstKr = false;
-                    }
-                }
-            }
-            catch { }
-            knownRecipesSb.Append("]");
-            sb.Append("\"known_recipes\":" + knownRecipesSb + ",");
-
-            // Known materials (unlocks buildable pieces)
-            var knownMatSb = new StringBuilder("[");
-            try
-            {
-                var knownMats = AccessTools.Field(typeof(Player), "m_knownMaterial").GetValue(player) as HashSet<string>;
-                if (knownMats != null)
-                {
-                    bool firstKm = true;
-                    foreach (var m in knownMats)
-                    {
-                        if (!firstKm) knownMatSb.Append(",");
-                        knownMatSb.Append("\"" + Esc(m) + "\"");
-                        firstKm = false;
-                    }
-                }
-            }
-            catch { }
-            knownMatSb.Append("]");
-            sb.Append("\"known_materials\":" + knownMatSb + ",");
-
-            // Weather + time of day
-            string weatherJson = "{\"name\":\"" + Esc(weatherName) + "\",\"is_day\":" + B(isDay) + ",\"is_raining\":" + B(isRaining) + ",\"is_cold\":" + B(isCold) + ",\"is_freezing\":" + B(isFreezing) + ",\"day_fraction\":" + F(dayFraction) + "}";
-            sb.Append("\"weather\":" + weatherJson + ",");
-
-            // Tamed creatures nearby
-            var tamedSb = new StringBuilder("[");
-            try
-            {
-                bool firstTamed = true;
-                foreach (var ch in Character.GetAllCharacters())
-                {
-                    if (ch == null || ch is Player) continue;
-                    if (!ch.IsTamed()) continue;
-                    string ctype = Esc(ch.GetHoverName());
-                    string customName = "";
-                    try { var cnview = ch.GetComponent<ZNetView>(); customName = Esc(cnview != null && cnview.IsValid() ? cnview.GetZDO().GetString("TamedName", "") : ""); } catch { }
-                    string displayName = !string.IsNullOrEmpty(customName) ? customName : ctype;
-                    int clvl = (int)AccessTools.Field(typeof(Character), "m_level").GetValue(ch);
-                    string chp = F(ch.GetHealth());
-                    string cmaxhp = F(ch.GetMaxHealth());
-                    var tame = ch.GetComponent<Tameable>();
-                    bool hungry = tame != null && tame.IsHungry();
-                    bool commandable = tame != null && tame.m_commandable;
-                    var cpos = ch.transform.position;
-                    if (!firstTamed) tamedSb.Append(",");
-                    tamedSb.Append("{\"name\":\"" + displayName + "\",\"type\":\"" + ctype + "\",\"level\":" + clvl + ",\"health\":" + chp + ",\"max_health\":" + cmaxhp + ",\"hungry\":" + B(hungry) + ",\"commandable\":" + B(commandable) + ",\"x\":" + F(cpos.x) + ",\"z\":" + F(cpos.z) + "}");
-                    firstTamed = false;
-                }
-            }
-            catch (Exception ex) { Log.LogWarning("Tamed scan: " + ex.Message); }
-            tamedSb.Append("]");
-            sb.Append("\"tamed\":" + tamedSb + ",");
-
-            sb.Append("\"updated_at\":\"" + DateTime.UtcNow.ToString("o") + "\"");
-            sb.Append("}");
-            return AppendRegistryFields(sb.ToString(), rec);
-        }
-
-        private static readonly string[] CanonicalBossOrder = { "eikthyr", "elder", "bonemass", "moder", "yagluth", "queen", "fader" };
-
-        // ── Merges every PlayerRegistry-held field (both the original Steve
-        // stats and the Saga narrative/title/milestone fields) into a state
-        // JSON object exactly once — the single injection point that replaces
-        // the old three-file string-surgery merge (which produced duplicate
-        // keys; see PlayerRegistry.ToJson for the canonical per-player shape).
-        //
-        // Also emits a handful of legacy-shaped aliases (bosses/combat/
-        // total_kills/total_deaths) alongside the clean PlayerRegistry field
-        // names, because theravenscall.html's existing render functions
-        // (renderCombat, the boss-defeats widget, renderDeath) still read
-        // those specific names — cheaper and lower-risk than rewriting that
-        // 4000+ line dashboard's render logic to match the new schema.
-        internal static string AppendRegistryFields(string stateJson, PlayerRecord rec)
-        {
-            if (stateJson.EndsWith("}")) stateJson = stateJson.Substring(0, stateJson.Length - 1);
-            stateJson += "," + PlayerRegistry.ToJson(rec).Trim().TrimStart('{');
-
-            if (stateJson.EndsWith("}")) stateJson = stateJson.Substring(0, stateJson.Length - 1);
-            string bosses = "{" + string.Join(",", CanonicalBossOrder.Select(b => "\"" + b + "\":" + B(rec.DefeatedBosses.Contains(b)))) + "}";
-            string combat = "{\"session_kills\":" + rec.SessionKills +
-                ",\"damage_dealt\":" + F(rec.SessionDmgDone) +
-                ",\"damage_taken\":" + F(rec.SessionDmgTaken) +
-                ",\"raid_active\":" + B(WorldState.RaidActive) +
-                ",\"raid_type\":\"" + Esc(WorldState.RaidType) + "\"}";
-            // Same preference BarrkBOT itself applies (BARRKBOT_CONTRACT.md):
-            // rec.TotalKillsLifetime/TotalDeathsLifetime are only what the
-            // server directly observed and undercount badly (a dedicated
-            // server owns no zone with a player in it, so most combat never
-            // fires server-side patches). When WhereTheCrowFlies has reported
-            // real vanilla stats, honor those lifetime totals instead.
-            int totalKills = rec.VanillaStats.TryGetValue("EnemyKills", out float vk) ? (int)vk : rec.TotalKillsLifetime;
-            int totalDeaths = rec.VanillaStats.TryGetValue("Deaths", out float vd) ? (int)vd : rec.TotalDeathsLifetime;
-            stateJson += ",\"bosses\":" + bosses + ",\"combat\":" + combat +
-                ",\"total_kills\":" + totalKills + ",\"total_deaths\":" + totalDeaths + "}";
-            return stateJson;
-        }
-
         // ── Central per-tick driver, called from Patch_ZNetUpdate in Saga.cs on
         // Plugin.StatsPushIntervalSeconds. Replaces the original per-character
         // WriteState(): iterates every online player instead of "the local
@@ -681,15 +404,15 @@ namespace TheRavensCall
                 string barrkBotJson = PlayerRegistry.BuildBarrkBotJson(worldName, day, online.Count);
                 PlayerRegistry.AtomicWrite(Path.Combine(OutputDir, "BarrkBOT_data1.json"), barrkBotJson);
 
-                // Refresh the /api/state cache here, on the main thread, so
-                // the HTTP worker never touches live registry collections.
-                // Only after a request has been served since the last build:
-                // serializing every known record each tick for nobody is waste.
-                if (Instance != null && Plugin.EnableHttpServer.Value && _stateWanted)
+                // /api/state is exactly this same string. It is built above
+                // unconditionally every tick regardless of whether anyone is
+                // watching (BarrkBOT_data1.json needs it either way), so
+                // there is no separate cost to also caching it here for the
+                // HTTP worker — the old "only rebuild if requested" gate
+                // saved nothing and has been dropped (1.3.0).
+                if (Instance != null && Plugin.EnableHttpServer.Value)
                 {
-                    _stateWanted = false;
-                    try { _stateCache = Instance.BuildStateArray(); }
-                    catch (Exception ex) { Log.LogError("state cache: " + ex.Message); }
+                    _stateCache = barrkBotJson;
                 }
 
                 Log.LogInfo($"Poll tick — {online.Count} online, {PlayerRegistry.All.Count()} known player(s).");
@@ -1112,7 +835,7 @@ namespace TheRavensCall
     // attributed to whichever real player is actually involved rather than
     // "the local player" — see project_ravenscall_server_side memory. The
     // boss prefab -> canonical short-key mapping below is kept here since
-    // BuildStateJson/PlayerRegistry both key bosses_defeated by these names.
+    // PlayerRegistry keys bosses_defeated by these names (PlayerRegistry.ToJson).
     internal static class BossKeys
     {
         private static readonly Dictionary<string, string> Map = new Dictionary<string, string>
