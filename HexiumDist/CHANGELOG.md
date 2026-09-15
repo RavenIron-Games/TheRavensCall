@@ -30,7 +30,7 @@
 - Fixtures added at `docs/fixtures/api-state-1.3.json` and `docs/fixtures/api-gamedata.json` for previewing the page without a live server; see `docs/DASHBOARD.md`.
 
 ### 🔧 Changed
-- `HexiumDist/plugins/TheRavensCall.dll` rebuilt for this release from a clean `dotnet build -c Release` of the tagged commit (the build is deterministic; md5 `56716d22e09eccef14e54e5a8c5588fb`). The same bytes ran on the Storm10 1.0.12 testbed on 2026-09-15: dashboard, `/api/state`, the stale-page warning and the embedded page all checked live.
+- `HexiumDist/plugins/TheRavensCall.dll` refreshed: a clean `dotnet build -c Release` of the 1.3.0 source (md5 `56716d22e09eccef14e54e5a8c5588fb`), the same bytes that ran on the Storm10 1.0.12 testbed on 2026-09-15 (dashboard, `/api/state`, the stale-page warning and the embedded page all checked live). A rebuild is not bit-identical: 72 of its 169,984 bytes are build identifiers (PE timestamp, module version id, PDB id and checksum) that change per build; the IL, the resources and the embedded page do not.
 
 ---
 
