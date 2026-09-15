@@ -1,6 +1,6 @@
 # TheRavensCall — handoff (2026-08-19 update, originally 2026-08-17)
 
-**Status: v1.2.1, compiles clean, never run against a live server.** RavenIron release —
+**Status: v1.3.0, cut 2026-09-15, run live on the Storm10 1.0.12 testbed (see docs/TESTPLAN-storm10-2026-09-15.md and the 1.3.0 changelog).** RavenIron release —
 a merge of two client-side Valheim mods (`SkaldSaga`, `SteveCompanionMod`) into one server-only
 admin tool. Source of truth for both originals is gone from this repo; only their `.txt` dumps
 remain (`25d72c2b-...txt` = SkaldSaga, `46dff3c1-...txt` = SteveCompanionMod) alongside the merged
