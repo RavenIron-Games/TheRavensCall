@@ -200,7 +200,11 @@ namespace TheRavensCall
                 }
                 else if (path == "/" || path == "/index" || path.EndsWith(".html"))
                 {
-                    // Serve HTML from OutputDir, then plugin dir as fallback
+                    // Serve HTML from OutputDir, then plugin dir, then the
+                    // copy embedded in this DLL as the final fallback — a
+                    // fresh install's zip has not always shipped the loose
+                    // file, and the embedded copy means the dashboard still
+                    // comes up even then.
                     string htmlPath = Path.Combine(OutputDir, "theravenscall.html");
                     if (!File.Exists(htmlPath))
                     {
@@ -214,9 +218,18 @@ namespace TheRavensCall
                     }
                     else
                     {
-                        ctx.Response.StatusCode = 404;
-                        body = Encoding.UTF8.GetBytes("<h2>stevecompanion.html not found.<br>Place it in: " + OutputDir + "</h2>");
-                        ctx.Response.ContentType = "text/html";
+                        byte[] embedded = ReadEmbeddedHtml();
+                        if (embedded != null)
+                        {
+                            ctx.Response.ContentType = "text/html; charset=utf-8";
+                            body = embedded;
+                        }
+                        else
+                        {
+                            ctx.Response.StatusCode = 404;
+                            body = Encoding.UTF8.GetBytes("<h2>theravenscall.html not found.<br>Place it in: " + OutputDir + "</h2>");
+                            ctx.Response.ContentType = "text/html";
+                        }
                     }
                 }
                 else
@@ -233,6 +246,32 @@ namespace TheRavensCall
             {
                 Log.LogError("HTTP request error: " + ex.Message);
                 try { ctx.Response.StatusCode = 500; ctx.Response.Close(); } catch { }
+            }
+        }
+
+        // Last-resort source for the dashboard page: the copy embedded in
+        // this DLL via <EmbeddedResource LogicalName="theravenscall.html">
+        // in the csproj. Only reached when neither disk override location
+        // (OutputDir, then the plugin folder) has the file. Returns null on
+        // any failure so the caller can fall back to the 404 text.
+        private static byte[] ReadEmbeddedHtml()
+        {
+            try
+            {
+                using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("theravenscall.html"))
+                {
+                    if (stream == null) return null;
+                    using (var mem = new MemoryStream())
+                    {
+                        stream.CopyTo(mem);
+                        return mem.ToArray();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.LogError("Embedded theravenscall.html read failed: " + ex.Message);
+                return null;
             }
         }
 
