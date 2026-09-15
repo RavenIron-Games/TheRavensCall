@@ -30,7 +30,7 @@
       "kills_observed_lifetime": 31,
       "deaths_lifetime": 3,
       "bosses_defeated": ["eikthyr", "elder"],
-      "caught_fish": ["trout"],
+      "caught_fish": ["$item_fish1"],
       "death_history": [
         {"timestamp": "2026-09-11T21:12:04.0000000Z", "killer": "Skeleton", "location": {"x": -140.2, "y": 24.0, "z": 88.6}, "biome": "BlackForest", "items": []},
         {"timestamp": "2026-08-30T18:40:51.0000000Z", "killer": "Fall Damage", "location": {"x": 402.1, "y": 96.4, "z": -12.9}, "biome": "Mountain", "items": []}
@@ -66,7 +66,7 @@
       "gear_tier": 0,
       "active_title": "Bonebreaker",
       "titles_earned": ["Stag Slayer", "Bonebreaker", "Troll Tamer"],
-      "biomes_discovered": ["Meadows", "BlackForest", "Swamp", "Mountain", "Plains", "Mistlands"],
+      "biomes_discovered": ["Meadows", "BlackForest", "Swamp", "Mountain", "Plains", "Mistlands", "Ashlands"],
       "boss_kills_credited": 9,
       "creature_kills": {
         "Boar": 41, "Deer": 22, "Neck": 18, "Greydwarf": 133, "Troll": 6,
@@ -82,7 +82,7 @@
       "kills_observed_lifetime": 96,
       "deaths_lifetime": 4,
       "bosses_defeated": ["eikthyr", "elder", "bonemass", "moder", "yagluth"],
-      "caught_fish": ["trout", "perch", "eel", "salmon"],
+      "caught_fish": ["$item_fish1", "$item_fish2", "$item_fish3"],
       "death_history": [
         {"timestamp": "2026-09-14T22:41:07.0000000Z", "killer": "Fuling Berserker", "location": {"x": 1204.5, "y": 42.1, "z": -887.2}, "biome": "Plains", "items": []},
         {"timestamp": "2026-09-10T19:02:44.0000000Z", "killer": "Drowning", "location": {"x": 220.4, "y": 28.0, "z": 510.9}, "biome": "Ocean", "items": []},
@@ -93,17 +93,20 @@
         "Jumps": 2140, "ArrowsShot": 880, "ArrowsHit": 640, "PortalsUsed": 212,
         "DistanceTraveled": 402118.0, "Blocks": 940, "Parries": 118, "Dodges": 260,
         "BossKills": 9, "DeathsByDrowning": 2, "TimesStuckInTar": 3,
-        "MimirBossPowerActivated": 6, "PortalsPlaced": 14, "ItemsPickedUp": 8820
+        "MimirBossPowerActivated": 6, "PortalsPlaced": 14, "ItemsPickedUp": 8820,
+        "3968": 41
       },
       "skill_levels": {
         "Swords": 48.2, "Axes": 36.0, "Bows": 22.5, "Blocking": 31.0, "Unarmed": 5.0,
         "WoodCutting": 40.2, "Pickaxes": 18.0, "Sneak": 25.0, "Jump": 12.0,
-        "Run": 33.5, "Swim": 10.0, "Fishing": 8.0
+        "Run": 33.5, "Swim": 10.0, "Fishing": 8.0, "Cooking": 3.0,
+        "9999": 7.0
       },
       "skill_progress": {
         "Swords": 0.61, "Axes": 0.12, "Bows": 0.88, "Blocking": 0.40, "Unarmed": 0.05,
         "WoodCutting": 0.73, "Pickaxes": 0.20, "Sneak": 0.55, "Jump": 0.90,
-        "Run": 0.33, "Swim": 0.15, "Fishing": 0.66
+        "Run": 0.33, "Swim": 0.15, "Fishing": 0.66, "Cooking": 62.0,
+        "9999": 0.5
       },
       "builds_placed": 412,
       "builds_removed": 38,
@@ -134,12 +137,12 @@
       "biomes_discovered": ["Meadows"],
       "boss_kills_credited": 0,
       "creature_kills": {"Neck": 2},
-      "session_kills": 0,
-      "damage_dealt_session": 0.0,
-      "damage_taken_session": 0.0,
-      "damage_blocked_session": 0.0,
-      "blocks_session": 0,
-      "parries_session": 0,
+      "session_kills": 2,
+      "damage_dealt_session": 45.5,
+      "damage_taken_session": 12.0,
+      "damage_blocked_session": 8.0,
+      "blocks_session": 2,
+      "parries_session": 1,
       "kills_observed_lifetime": 2,
       "deaths_lifetime": 0,
       "bosses_defeated": [],
