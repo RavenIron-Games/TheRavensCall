@@ -7,6 +7,22 @@
 
 ---
 
+## 🟢 [1.3.0] — The Raven Speaks Plainly
+
+*`/api/state` is now exactly the BarrkBOT export — the owner's word, 2026-09-15: "drop the aliases." Breaking for anything reading the old shape; the bundled dashboard page was the only consumer, and its rebuild is a separate PR. Pairs with WhereTheCrowFlies 1.1.3; nothing on the wire between the client mod and server changes.*
+
+### ⚠️ Changed, read this
+- **`/api/state` dropped the legacy dashboard shape and now returns exactly the BarrkBOT export** — the same envelope already written to `BarrkBOT_data1.json` every poll tick: `{generated_at, world_name, day, online_count, raid_active, raid_type, players:{"<name>": PlayerRecord, ...}}`, one `PlayerRegistry.ToJson` row per known player, keyed by name. `raid_active`/`raid_type` move from the removed per-player `combat{}` alias up to this top-level envelope, where they always actually lived (world state, not per-player).
+- **The legacy aliases are gone**: `bosses{}`, `combat{session_kills,damage_dealt,damage_taken,raid_active,raid_type}`, `total_kills`, `total_deaths`. They existed only so the old dashboard's render functions kept working; nothing else read them.
+- **The whole live-vitals row builder is gone**: health/max_health/stamina/eitr/comfort/weight/guardian/status_effects/position/skills[]/inventory/food/chests/boats/timers/known_recipes/known_materials/weather/tamed, plus the offline row (`player_name`, `biome`, `updated_at`) and the array-of-rows top level it was wrapped in. None of this was ever real on a dedicated server: `Player.GetAllPlayers()` is always empty there, so every `/api/state` response before this release was already just the offline row plus registry fields for every player, dressed up as a live snapshot. Deleting it removes dead branches, not working features.
+- **The old `_stateWanted` "only rebuild if someone asked" cache gate is gone.** The BarrkBOT export string is built on the main thread every poll tick regardless — the file write needs it either way — so gating the `/api/state` cache behind a separate request flag saved nothing. The cache is now just assigned unconditionally from that same string.
+- See `docs/API.md` for the full shape and field-by-field notes, including which fields are unknown-until-the-crow-reports rather than zero.
+
+### Dashboard
+- (filled in by the dashboard rebuild PR)
+
+---
+
 ## 🟢 [1.2.4] — The Raven Bars the Door
 
 *The should-fix batch from the 2026-09-15 review. 1.2.3 was never released, so this can ship as the first build after 1.2.2. Nothing on the wire changes shape and no BarrkBOT field is renamed. Pairs with WhereTheCrowFlies 1.1.3 for the console routing; every older client still works.*

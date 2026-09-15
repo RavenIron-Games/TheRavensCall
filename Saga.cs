@@ -33,7 +33,7 @@ namespace TheRavensCall
     {
         public const string PluginGUID = "com.raveniron.theravenscall";
         public const string PluginName = "TheRavensCall";
-        public const string PluginVersion = "1.2.4";
+        public const string PluginVersion = "1.3.0";
 
         internal static ManualLogSource Log;
         internal static Plugin Instance;
@@ -115,7 +115,7 @@ namespace TheRavensCall
             LoreBroadcastIntervalMinutes = Config.Bind("Lore", "LoreBroadcastIntervalMinutes", 0, "Post a random lore.txt entry to Discord/Chronicle at this interval in minutes. 0 = disabled");
 
             EnableHttpServer = Config.Bind("Companion", "EnableHttpServer", true, "Run the local HTTP dashboard/API on this machine (port below)");
-            HttpServerPort = Config.Bind("Companion", "HttpServerPort", 2112, "Port for the HTTP dashboard/API (also serves /api/state used to build the BarrkBOT export)");
+            HttpServerPort = Config.Bind("Companion", "HttpServerPort", 2112, "Port for the HTTP dashboard/API (/api/state is exactly the BarrkBOT export, the same JSON written to BarrkBOT_data1.json)");
             StatsPushIntervalSeconds = Config.Bind("Companion", "StatsPushIntervalSeconds", 10f, "How often (seconds) to snapshot every online player's state, check for new biomes/gear tiers, and refresh the BarrkBOT export file");
             HttpBindAllInterfaces = Config.Bind("Companion", "HttpBindAllInterfaces", false, "Also listen on every network interface (http://+:port), not only localhost. Off by default since 1.2.4: the API hands every known player's stats, skills, titles and death coordinates to anyone who can reach the port, with no login. Turn on only behind a firewall or together with HttpApiToken");
             HttpApiToken = Config.Bind("Companion", "HttpApiToken", "", "If set, /api/state, /api/gamedata and /api/pins require ?token=<this value> (or an X-Api-Token header). /api/health and the dashboard page stay open. The bundled dashboard page does not send a token, so its live data stops loading while a token is set; use this when only a bot or script reads the API");
