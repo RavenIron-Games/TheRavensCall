@@ -224,7 +224,7 @@ namespace TheRavensCall
                         {
                             _warnedStaleDiskDashboard = true;
                             Log.LogWarning("theravenscall.html on disk (" + htmlPath + ") predates 1.3.0 and cannot read the new /api/state shape. " +
-                                "Delete it so the bundled 1.3.0 page (embedded in this DLL, or the plugin/OutputDir copy shipped with the release) is served instead.");
+                                "Delete it so the 1.3.0 page embedded in this DLL is served instead.");
                         }
                     }
                     else
