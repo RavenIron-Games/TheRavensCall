@@ -157,6 +157,19 @@
   }
   .empty-state .big { color: var(--text); font-size: 16px; margin-bottom: 10px; }
 
+  /* ===== World overview ===== */
+  .world-overview {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+  .world-overview .card { margin-bottom: 0; min-width: 0; }
+  .name-link { color: var(--blue); cursor: pointer; }
+  .name-link:hover { text-decoration: underline; }
+  th[data-sort] { cursor: pointer; user-select: none; }
+  th[data-sort]:hover { color: var(--text); }
+
   /* ===== Roster ===== */
   .roster-grid {
     display: grid;
@@ -441,6 +454,10 @@
   }
   footer a { color: var(--text-dim); text-decoration: underline; }
   footer a:hover { color: var(--gold); }
+  footer details { margin-bottom: 8px; }
+  footer details summary { cursor: pointer; color: var(--text); font-weight: 600; }
+  footer details summary:hover { color: var(--gold); }
+  footer details > div { margin-top: 8px; }
 
   @media (max-width: 400px) {
     .header-row { padding: 0 12px; }
@@ -448,6 +465,9 @@
     main { padding: 14px 10px; }
     .stat-grid { grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); }
     .roster-grid { grid-template-columns: 1fr; }
+    .world-overview { grid-template-columns: 1fr; }
+    .gear-btn { order: 0; }
+    .world-meta, .header-sep, .conn-wrap { order: 1; }
   }
 </style>
 </head>
@@ -473,8 +493,11 @@
 <main id="app"></main>
 
 <footer>
-  <div><b style="color:var(--text)">Connection help.</b> The dashboard talks to this mod's own HTTP server, normally <span class="mono">http://localhost:2112</span> on the machine running the server. It only listens on that machine unless the server owner turns on <span class="mono">HttpBindAllInterfaces</span> — reaching it from another device needs that, plus the network/firewall path to the port.</div>
-  <div>If <span class="mono">HttpApiToken</span> is set on the server, this page needs the same value entered in Settings (gear icon above) before <span class="mono">/api/state</span> will load — a 401 opens Settings automatically.</div>
+  <details>
+    <summary>Connection help</summary>
+    <div>The dashboard talks to this mod's own HTTP server, normally <span class="mono">http://localhost:2112</span> on the machine running the server. It only listens on that machine unless the server owner turns on <span class="mono">HttpBindAllInterfaces</span> — reaching it from another device needs that, plus the network/firewall path to the port.</div>
+    <div>If <span class="mono">HttpApiToken</span> is set on the server, this page needs the same value entered in Settings (gear icon above) before <span class="mono">/api/state</span> will load — a 401 opens Settings automatically.</div>
+  </details>
   <div>Feedback: <a href="https://github.com/RavenIron-Games/TheRavensCall/issues" target="_blank" rel="noopener">github.com/RavenIron-Games/TheRavensCall/issues</a></div>
 </footer>
 
@@ -563,7 +586,8 @@
     settingsAutoOpened: false, // true once a 401 has auto-opened Settings, until the next successful poll or save
     view: 'roster',           // roster | detail
     selectedPlayer: null,
-    tab: 'combat'
+    tab: 'combat',
+    boardSort: { key: 'kills', dir: 'desc' } // the world-overview "All time" board; not persisted
   };
 
   function safeGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -654,6 +678,66 @@
       var ta = Date.parse(a.last_seen) || 0, tb = Date.parse(b.last_seen) || 0;
       return tb - ta;
     });
+  }
+
+  // ─────────────────── world-overview pure helpers ───────────────────
+  // Each takes the raw players map (state.stateData.players) so it can be
+  // exercised directly against the fixture, with no DOM and no state.
+
+  function playersArray(players) {
+    return Object.keys(players || {}).map(function (k) { return players[k]; });
+  }
+
+  // One row per known player, for the "All time" board.
+  function boardRows(players) {
+    return playersArray(players).map(function (p) {
+      var k = killsValue(p), de = deathsValue(p);
+      return {
+        name: p.name,
+        kills: k.value, killsFallback: k.fallback,
+        deaths: de.value, deathsFallback: de.fallback,
+        bossKills: p.boss_kills_credited || 0,
+        playtimeSeconds: p.playtime_seconds_lifetime || 0
+      };
+    });
+  }
+
+  // sort = { key: 'name'|'kills'|'deaths'|'bossKills'|'playtimeSeconds', dir: 'asc'|'desc' }.
+  // Returns a new array; never mutates rows. Ties break on name so re-sorts stay stable.
+  function sortBoardRows(rows, sort) {
+    var key = (sort && sort.key) || 'kills';
+    var mult = (sort && sort.dir === 'asc') ? 1 : -1;
+    var copy = rows.slice();
+    copy.sort(function (a, b) {
+      var av = a[key], bv = b[key];
+      if (typeof av === 'string') { av = av.toLowerCase(); bv = String(bv).toLowerCase(); }
+      if (av < bv) return -1 * mult;
+      if (av > bv) return 1 * mult;
+      return a.name.localeCompare(b.name);
+    });
+    return copy;
+  }
+
+  // The union of every known player's bosses_defeated, as a subset of BOSS_LIST.
+  function bossUnion(players) {
+    var seen = {};
+    playersArray(players).forEach(function (p) {
+      (p.bosses_defeated || []).forEach(function (b) { seen[b] = true; });
+    });
+    return BOSS_LIST.filter(function (b) { return seen[b]; });
+  }
+
+  // Every known player's death_history merged into one list, newest first,
+  // trimmed to limit when one is given. Each row carries the owning player's name.
+  function mergedDeathHistory(players, limit) {
+    var rows = [];
+    playersArray(players).forEach(function (p) {
+      (p.death_history || []).forEach(function (e) {
+        rows.push({ playerName: p.name, timestamp: e.timestamp, killer: e.killer, biome: e.biome });
+      });
+    });
+    rows.sort(function (a, b) { return (Date.parse(b.timestamp) || 0) - (Date.parse(a.timestamp) || 0); });
+    return limit ? rows.slice(0, limit) : rows;
   }
 
   function gameDataItemByName(name) {
@@ -818,10 +902,104 @@
       : '';
   }
 
+  var BOARD_COLUMNS = [
+    { key: 'name', label: 'Player' },
+    { key: 'kills', label: 'Kills' },
+    { key: 'deaths', label: 'Deaths' },
+    { key: 'bossKills', label: 'Boss kills' },
+    { key: 'playtimeSeconds', label: 'Playtime' }
+  ];
+
+  function renderOnlineNowCard(players) {
+    var online = sortedPlayers(players).filter(function (p) { return p.online; });
+    var html = '<div class="card"><h3>Online now</h3>';
+    if (online.length === 0) {
+      var mostRecent = sortedPlayers(players)[0] || null;
+      html += '<div class="notice small">Nobody online.' + (mostRecent
+        ? ' Last seen: <span class="name-link" data-select="' + esc(mostRecent.name) + '">' + esc(mostRecent.name) + '</span> ' + esc(relativeTime(mostRecent.last_seen)) + '.'
+        : '') + '</div>';
+    } else {
+      html += '<div class="strip">';
+      online.forEach(function (p) {
+        var sessionLen = p.session_start ? humanizeSeconds((Date.now() - Date.parse(p.session_start)) / 1000) : '—';
+        html += '<span class="strip-item"><span class="name-link" data-select="' + esc(p.name) + '">' + esc(p.name) + '</span> · ' + sessionLen + '</span>';
+      });
+      html += '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function renderAllTimeBoardCard(players) {
+    var rows = sortBoardRows(boardRows(players), state.boardSort);
+    var html = '<div class="card"><h3>All time</h3><div class="table-wrap"><table><thead><tr><th>#</th>';
+    BOARD_COLUMNS.forEach(function (c) {
+      var active = state.boardSort.key === c.key;
+      var arrow = active ? (state.boardSort.dir === 'asc' ? ' ▲' : ' ▼') : '';
+      var ariaSort = active ? (state.boardSort.dir === 'asc' ? 'ascending' : 'descending') : 'none';
+      html += '<th data-sort="' + c.key + '" tabindex="0" aria-sort="' + ariaSort + '"' + (c.key === 'name' ? '' : ' style="text-align:right"') + '>' + esc(c.label) + arrow + '</th>';
+    });
+    html += '</tr></thead><tbody>';
+    rows.forEach(function (r, i) {
+      html += '<tr><td class="num">' + (i + 1) + '</td>' +
+        '<td><span class="name-link" data-select="' + esc(r.name) + '">' + esc(r.name) + '</span>' +
+          ((r.killsFallback || r.deathsFallback) ? '<span class="fallback-tag">server-observed</span>' : '') + '</td>' +
+        '<td class="num">' + fmtNum(r.kills) + '</td>' +
+        '<td class="num">' + fmtNum(r.deaths) + '</td>' +
+        '<td class="num">' + fmtNum(r.bossKills) + '</td>' +
+        '<td class="num">' + humanizeSeconds(r.playtimeSeconds) + '</td>' +
+        '</tr>';
+    });
+    html += '</tbody></table></div></div>';
+    return html;
+  }
+
+  function renderBossesDefeatedCard(players) {
+    var allBosses = bossUnion(players);
+    var html = '<div class="card"><h3>Bosses defeated</h3><div class="strip">';
+    BOSS_LIST.forEach(function (b) {
+      var lit = allBosses.indexOf(b) !== -1;
+      html += '<span class="strip-item boss' + (lit ? ' lit' : '') + '">' + esc(BOSS_DISPLAY[b]) + '</span>';
+    });
+    html += '</div></div>';
+    return html;
+  }
+
+  function renderLatestDeathsCard(players) {
+    var rows = mergedDeathHistory(players, 10);
+    var html = '<div class="card"><h3>Latest deaths</h3>';
+    if (rows.length === 0) {
+      html += '<div class="notice small">No deaths recorded yet.</div>';
+    } else {
+      html += '<div class="table-wrap"><table><thead><tr><th>When</th><th>Player</th><th>Killed by</th><th>Biome</th></tr></thead><tbody>';
+      rows.forEach(function (e) {
+        html += '<tr><td title="' + esc(fmtAbs(e.timestamp)) + '">' + esc(relativeTime(e.timestamp)) + '</td>' +
+          '<td><span class="name-link" data-select="' + esc(e.playerName) + '">' + esc(e.playerName) + '</span></td>' +
+          '<td>' + esc(e.killer || 'Unknown') + '</td><td>' + esc(e.biome || '—') + '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  // Rendered inside renderRoster()'s output (so it refreshes with the
+  // roster and stays inside #app) whenever at least one player is known.
+  function renderWorldOverview(d) {
+    var players = d.players || {};
+    return '<div class="world-overview">' +
+      renderOnlineNowCard(players) +
+      renderAllTimeBoardCard(players) +
+      renderBossesDefeatedCard(players) +
+      renderLatestDeathsCard(players) +
+      '</div>';
+  }
+
   function renderRoster(d) {
     var players = sortedPlayers(d.players);
     if (players.length === 0) return '<div class="empty-state">No players have ever joined this world yet.</div>';
-    var html = '<div class="roster-grid">';
+    var html = renderWorldOverview(d);
+    html += '<div class="roster-grid">';
     players.forEach(function (p) {
       var k = killsValue(p), de = deathsValue(p);
       html += '' +
@@ -1100,9 +1278,25 @@
   }
 
   // ───────────────────────── events (delegated, bound once) ─────────────────────────
+  // Keyboard access for the sortable board headers: Enter or Space acts as a click.
+  document.getElementById('app').addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    var th = e.target.closest('[data-sort]');
+    if (!th) return;
+    e.preventDefault();
+    th.click();
+  });
   document.getElementById('app').addEventListener('click', function (e) {
     var card = e.target.closest('[data-select]');
     if (card) { state.selectedPlayer = card.getAttribute('data-select'); state.view = 'detail'; state.tab = 'combat'; render(); return; }
+    var sortTh = e.target.closest('[data-sort]');
+    if (sortTh) {
+      var key = sortTh.getAttribute('data-sort');
+      if (state.boardSort.key === key) state.boardSort.dir = (state.boardSort.dir === 'asc' ? 'desc' : 'asc');
+      else state.boardSort = { key: key, dir: (key === 'name' ? 'asc' : 'desc') };
+      render();
+      return;
+    }
     var back = e.target.closest('[data-back]');
     if (back) { state.view = 'roster'; state.selectedPlayer = null; render(); return; }
     var tabBtn = e.target.closest('[data-tab]');

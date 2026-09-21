@@ -136,9 +136,12 @@ All computed from `/api/state`, all inside the existing `renderRoster()` output
   order. Fix inside the existing `@media (max-width: 400px)` block (`:445-451`):
   `.gear-btn { order: 0 }` and `.world-meta, .header-sep, .conn-wrap { order: 1 }`, which
   puts the gear beside the logo and the header on two rows.
-- **Connection help behind a toggle**: the three footer paragraphs (`:477-481`) collapse
-  into a `<details>` headed "Connection help", closed by default, keyed with
-  `data-details-key` so `render()` preserves it (`:766-770,785-788`).
+- **Connection help behind a toggle**: the two "how to reach this server" footer paragraphs
+  (`:477-481`) collapse into a `<details>` headed "Connection help", closed by default. The
+  feedback link/paragraph stays outside the `<details>`, always visible. No
+  `data-details-key` is needed: the footer is static markup outside `#app`, and `render()`'s
+  `<details>`-preservation loop only queries inside `#app`, so a plain `<details>` already
+  keeps its own open/closed state across re-renders.
 
 ### 3.1 Tier 2 panels
 

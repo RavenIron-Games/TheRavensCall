@@ -7,6 +7,17 @@
 
 ---
 
+## 🟢 [1.4.0] — (unreleased)
+
+*Tier 1 of the 1.4.0 dashboard release: a page-only PR, no server change, `/api/state`'s shape untouched. Tier 2 (the `/api/activity` feed and season standings) ships separately. `Saga.cs`, `manifest.json` and the README badge stay at 1.3.0 until tier 2 lands.*
+
+### Dashboard
+- **A "World overview" now sits above the roster**, four cards computed entirely from the existing `/api/state` payload (no new endpoint): **Online now** (who's online and how long, or the last player seen when nobody is); **All time**, one sortable table ranking every known player by kills, deaths, boss kills and playtime, click a column header to sort by it, click again to flip direction; **Bosses defeated**, the union of every player's defeated bosses on the same strip the Combat tab uses; and **Latest deaths**, the ten most recent deaths merged across all players. Only shown once at least one player is known.
+- **The phone header no longer wraps to three rows at 375px.** The settings gear now stays on the logo's row; the world name/day/online-count line wraps to its own row underneath instead.
+- **The two "how to reach this server" footer paragraphs are now collapsed behind a "Connection help" toggle**, closed by default, so the footer doesn't dominate a first-time load. The feedback link stays visible outside it.
+
+---
+
 ## 🟢 [1.3.0] — The Raven Speaks Plainly
 
 *`/api/state` is now exactly the BarrkBOT export — the owner's word, 2026-09-15: "drop the aliases." Breaking for anything reading the old shape; the bundled dashboard page was the only consumer, and its rebuild is a separate PR. Works with WhereTheCrowFlies 1.1.1 (the published client) and newer; nothing on the wire between the client mod and server changes.*
