@@ -322,3 +322,16 @@ BepInEx/config/TheRavensCall/
 ### Client Setup (Players)
 1. Players install [WhereTheCrowFlies](https://valheim.thunderstore.io/package/RavenIron/WhereTheCrowFlies) on their Valheim game clients.
 2. Combat, deaths, boss encounters, and stats will automatically transmit to The Raven's Call.
+
+---
+
+## 💜 Support Raven Iron
+
+Every Raven Iron mod is free, and stays free — all of it, always. Nothing is held
+back for patrons, and nothing ever will be.
+
+If you'd like to help cover server hosting and test hardware:
+
+- **Patreon** — <https://www.patreon.com/cw/RavenIronGames>
+- **Discord** — <https://discord.gg/AGKDEurAVa> — a channel per mod, and where the
+  testing happens
