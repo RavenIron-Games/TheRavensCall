@@ -4,7 +4,7 @@ Rebuilt from scratch for the 1.3.0 API contract (`/api/state` as an envelope
 with a `players` map, no more live-vitals fields that a dedicated server can
 never populate). One file, no build step, no network request except to the
 configured API host (this page's own origin by default, or the base-URL
-override — see below). Roughly 50 KB.
+override — see below). Roughly 58 KB.
 
 ## What survived, what didn't
 
@@ -26,7 +26,13 @@ system font stack only, feedback goes to
 - **Header**: world name, day, online count, a pulsing raid banner when
   `raid_active` (with a friendly name for common `raid_type` values, falling
   back to a prettified raw string), a connection dot + "updated Ns ago" /
-  "last update Ns ago", and the settings gear.
+  "last update Ns ago", and the settings gear. At the 400px phone breakpoint
+  the gear sits on the same row as the logo (`order: 0`) and the world
+  meta/separator/connection group wraps to its own row below (`order: 1`),
+  instead of the gear itself wrapping onto a third row.
+- **World overview** (landing view, above the roster): four cards, described
+  below. Only rendered once at least one player is known — an empty world
+  still shows the plain "No players have ever joined" state instead.
 - **Roster** (landing view): one card per player from `players`
   (`Object.values`), sorted online-first then `last_seen` descending (rule
   4). Each card shows name, online dot, `active_title`, lifetime kills/deaths
@@ -34,6 +40,56 @@ system font stack only, feedback goes to
   seen.
 - **Player detail**: six tabs, described below. Selecting a player and a tab
   is kept in memory (not the URL) across the 10 s poll.
+- **Footer**: the two "how to reach this server" paragraphs now live inside a
+  `<details>` headed "Connection help", closed by default. The footer is
+  static markup outside `#app` — `render()` never touches it — so a plain
+  `<details>` keeps its own open/closed state with no `data-details-key`
+  needed. The feedback link stays outside the details, always visible.
+
+## World overview
+
+Four cards, rendered inside `renderRoster()`'s own output (so they refresh
+with the roster on every poll and never need their own poll or render
+trigger), in a two-column grid on desktop and one column at the phone
+breakpoint. Every player name in these cards is a `data-select` link into
+that player's detail view, same as a roster card. Everything here is
+computed client-side from the same `/api/state` payload the roster already
+has — no server change, no new endpoint (that's tier 2's `/api/activity`).
+
+- **Online now**: the players with `online: true` (`sortedPlayers()` already
+  puts them first, sorted by `last_seen` descending — since they're all
+  online, that ends up ordering by how recently each one's status last
+  ticked), each showing session length as `humanizeSeconds(now -
+  session_start)`. When nobody is online, one line names the most-recently-
+  seen player instead ("Nobody online. Last seen: `<name>` `<relative
+  time>`.").
+- **All time board**: one table, every known player, columns Player / Kills /
+  Deaths / Boss kills / Playtime, plus a row number in an unlabeled first
+  column. Kills and deaths reuse `killsValue`/`deathsValue` (rule 1; a player whose
+  figures fall back gets one "server-observed" tag after their name); boss kills is
+  `boss_kills_credited`; playtime is `humanizeSeconds(playtime_seconds_lifetime)`.
+  Column headers (Player, Kills, Deaths, Boss kills, Playtime — not the rank
+  column) are clickable: `state.boardSort = {key, dir}` drives the sort and
+  survives re-renders (it's state, not read back from the DOM); clicking the
+  active column flips its direction, clicking a different one switches to it
+  at `dir: 'desc'` — except the Player column, which switches to it at
+  `dir: 'asc'` (A→Z reads naturally on a name column; the four numeric
+  columns still open biggest-first). Default on load is kills descending.
+  The underlying sort
+  (`sortBoardRows`) and row-building (`boardRows`) — along with `bossUnion`
+  and `mergedDeathHistory` below — are all pure functions that take the raw
+  `players` map and return plain arrays, so they can be unit-tested directly
+  against the fixture with no DOM.
+- **Bosses defeated**: the union of every known player's `bosses_defeated`
+  across the same seven `BOSS_LIST` keys and `.strip`/`.strip-item.boss`
+  markup the Combat tab's own boss-progress strip uses, so a boss lights up
+  here the moment *any* player has it, not just the one you're looking at.
+- **Latest deaths**: every player's `death_history` merged into one list
+  (`mergedDeathHistory`, a pure function), sorted newest-first by timestamp,
+  the ten newest rows. Columns are relative time (absolute time on hover,
+  same as the Death tab), the player as a link, killer, and biome — no
+  location column here (the per-player Death tab still has that). "No deaths
+  recorded yet" when the merge is empty.
 
 ## The token / settings flow
 
@@ -217,3 +273,10 @@ A real deployment needs no `api/` folder at all — `/api/state` and
 - No offline caching between page loads (a hard refresh always shows
   "Connecting…" until the first poll lands); only within-session state is
   preserved.
+- The "All time" board's column sort (`state.boardSort`) is in-memory only,
+  same as the selected player/tab — it resets to kills descending on a full
+  page reload, it isn't written to `localStorage`.
+- Relative times on the landing view ("last seen", "7d ago" in Latest deaths, the
+  session lengths) only advance when `/api/state` actually changes, because an
+  unchanged payload skips the re-render. On an idle server with nobody online
+  they can sit still between real events; the header's "updated" text still ticks.
