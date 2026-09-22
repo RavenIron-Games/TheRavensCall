@@ -7,6 +7,27 @@
 
 ---
 
+## 🟢 [1.5.0] — The Raven Counts the Halls
+
+*Owner's ask, 2026-09-22: "can we add some data? like how many portals placed by player and in world," then "add the rest of them then, beds ships carts, the lot." A world census now runs on the server on a timer and feeds a new World panel on the dashboard. `/api/state` and the BarrkBOT export are untouched — the census is a new route only.*
+
+### Dashboard
+- **A World panel joins the season and feed panels**, fed by the new `/api/census` endpoint: a group strip (portals, beds, wards, ships, carts, chests, crafting stations — player-built vs. total for each), a sortable **Builders** table ranking players by what they've placed and what they have standing in the world total, a **portal directory** (tag, kind, builder, connected, position), and closed-by-default **Beds** and **Wards** tables, with a footer naming how many objects were counted, how long it took, and how often it runs. Polls on its own 60-second schedule; a 404 hides the panel only (a pre-1.5.0 server), `enabled: false` shows a one-line notice that the census is off, and the empty pre-first-run payload shows "First count runs a few seconds after boot."
+- **The player detail view's Build tab** gains a line summarizing what that player has standing in the world right now — pieces in total, then portals, beds, wards, ships, carts, chests and stations (the groups are parts of that total, zero groups omitted) — alongside the vanilla "portals placed, ever" stat when the server has it (a different, larger number, since it includes portals since torn down).
+
+### Added
+- **`GET /api/census`** — the world census: how many portals, beds, wards, ships, carts, chests and crafting stations stand in the world, per-player totals, and directories of portals, beds and wards with builder, position and (for portals) connection status; see `docs/API.md` for the full shape. Token-gated the same as `/api/state`. Never 404s: answers the empty envelope before the first run completes, and `enabled: false` with the interval at 0.
+- New config: `[Census] CensusIntervalMinutes` (default `5`, minutes, clamped 1-1440; `0` turns the census off without breaking the endpoint).
+- New file under `BepInEx/config/TheRavensCall/`: `player_ids.json` — known player profile IDs mapped to names, so a piece's builder can still be named across restarts.
+
+### Tested
+- Live on the Storm10 1.0.12 testbed on 2026-09-22 (`docs/TESTPLAN-storm10-census-2026-09-22.md`): every step of the scope's test plan passed, with real portals placed by the admin for the directory, the token gate and `CensusIntervalMinutes = 0` each on their own boot, the fixture harness for the cases the live world lacks (an unknown builder, an unpaired portal, a 1.4 server's 404), and a 375 px viewport; zero mod warnings across five boots. The chests row on that world reads 409 standing / 0 player-built — world-generated chests count in the total, which is what the docs now say.
+
+### 🔧 Changed
+- `HexiumDist/plugins/TheRavensCall.dll` refreshed: a clean `dotnet build -c Release` of the 1.5.0 source (md5 `47bb2d3e4622e3883acf850652aa9f5b`, 246,272 bytes; two clean builds of the same commit are byte-identical), the first packaged build since 1.4.1 — it carries the 1.4.2 fixes below as well. The eight-step live test on the Storm10 1.0.12 dedicated server (`docs/TESTPLAN-storm10-census-2026-09-22.md`) ran on this same source two small page respins earlier; the respins (builder links following the roster, the Build tab card following the census, no replayed feed highlight on Back) were checked on the live page and on timing harnesses, and these exact bytes boot on Storm10 as the release build. Same deterministic-per-commit build as 1.4.0 below.
+
+---
+
 ## 🟢 [1.4.2] — The Raven Minds the Edges
 
 *The four follow-ups the 1.4.1 pre-publish review left open, plus the hardening this branch's own review added — all in the season and Chronicle bookkeeping, none of it reachable in normal play on a dedicated server. No config, API or dashboard changes.*
@@ -19,7 +40,7 @@
 - **A `season_baseline.json` written by 1.4.0 or 1.4.1 for a season whose name ends in a period is still accepted** after this update: the name it carries is compared trimmed, the way 1.4.1 already trims the running season's name at load. Without that, the first 1.4.2 boot would have taken a fresh baseline and reset the running season's standings.
 
 ### 🔧 Changed
-- The packaged `HexiumDist/plugins/TheRavensCall.dll` is **not** rebuilt as part of this change — it still contains 1.4.1's bytes. It needs a clean `dotnet build -c Release` from this source (and its md5 recorded here) before 1.4.2 is released.
+- 1.4.2 was never packaged on its own: `HexiumDist/plugins/TheRavensCall.dll` kept 1.4.1's bytes until the 1.5.0 build above, which carries these fixes.
 
 ---
 

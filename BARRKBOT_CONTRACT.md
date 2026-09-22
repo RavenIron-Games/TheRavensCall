@@ -29,6 +29,11 @@ complete, in which case say so here.
 contract** — it is not written to disk, and its shape is not promised the way the paths
 above are.
 
+**Since 1.5.0, `GET /api/census` (the world census — portals, beds, wards, ships, carts,
+chests and crafting stations standing in the world, per-player totals and directories,
+`docs/API.md`) exists on the same HTTP server too. It is not part of this contract either,**
+for the same reasons `/api/activity` isn't. The export files and `/api/state` are unchanged.
+
 ## What went wrong on 20 Aug 2026, and why this file exists
 
 The exports were renamed — `barrkbot_players.json` → `BarrkBOT_data1.json`,

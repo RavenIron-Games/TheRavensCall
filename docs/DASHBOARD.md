@@ -32,12 +32,14 @@ system font stack only, feedback goes to
   the gear sits on the same row as the logo (`order: 0`) and the world
   meta/separator/connection group wraps to its own row below (`order: 1`),
   instead of the gear itself wrapping onto a third row.
-- **Activity feed & season** (tier 2, new in 1.4.0): `#worldPanels`, a
-  `seasonPanel` and a `feedPanel`, sitting inside a `<main>` wrapper
-  alongside `#app` (not inside it — see below), so it renders above the
-  world overview and roster. Hidden until `/api/activity` first answers, and
-  hidden again whenever the detail view is open. Described in its own
-  section below.
+- **Activity feed, season & world** (tier 2, new in 1.4.0; the third panel
+  added in 1.5.0): `#worldPanels`, a `seasonPanel`, a `feedPanel` and (since
+  1.5.0) a `censusPanel`, sitting inside a `<main>` wrapper alongside `#app`
+  (not inside it — see below), so it renders above the world overview and
+  roster. The season/feed pair is hidden until `/api/activity` first
+  answers, `censusPanel` is hidden until `/api/census` first answers (its
+  own latch — see the World panel section), and all three hide again
+  whenever the detail view is open. Described in their own sections below.
 - **World overview** (landing view, above the roster): four cards, described
   below. Only rendered once at least one player is known — an empty world
   still shows the plain "No players have ever joined" state instead.
@@ -165,7 +167,11 @@ server contract. The selected chip lives in `state.feedFilter`, not the DOM,
 so it survives a re-render. A row whose `timestamp_utc` is strictly newer
 than the previous poll's newest event gets a brief highlight
 (`isNewFeedEvent`/`.feed-row-new`); nothing highlights on the very first
-load, since there's no "previous poll" yet. "No events yet" on an empty
+load, since there's no "previous poll" yet, and nothing is flagged while a
+detail view is open (the panels are hidden, and a CSS animation in a hidden
+subtree would replay on Back; rows already flagged lose the class when the
+panels hide), so an event that arrives during a detail visit is never
+highlighted. "No events yet" on an empty
 feed (a fresh install, or `EventFeedCapacity = 0`); since 1.4.1, "Nothing in <chip> yet."
 instead when the feed has rows but the selected chip has none.
 
@@ -201,9 +207,88 @@ Everything else reuses `.card`, `.notice`, `.table-wrap` and the `:root`
 tokens; no new `@media` rule and no new layout rule, since the panels sit
 inside the same `<main>` the roster already does.
 
-**Marker.** `<meta name="theravenscall-api" content="1.4">` — cosmetic;
-`ContainsApiMarker` only checks the substring is present, never the value
-(a follow-up per `SCOPE-1.4.0.md` §11.7).
+**Marker.** 1.4.0 shipped `<meta name="theravenscall-api" content="1.4">` —
+cosmetic; `ContainsApiMarker` only checks the substring is present, never the
+value (a follow-up per `SCOPE-1.4.0.md` §11.7). 1.5.0 bumps it to `content="1.5"`;
+see the World panel section below.
+
+## World panel (1.5.0)
+
+A third panel inside `#worldPanels`, after the feed panel, fed by the new
+`/api/census` endpoint (`docs/API.md`) — the count of portals, beds, wards,
+ships, carts, chests and crafting stations standing in the world right now,
+who placed them, and directories of portals, beds and wards.
+
+**Layout**, top to bottom:
+
+1. A **group strip**: seven small cards, one per group ("12 portals", "9
+   beds", ...), each showing `player_built / total` underneath when the two
+   differ.
+2. A **Builders** table, sortable the same way the other boards are
+   (`state.censusSort`, the same keyboard-accessible sortable headers):
+   Player, Portals, Beds, Wards, Ships, Carts, Chests, Stations, Pieces. A
+   name the roster knows links into the detail view through the existing
+   `data-select` delegation; a name the roster has never seen (a bed owner
+   learned from the bed itself) is plain text; a creator id with no name yet
+   renders as "Unknown (id …)"; and a world-generated object (creator id 0)
+   renders as "Not player-built".
+3. A **portal directory** table: Tag, Kind, Builder, Connected (a tag badge,
+   "linked" or "no pair"), Position ("x, z"). An empty tag renders as "(no
+   tag)".
+4. **Beds** and **Wards**, each as its own closed-by-default `<details>`
+   block holding a compact table.
+5. A footer line: "Counted N objects in M ms, T ago; runs every K minutes."
+   ("minute" when K is 1).
+
+**Polling.** `/api/census` on load, then every **60 seconds** on its own
+`setInterval` — unlike the feed and season panels, which share `/api/state`'s
+10 s `POLL_MS` tick (`setInterval(pollActivity, POLL_MS)`); a full census is
+far more expensive than the activity envelope, so it gets its own, slower
+timer. A change gate compares the payload with `generated_at` stripped, the
+same pattern `pollActivity` uses; since `duration_ms` differs on every run,
+in practice each completed count redraws the World panel (a few KB of HTML)
+and the footer's "T ago" follows the latest run. Two more triggers: `pollState()`
+rebuilds the World panel and the feed when the set of roster names changes
+(`state.lastRosterKey`), because a builder cell and a feed row link only a
+name the roster knows; and every census outcome goes through
+`afterCensusChange()`, which also rebuilds an open detail view, but only when
+what its Build tab census card reads (the builders rows, the enabled and
+first-run guards, the token/404 state) has changed.
+
+**Outcomes:**
+
+- **404** — a pre-1.5.0 server. The World panel alone hides; polling for it
+  stops for the rest of the page's life, the same latch `pollActivity` uses
+  for `/api/activity` against a pre-1.4.0 server. The season and feed panels
+  are unaffected.
+- **401** — the same "Needs the API token (Settings)." notice the other
+  panels show.
+- **`enabled: false`** — the card holds only its "World" heading and one
+  line: "The census is off (`CensusIntervalMinutes = 0`)."
+- **The empty pre-first-run payload** (`enabled: true`, every count and list
+  empty, `generated_at: ""`) — the heading and one line: "First count runs a
+  few seconds after boot."
+
+**Detail view.** The Build tab gains one line built from that player's row in
+`/api/census`'s `builders[]`: "Standing in the world: 412 pieces · 3 portals
+· 1 bed · 2 wards · 1 ship · 14 chests · 3 stations" — the row's own order,
+zero-count groups omitted; `pieces` is every object that player has standing,
+so the group figures after it are parts of it, not additions to it. A player
+with no row on the census reads "Nothing counted yet."; when the census is
+off or has not run yet, the tab shows the same line the World panel does.
+When the
+vanilla `PortalsPlaced` stat is present on that player, it shows on the same
+tab as "Portals placed, ever: 14" — a different, larger number than the
+census's live portal count, since it includes portals since torn down; the
+two are labelled so they're never mistaken for each other.
+
+**Marker.** `<meta name="theravenscall-api" content="1.5">` — the same
+cosmetic substring check as before (`ContainsApiMarker`), so nothing else
+about the disk-override warning changes.
+
+Names, tags and positions on this panel are escaped through `esc()` at every
+render, the same as everywhere else on the page. At the 375px breakpoint its
+tables scroll inside their own card, the same as the "All time" board.
 
 ## The token / settings flow
 
