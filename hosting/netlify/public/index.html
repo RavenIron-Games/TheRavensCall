@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Raven's Call</title>
+<style>
+  :root {
+    --bg:    #020408;
+    --bg2:   #060C12;
+    --border:        #142030;
+    --border-bright: #1E3448;
+    --gold:      #FFB020;
+    --text:       #A8C0D8;
+    --text-bright:#E8F4FF;
+    --blue:      #00B4FF;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { min-height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 16px;
+  }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace; }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 70% 45% at 50% -8%, rgba(255,72,0,0.14) 0%, transparent 55%),
+      radial-gradient(ellipse 50% 50% at 100% 0%, rgba(255,176,32,0.07) 0%, transparent 50%),
+      radial-gradient(ellipse 40% 60% at 0% 100%, rgba(0,180,255,0.05) 0%, transparent 50%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  a { color: var(--blue); }
+
+  main {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 560px;
+  }
+  .card {
+    background: var(--bg2);
+    border: 1px solid var(--border-bright);
+    border-radius: 10px;
+    padding: 32px;
+  }
+  .eyebrow {
+    color: var(--gold);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+  h1 {
+    color: var(--text-bright);
+    font-size: 28px;
+    line-height: 1.2;
+    margin-bottom: 6px;
+  }
+  .subtitle {
+    color: var(--text);
+    font-size: 16px;
+    margin-bottom: 20px;
+  }
+  p { margin-bottom: 14px; }
+  .path {
+    display: block;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 14px;
+    color: var(--text-bright);
+    font-size: 14px;
+    margin: 16px 0;
+    overflow-x: auto;
+  }
+  footer {
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    font-size: 13px;
+    color: var(--text);
+  }
+</style>
+</head>
+<body>
+<main>
+  <div class="card">
+    <div class="eyebrow">TheRavensCall</div>
+    <h1>The Raven's Call</h1>
+    <p class="subtitle">Hosted dashboard</p>
+    <p>This site receives what a Valheim dedicated server running TheRavensCall pushes, and
+      serves each server's dashboard at its own address:</p>
+    <code class="path mono">/s/&lt;server-id&gt;/</code>
+    <p>Ask the server's admin for its id and read token. The dashboard page itself asks for the
+      token in its Settings panel.</p>
+    <footer>
+      TheRavensCall by Raven Iron Games &mdash;
+      <a href="https://github.com/RavenIron-Games/TheRavensCall" rel="noopener" target="_blank">TheRavensCall on GitHub</a>
+    </footer>
+  </div>
+</main>
+</body>
+</html>

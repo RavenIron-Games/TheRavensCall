@@ -316,15 +316,19 @@ latest copy only, `consistency: "strong"` on every read.
 | `GET /s/<id>/` | The release's `theravenscall.html` served as a static asset. |
 | `DELETE /s/<id>/api` | Write token in the `Authorization: Bearer` header; removes the four blobs and answers `200 {"deleted":true}` — how an admin unpublishes. Deleting the registry entry takes the dashboard offline on the next request; the stored copy stays until this runs. |
 | `OPTIONS /s/<id>/api/*` | `204` with the CORS headers below. |
+| `GET /` | A static landing page — no data, no ids — that says where a server's dashboard lives (the `/s/<server-id>/` pattern). Served as a static asset; no function invocation. |
+| `GET /s/` or `GET /s` | `302` to `/`. Sits above the `/s/*` catch-all so the empty remainder after `/s/` does not fall through to the dashboard with no id. |
 | anything else | `404`. |
 
 The read routes send `Access-Control-Allow-Origin: *`, `Access-Control-Allow-Methods: GET,
 OPTIONS`, `Access-Control-Allow-Headers: X-Api-Token, If-None-Match` and
 `Access-Control-Expose-Headers: ETag`; a `304` carries the same CORS headers as a `200`. Every
 hosted response carries `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`;
-the page is served with `Content-Security-Policy: default-src 'none'; script-src
+the dashboard page is served with `Content-Security-Policy: default-src 'none'; script-src
 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self' https:; img-src 'self';
-frame-ancestors 'none'; base-uri 'none'`. Every value taken from a pushed body is validated
+frame-ancestors 'none'; base-uri 'none'`. The landing page at `/` carries `default-src 'none';
+style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'` — no `script-src`, because
+it has no script. Every value taken from a pushed body is validated
 before it is stored or echoed (`mod_version` against `[0-9A-Za-z.+-]{1,32}`, `pushed_at` as an
 ISO-8601 instant, `heartbeat_seconds` as 60..86400, `server_id` against `[a-z0-9-]{1,32}`,
 `read_token_sha256` as 64 hex characters); anything that fails is `422` with nothing stored. On Netlify a browser receives the `ETag` as `"<sha>-df"` (the edge compresses the body and suffixes the compressed variant's tag) and the edge drops any suffixed `If-None-Match` before the function sees it, so the page echoes the bare sha; the receiver also tolerates a `-suffix` for edges that forward it.

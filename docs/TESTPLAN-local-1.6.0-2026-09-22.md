@@ -35,6 +35,22 @@ commit history of `feat/push-1.6.0-impl`.
 | 9 | **PASS — the release gate** | 14:03: the final build on the WSL2 Linux 1.0.15 server, `PushUrl = https://theravenscall-dash.netlify.app`, id `linuxtest`: `Push enabled: server_id='linuxtest', url=https://theravenscall-dash.netlify.app, interval=20s, heartbeat=60s.`, zero warnings, and the live receiver held its state (Storm10, day 18), census (262,520 objects, 22 ms) and health (`age_seconds` 29, `stale_after_seconds` 180) within a minute — a real TLS push with certificate validation from Linux to the deployed receiver. Earlier the same build had refused a non-loopback http URL at boot and pushed over plaintext http through a loopback forwarder to the local receiver as `second` (12:48 and 12:54) |
 | 10 | PASS | Storm10 restarted on its original config (`PushUrl` empty, `HttpApiToken` empty, `EnableHttpServer = true`) with the final DLL staged: no `Push` line of any kind in the boot, `/api/health` → `{"status":"ok","version":"1.6.0"}`, `/api/state` open again; the page at `localhost:2112` unchanged from 1.5.0's behaviour (no extra header line, no `NaN`) |
 
+## Landing page (scope revision 7, branch `feat/landing-page-1.6.0`)
+
+The first deploy answered the site root with Netlify's default 404 page (the owner opened the bare hostname in a browser at 14:28). Revision 7 adds `public/index.html` at `/` and a `302` from `/s/` to `/`; nothing under `/s/<id>` changes. Proven locally at 14:43 under `netlify dev --offline` with the same throwaway two-id registry (`scratchpad/harness/landing_check.sh`, 12/12):
+
+| Request | Result |
+|---|---|
+| `GET /`, `GET /index.html` | `200 text/html`, the landing page, with `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'`; zero `<script>` tags; one link (the GitHub repository); no server id and no owner domain in the body |
+| `GET /s`, `GET /s/` | `302`, `Location: /` |
+| `GET /s/storm10`, `/s/storm10/`, `/s/x/y/z` | `200`, the dashboard page (marker `1.6`) — the new rule catches nothing under an id |
+| `GET /s/storm10/api/health`, `/api/state` without a token | `401 application/json` from the api function; `OPTIONS` → `204` |
+| `GET /push` | `404 {"error":"not found"}` from the push function — its existing answer to anything but `POST`, unchanged; the live site answers the same |
+| `GET /nothing` | `404` |
+| The page in the browser pane | desktop and the 375 px phone preset: one card with a 16 px gutter, `scrollWidth === innerWidth` (no horizontal scroll), `document.scripts.length === 0`, the single link reads "TheRavensCall on GitHub" |
+
+Live: **not deployed**. The deploy is a 15-credit production deploy on the owner's word; the same script runs against the live site afterwards.
+
 ## Harness notes
 
 - Storm10 was started with `Start-Process` and stopped with `taskkill` without `/F` each cycle
