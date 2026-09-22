@@ -31,6 +31,13 @@ function stripEtagQuotes(raw: string): string {
   let v = raw.trim();
   if (v.startsWith("W/")) v = v.slice(2);
   if (v.startsWith('"') && v.endsWith('"') && v.length >= 2) v = v.slice(1, -1);
+  // Netlify's edge compresses function responses for clients that accept it
+  // (every browser) and rewrites the ETag of the compressed variant to
+  // "<ours>-df" (seen live 2026-09-22). The page echoes that back, so the
+  // compare has to ignore a "-<suffix>" after our 64-hex sha256 or a
+  // browser would never see a 304.
+  const m = /^([0-9a-f]{64})-[A-Za-z0-9]+$/.exec(v);
+  if (m) v = m[1];
   return v;
 }
 
