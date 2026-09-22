@@ -66,6 +66,7 @@ To provide seamless, 100% accurate tracking without missing a single event, the 
 - [⚙️ Configuration](#-configuration)
 - [📁 Where Everything Lives](#-where-everything-lives)
 - [📦 Installation & Dependencies](#-installation--dependencies)
+- [❓ FAQ](#-faq)
 
 </details>
 
@@ -382,6 +383,66 @@ BepInEx/config/TheRavensCall/
 
 ---
 
+## ❓ FAQ
+
+**Do players have to install anything?**
+No. The server mod works on its own. But a dedicated server never sees combat: kills, deaths, damage, fish and the ~205 vanilla stats reach the server only from [WhereTheCrowFlies](https://valheim.thunderstore.io/package/RavenIron/WhereTheCrowFlies) on a player's client. Without it a player still shows up with joins, leaves, biome discoveries and playtime, and the world census still credits them with the structures they have standing; but their kills, deaths, and their build, craft and harvest counters stay at zero.
+
+**Why are a player's kills and deaths zero, or far too low?**
+See above: that player is not running WhereTheCrowFlies. Once they install it, their vanilla stats arrive as an absolute snapshot, so everything they earned before the mod existed is backfilled rather than starting from zero.
+
+**Where is the dashboard?**
+`http://localhost:2112` on the server machine. Since 1.2.4 the server listens on localhost only. To open it from another PC set `HttpBindAllInterfaces = true` together with `HttpApiToken`, and keep the port behind a firewall: the API has no login of its own and hands every known player's stats, skills, titles and death coordinates to anyone who can reach it.
+
+**The dashboard says "Needs the API token (Settings)." What do I enter?**
+The `HttpApiToken` value from `com.raveniron.theravenscall.cfg`, once, in the page's Settings panel (the gear icon, top right). It is kept in that browser only. `/api/health` and the page itself never need it.
+
+**My server is on Nitrado or G-Portal and I cannot open port 2112. Can I still get the dashboard?**
+Yes, since 1.6.0: the mod pushes its data out over HTTPS to a small receiver site, and the same dashboard page is served from there. It needs nothing but outbound HTTPS, the same path out of the host the Discord webhook already uses — though it has not yet been run on a rented host. Raven Iron Games' own receiver is not open to other servers in 1.6.0, so deploy your own private copy of `hosting/netlify/` from the [GitHub repo](https://github.com/RavenIron-Games/TheRavensCall); its README has the steps. See [Hosted Servers](#-hosted-servers-nitrado-g-portal).
+
+**Does pushing make my server's data public?**
+Only to whoever holds that server's read token, and only for that server. They see everything the three pushed routes serve: every known player's stats, skills, titles and death coordinates, the event feed and season standings, and the census with the position of every portal, bed and ward. With `PushUrl` empty, the default, nothing leaves the box.
+
+**The push is set up but the hosted page shows nothing.**
+Read the BepInEx log. A working push logs one `Push enabled: server_id='…'` line at boot and then stays quiet. A `Push disabled:` line names the config key that is missing or malformed; a `Push rejected:` line names one of the four receiver refusals listed under [When the push is refused](#when-the-push-is-refused); a `Push failed:` line means the receiver could not be reached, and the mod keeps retrying on its own. Until the first push lands the hosted page reads "Registered, waiting for <id> to report"; "server silent since …" means no push has arrived for three heartbeats.
+
+**How do I start or end a season?**
+From an admin's game client that has WhereTheCrowFlies installed, in the console (F5): `ravenscall season start Autumn`, later `ravenscall season end`. The server checks its admin list before running it. Leave the name off and the season is named `Season_` plus today's date; the name becomes the Chronicle's season folder, so trailing periods and spaces are trimmed and it is capped at 64 characters. End the running season first: `season start` overwrites the active season in place — no summary is written, the baseline is not cleared and no season-end line is narrated. See [Seasons](#-seasons).
+
+**Does the world census slow the server down?**
+It walks the loaded world's objects on the main thread, on a timer, every 5 minutes by default; a real server with about 1.1 million objects finishes in under half a second, so it costs one short hitch every five minutes. `CensusIntervalMinutes = 0` turns it off, and `/api/census` then answers with `enabled: false`.
+
+**What are `BarrkBOT_data1.json` and `BarrkBOT_data2.json`? Can I delete them?**
+The exports a Discord bot reads: all players in one file, the game's items, recipes and buildables in the other. `BarrkBOT_data1.json` is rewritten every `StatsPushIntervalSeconds` (10 s by default), so deleting it does no harm — it is back on the next tick. `BarrkBOT_data2.json` is written once per server boot, so deleting it leaves `/api/gamedata` serving empty arrays until the next restart. Renaming them does: a bot finds them by name. See [BarrkBOT & Discord AI Bot Integration](#-barrkbot--discord-ai-bot-integration).
+
+**Do I need a Discord webhook?**
+No. With `WebhookUrl` empty nothing is posted to Discord and everything else, the Chronicle, the dashboard and the exports, works unchanged.
+
+**I upgraded from 1.2.x and the dashboard is broken, or the log warns about `theravenscall.html`.**
+Delete any `theravenscall.html` you placed in `BepInEx/config/TheRavensCall/` or next to the DLL. The page has shipped inside the DLL since 1.3.0; an older loose copy still overrides it and cannot read the current API.
+
+**Does it run on a Linux server?**
+Yes. 1.6.0 has run on a Linux dedicated server on Valheim 1.0.15 (under WSL2), including the push over HTTPS with certificate validation on.
+
+**Which Valheim version does it need?**
+Valheim 1.0. The 1.6.0 build has run on 1.0.12 (a Windows dedicated server) and 1.0.15 (a Linux one). The older 0.22x builds are not supported: on them the `ravenscall` console command fails to register at load, and the world census throws on its first run.
+
+**Can I run it on a listen server hosted from the game?**
+It is built and tested for dedicated servers. It loads on a listen-server host, but that setup has not been tested.
+
+**How do I take a server off a hosted dashboard?**
+Send `DELETE /s/<id>/api` to the receiver with the write token in the `Authorization: Bearer` header; the stored copy is removed and the page reads "no data" again. Then remove the id from the receiver's registry and redeploy, so the tokens are dead too. Clearing `PushUrl` on the server stops new pushes at the next restart.
+
+**Why does the dashboard show no health, inventory or position for a player who is online right now?**
+Because a dedicated server never has them: it relays the world, while a player's health, inventory and position live on that player's own client. The dashboard shows each player's stored record instead: totals, titles, skills, milestones, the death history and everything WhereTheCrowFlies reported. The only positions it keeps are where players died.
+
+**Can I turn the web dashboard off and keep only the file exports?**
+Yes: `EnableHttpServer = false`. The BarrkBOT exports, the Chronicle, the Discord webhook and, since 1.6.0, the push all keep running without it.
+
+**Where does the mod keep its data, and what do I copy when I move or rebuild the server?**
+Everything lives under `BepInEx/config/TheRavensCall/` (the per-player records in `players/`, the Chronicle, `seasons.json`, `season_baseline.json`, `event_feed.json`, `player_ids.json`, `lore.txt`) plus the settings file `BepInEx/config/com.raveniron.theravenscall.cfg`. Copy that folder and that file. The two BarrkBOT files are rebuilt after a boot, and the dashboard page ships inside the DLL. See [Where Everything Lives](#-where-everything-lives).
+
+---
 ## 💜 Support Raven Iron
 
 Every Raven Iron mod is free, and stays free — all of it, always. Nothing is held
