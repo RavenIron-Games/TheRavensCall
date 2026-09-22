@@ -33,7 +33,7 @@ namespace TheRavensCall
     {
         public const string PluginGUID = "com.raveniron.theravenscall";
         public const string PluginName = "TheRavensCall";
-        public const string PluginVersion = "1.6.0";
+        public const string PluginVersion = "1.6.1";
 
         internal static ManualLogSource Log;
         internal static Plugin Instance;
@@ -2483,10 +2483,16 @@ namespace TheRavensCall
                 if (args.Length >= 3 && args[2] == "start")
                 {
                     string sName = args.Length >= 4 ? args[3] : "Season_" + DateTime.UtcNow.ToString("yyyyMMdd");
-                    SeasonSystem.StartSeason(sName);
-                    // Echo back what was actually stored (StartSeason trims
-                    // trailing periods/whitespace), not the raw typed arg.
-                    args.Context?.AddString("[TheRavensCall] Season started: " + SeasonSystem.GetCurrentSeasonName());
+                    string running = SeasonSystem.GetCurrentSeasonName();
+                    if (SeasonSystem.StartSeason(sName))
+                        // Echo back what was actually stored (StartSeason trims
+                        // trailing periods/whitespace), not the raw typed arg.
+                        args.Context?.AddString("[TheRavensCall] Season started: " + SeasonSystem.GetCurrentSeasonName());
+                    else if (!string.IsNullOrEmpty(running))
+                        // 1.6.1: a running season is never replaced in place.
+                        args.Context?.AddString("[TheRavensCall] Season '" + running + "' is still running — run `ravenscall season end` first.");
+                    else
+                        args.Context?.AddString("[TheRavensCall] Season not started — see the server log.");
                 }
                 else if (args.Length >= 3 && args[2] == "end")
                 {
@@ -2839,10 +2845,21 @@ namespace TheRavensCall
             }
         }
 
-        public static void StartSeason(string name)
+        // Returns false, with nothing changed on disk, when a season is already
+        // running: until 1.6.0 a second `season start` replaced the active season
+        // in place — no summary, no season_end line, last_ended never set, only
+        // the Chronicle folder and the baseline switched to the new name. The
+        // console handler turns the false into a message naming the running
+        // season and `ravenscall season end` as the next step (1.6.1).
+        public static bool StartSeason(string name)
         {
             try
             {
+                if (!string.IsNullOrEmpty(_currentSeason))
+                {
+                    Plugin.Log.LogWarning("[TheRavensCall] Season '" + _currentSeason + "' is still running — `ravenscall season end` first; `season start` does not replace a running season.");
+                    return false;
+                }
                 // Trim trailing periods/whitespace off the display name too
                 // (see TrimTrailingPeriodsAndWhitespace above) — it can never
                 // survive as typed on Windows anyway, so keep what's shown
@@ -2862,8 +2879,9 @@ namespace TheRavensCall
                 SaveMeta();
                 Plugin.Narrate($"A new season begins: {_currentSeason}!", "season_start", "SERVER");
                 Plugin.Log.LogInfo("[TheRavensCall] Season started: " + _currentSeason);
+                return true;
             }
-            catch (Exception ex) { Plugin.Log.LogWarning("[TheRavensCall] SeasonSystem.StartSeason error: " + ex.Message); }
+            catch (Exception ex) { Plugin.Log.LogWarning("[TheRavensCall] SeasonSystem.StartSeason error: " + ex.Message); return false; }
         }
 
         public static void EndSeason()
