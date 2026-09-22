@@ -7,6 +7,24 @@
 
 ---
 
+## 🟢 [1.5.0] — The Raven Counts the Halls
+
+*Owner's ask, 2026-09-22: "can we add some data? like how many portals placed by player and in world," then "add the rest of them then, beds ships carts, the lot." A world census now runs on the server on a timer and feeds a new World panel on the dashboard. `/api/state` and the BarrkBOT export are untouched — the census is a new route only.*
+
+### Dashboard
+- **A World panel joins the season and feed panels**, fed by the new `/api/census` endpoint: a group strip (portals, beds, wards, ships, carts, chests, crafting stations — player-built vs. total for each), a sortable **Builders** table ranking players by what they've placed and what they have standing in the world total, a **portal directory** (tag, kind, builder, connected, position), and closed-by-default **Beds** and **Wards** tables, with a footer naming how many objects were counted, how long it took, and how often it runs. Polls on its own 60-second schedule; a 404 hides the panel only (a pre-1.5.0 server), `enabled: false` shows a one-line notice that the census is off, and the empty pre-first-run payload shows "First count runs a few seconds after boot."
+- **The player detail view's Build tab** gains a line summarizing what that player has standing in the world right now — pieces, portals, beds, chests, stations, ships, carts — alongside the vanilla "portals placed, ever" stat when the server has it (a different, larger number, since it includes portals since torn down).
+
+### Added
+- **`GET /api/census`** — the world census: how many portals, beds, wards, ships, carts, chests and crafting stations stand in the world, per-player totals, and directories of portals, beds and wards with builder, position and (for portals) connection status; see `docs/API.md` for the full shape. Token-gated the same as `/api/state`. Never 404s: answers the empty envelope before the first run completes, and `enabled: false` with the interval at 0.
+- New config: `[Census] CensusIntervalMinutes` (default `5`, minutes, clamped 1-1440; `0` turns the census off without breaking the endpoint).
+- New file under `BepInEx/config/TheRavensCall/`: `player_ids.json` — known player profile IDs mapped to names, so a piece's builder can still be named across restarts.
+
+### 🔧 Changed
+- The packaged `HexiumDist/plugins/TheRavensCall.dll` is **not** rebuilt as part of this change — it still contains 1.4.1's bytes (md5 `a1ed4838d0aff30148e64d0fa9e33616`, 210,432 bytes — the last packaged build; 1.4.2 was never packaged either). It needs a clean `dotnet build -c Release` from this source (and its md5 recorded here) before 1.5.0 is released.
+
+---
+
 ## 🟢 [1.4.2] — The Raven Minds the Edges
 
 *The four follow-ups the 1.4.1 pre-publish review left open, plus the hardening this branch's own review added — all in the season and Chronicle bookkeeping, none of it reachable in normal play on a dedicated server. No config, API or dashboard changes.*

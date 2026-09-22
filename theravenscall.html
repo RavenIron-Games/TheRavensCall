@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="theravenscall-api" content="1.4">
+<meta name="theravenscall-api" content="1.5">
 <title>The Raven's Call</title>
 <style>
   :root {
@@ -545,6 +545,7 @@
   <div id="worldPanels" hidden>
     <div id="seasonPanel"></div>
     <div id="feedPanel"></div>
+    <div id="censusPanel"></div>
   </div>
   <div id="app"></div>
 </main>
@@ -588,6 +589,10 @@
   // ───────────────────────── constants ─────────────────────────
   var POLL_MS = 10000;
   var FETCH_TIMEOUT_MS = 8000;
+  // World panel (1.5.0): its own, slower poll — a full census is far more
+  // expensive than /api/activity's envelope, so it doesn't share POLL_MS
+  // (docs/DASHBOARD.md, "Polling").
+  var CENSUS_POLL_MS = 60000;
 
   var BOSS_LIST = ['eikthyr', 'elder', 'bonemass', 'moder', 'yagluth', 'queen', 'fader'];
   var BOSS_DISPLAY = {
@@ -651,7 +656,12 @@
     activitySupported: null,   // tier 2: null = unknown, true, false (false = confirmed 404, a pre-1.4.0 server)
     activityAuth: true,        // tier 2: false after a 401 from /api/activity, cleared by the next 200
     feedFilter: 'all',         // tier 2: selected feed chip group — all | combat | players | world | season
-    feedHighlightSince: null   // tier 2: previous poll's newest events[0].timestamp_utc, for the "new row" highlight
+    feedHighlightSince: null,  // tier 2: previous poll's newest events[0].timestamp_utc, for the "new row" highlight
+    censusSort: { key: 'pieces', dir: 'desc' }, // 1.5.0: the World panel's Builders table sort, same mechanics as boardSort/seasonSort
+    censusData: null,          // 1.5.0: parsed /api/census payload
+    lastCensusCompare: null,   // 1.5.0: last /api/census response text with generated_at stripped
+    censusSupported: null,     // 1.5.0: null = unknown, true, false (false = confirmed 404, a pre-1.5.0 server) — its own latch, independent of activitySupported
+    censusAuth: true           // 1.5.0: false after a 401 from /api/census, cleared by the next 200
   };
 
   function safeGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -934,6 +944,60 @@
     if (!season || !season.last_ended) return '';
     return 'Last season: ' + season.last_ended + (season.last_ended_at ? ', ended ' + relativeTime(season.last_ended_at) : '') + '.';
   }
+
+  // ─────────────────── census (1.5.0) pure helpers ───────────────────
+  // Each takes plain data (the raw /api/census payload, or its builders[]
+  // array) so it can be exercised directly against
+  // docs/fixtures/api-census.json, with no DOM and no state.
+
+  var CENSUS_GROUP_ORDER = ['portals', 'beds', 'wards', 'ships', 'carts', 'chests', 'stations'];
+  var CENSUS_COLUMNS = [
+    { key: 'name', label: 'Player' },
+    { key: 'portals', label: 'Portals' },
+    { key: 'beds', label: 'Beds' },
+    { key: 'wards', label: 'Wards' },
+    { key: 'ships', label: 'Ships' },
+    { key: 'carts', label: 'Carts' },
+    { key: 'chests', label: 'Chests' },
+    { key: 'stations', label: 'Stations' },
+    { key: 'pieces', label: 'Pieces' }
+  ];
+
+  // A known name links into the detail view; an unknown builder (null name)
+  // renders as plain text, never a link (§6).
+  function builderCell(name, id) {
+    return name ? '<span class="name-link" data-select="' + esc(name) + '">' + esc(name) + '</span>' : 'Unknown (id ' + esc(id) + ')';
+  }
+
+  // Normalizes /api/census's builders[] into rows sortBoardRows() can rank
+  // (same mechanics the season board already reuses from tier 1). sortBoardRows
+  // always tie-breaks on row.name via localeCompare, which throws on null —
+  // so an unknown builder gets a sortable placeholder here (never rendered:
+  // the renderer uses builderName/id through builderCell() instead), pinned
+  // after every real name with ￿, the same "unknown sorts last" rule
+  // WorldCensus.cs's own CompareNameThenId applies server-side.
+  function censusBuilderRows(builders) {
+    return (builders || []).map(function (b) {
+      return {
+        name: b.name || ('￿' + b.id), builderName: b.name, id: b.id,
+        portals: b.portals || 0, beds: b.beds || 0, wards: b.wards || 0,
+        ships: b.ships || 0, carts: b.carts || 0, chests: b.chests || 0,
+        stations: b.stations || 0, pieces: b.pieces || 0
+      };
+    });
+  }
+
+  // Finds a census builder row by exact player name — the only link between
+  // /api/state's players map (keyed by name) and /api/census's builders[]
+  // (keyed by numeric id); both ultimately come from the same player name
+  // string, so a name match is enough (§6, detail view Build tab).
+  function censusBuilderRowFor(builders, name) {
+    for (var i = 0; i < (builders || []).length; i++) {
+      if (builders[i].name === name) return builders[i];
+    }
+    return null;
+  }
+
   function gameDataItemByName(name) {
     if (!state.gameData || !state.gameData.items) return null;
     var lname = String(name).toLowerCase();
@@ -1069,6 +1133,44 @@
       // Timeout, network error, or a non-404 HTTP error: leave activityData
       // (and whatever the panels are already showing) exactly as it is;
       // try again next poll.
+    });
+  }
+
+  // A sibling of pollActivity — same outcomes, same discipline, but its own
+  // independent supported/auth latches (censusSupported/censusAuth, not
+  // activitySupported/activityAuth) so a 404 on one route never hides the
+  // other's panel (§6: "the World panel needs its own censusSupported/
+  // censusAuth latches ... or scope §6's '404 → hide the World panel only'
+  // cannot hold").
+  function pollCensus() {
+    if (state.censusSupported === false) return; // confirmed 404 once already; a pre-1.5.0 server never grows the route mid-session
+    apiFetch('/api/census').then(function (text) {
+      var wasUnauthorized = state.censusAuth === false;
+      state.censusSupported = true;
+      state.censusAuth = true;
+      var compare = stripGeneratedAt(text);
+      if (compare !== state.lastCensusCompare) {
+        state.lastCensusCompare = compare;
+        try { state.censusData = JSON.parse(text); } catch (e) { return; }
+        renderCensus();
+      } else if (wasUnauthorized) {
+        renderCensus();
+      }
+    }).catch(function (err) {
+      if (err && err.unauthorized) {
+        state.censusSupported = true;
+        state.censusAuth = false;
+        renderCensus();
+        return;
+      }
+      if (err && err.message === 'HTTP 404') {
+        state.censusSupported = false;
+        renderCensus();
+        return;
+      }
+      // Timeout, network error, or a non-404 HTTP error: leave censusData
+      // (and whatever the panel is already showing) exactly as it is; try
+      // again next poll.
     });
   }
   function loadGameData() {
@@ -1241,14 +1343,22 @@
       '</div>';
   }
 
-  // ─────────────────────── activity panels (tier 2) ───────────────────────
-  // #worldPanels (seasonPanel + feedPanel) sits beside #app inside <main>,
-  // driven by its own poll (pollActivity) and its own render (renderActivity)
-  // — SCOPE-1.4.0.md §3.1, decision 7. Shown only once /api/activity has
-  // answered 200 or 401 (a confirmed 1.4.0+ server) and the roster/detail
-  // view isn't covering it; a 404 (pre-1.4.0 server) keeps it hidden.
-  function worldPanelsShouldShow() {
+  // ─────────────────────── activity panels (tier 2 + 1.5.0) ───────────────────────
+  // #worldPanels (seasonPanel + feedPanel + censusPanel) sits beside #app
+  // inside <main>, driven by its own polls (pollActivity, pollCensus) and
+  // its own renders (renderActivity, renderCensus) — SCOPE-1.4.0.md §3.1,
+  // decision 7. The season/feed pair and the census panel each have their
+  // own independent supported latch (§6), so one route 404ing never hides
+  // the other's content; the shared #worldPanels container itself shows
+  // whenever either half has something to show.
+  function activityPanelsShouldShow() {
     return state.view !== 'detail' && state.activitySupported === true;
+  }
+  function censusPanelShouldShow() {
+    return state.view !== 'detail' && state.censusSupported === true;
+  }
+  function worldPanelsShouldShow() {
+    return activityPanelsShouldShow() || censusPanelShouldShow();
   }
 
   // Extracted from #app's click handler (below) so a link inside
@@ -1262,12 +1372,11 @@
   }
 
   function renderActivity() {
-    var panels = document.getElementById('worldPanels');
-    if (!worldPanelsShouldShow()) { panels.hidden = true; return; }
-    panels.hidden = false;
+    document.getElementById('worldPanels').hidden = !worldPanelsShouldShow();
 
     var seasonPanel = document.getElementById('seasonPanel');
     var feedPanel = document.getElementById('feedPanel');
+    if (!activityPanelsShouldShow()) { seasonPanel.innerHTML = ''; feedPanel.innerHTML = ''; return; }
     if (state.activityAuth === false) {
       seasonPanel.innerHTML = '<div class="card"><div class="notice small">Needs the API token (Settings).</div></div>';
       feedPanel.innerHTML = '';
@@ -1276,6 +1385,145 @@
     var data = state.activityData || { season: { active: false, name: '', standings: [] }, events: [] };
     seasonPanel.innerHTML = renderSeasonPanel(data.season);
     feedPanel.innerHTML = renderFeedPanel(data.events || []);
+  }
+
+  // Sibling of renderActivity — the World panel's own render, independent of
+  // the season/feed pair (§6). Preserves any open Beds/Wards <details> across
+  // a re-render, the same pattern render() uses for #app.
+  function renderCensus() {
+    document.getElementById('worldPanels').hidden = !worldPanelsShouldShow();
+
+    var panel = document.getElementById('censusPanel');
+    if (!censusPanelShouldShow()) { panel.innerHTML = ''; return; }
+    if (state.censusAuth === false) {
+      panel.innerHTML = '<div class="card"><div class="notice small">Needs the API token (Settings).</div></div>';
+      return;
+    }
+
+    var openDetails = [];
+    var existing = panel.querySelectorAll('details[open][data-details-key]');
+    for (var i = 0; i < existing.length; i++) openDetails.push(existing[i].getAttribute('data-details-key'));
+
+    var data = state.censusData || { enabled: true, generated_at: '', interval_minutes: 0, scanned_objects: 0, duration_ms: 0, groups: {}, builders: [], unknown_builders: 0, portals: [], beds: [], wards: [] };
+    panel.innerHTML = renderCensusPanel(data);
+
+    openDetails.forEach(function (key) {
+      var d = panel.querySelector('details[data-details-key="' + key + '"]');
+      if (d) d.setAttribute('open', '');
+    });
+  }
+
+  function renderCensusPanel(data) {
+    if (!data.enabled) {
+      return '<div class="card"><h3>World</h3><div class="notice small">The census is off (<span class="mono">CensusIntervalMinutes = 0</span>).</div></div>';
+    }
+    if (!data.generated_at) {
+      return '<div class="card"><h3>World</h3><div class="notice small">First count runs a few seconds after boot.</div></div>';
+    }
+
+    var html = '<div class="card"><h3>World</h3>';
+
+    // 1. Group strip — player_built/total underneath only when they differ.
+    html += '<div class="strip">';
+    CENSUS_GROUP_ORDER.forEach(function (g) {
+      var t = (data.groups && data.groups[g]) || { total: 0, player_built: 0 };
+      html += '<span class="strip-item"><b>' + fmtNum(t.total) + '</b> ' + g +
+        (t.player_built !== t.total ? '<div class="detail-sub">' + fmtNum(t.player_built) + '/' + fmtNum(t.total) + ' player-built</div>' : '') +
+        '</span>';
+    });
+    html += '</div>';
+
+    // 2. Builders table — sortable like the other boards (state.censusSort).
+    var builders = data.builders || [];
+    html += '<div class="detail-sub" style="margin:14px 0 6px">Builders' +
+      (data.unknown_builders ? ' — <span class="mono">' + fmtNum(data.unknown_builders) + '</span> unknown' : '') + '</div>';
+    if (builders.length === 0) {
+      html += '<div class="notice small">Nothing built yet.</div>';
+    } else {
+      var rows = sortBoardRows(censusBuilderRows(builders), state.censusSort);
+      html += '<div class="table-wrap"><table><thead><tr><th>#</th>';
+      CENSUS_COLUMNS.forEach(function (c) {
+        var active = state.censusSort.key === c.key;
+        var arrow = active ? (state.censusSort.dir === 'asc' ? ' ▲' : ' ▼') : '';
+        var ariaSort = active ? (state.censusSort.dir === 'asc' ? 'ascending' : 'descending') : 'none';
+        html += '<th data-sort="' + c.key + '" tabindex="0" aria-sort="' + ariaSort + '"' + (c.key === 'name' ? '' : ' style="text-align:right"') + '>' + esc(c.label) + arrow + '</th>';
+      });
+      html += '</tr></thead><tbody>';
+      rows.forEach(function (r, i) {
+        html += '<tr><td class="num">' + (i + 1) + '</td>' +
+          '<td>' + builderCell(r.builderName, r.id) + '</td>' +
+          '<td class="num">' + fmtNum(r.portals) + '</td>' +
+          '<td class="num">' + fmtNum(r.beds) + '</td>' +
+          '<td class="num">' + fmtNum(r.wards) + '</td>' +
+          '<td class="num">' + fmtNum(r.ships) + '</td>' +
+          '<td class="num">' + fmtNum(r.carts) + '</td>' +
+          '<td class="num">' + fmtNum(r.chests) + '</td>' +
+          '<td class="num">' + fmtNum(r.stations) + '</td>' +
+          '<td class="num">' + fmtNum(r.pieces) + '</td>' +
+          '</tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+
+    // 3. Portal directory — server-sorted (tag then builder), not clickable.
+    var portals = data.portals || [];
+    html += '<div class="detail-sub" style="margin:14px 0 6px">Portals</div>';
+    if (portals.length === 0) {
+      html += '<div class="notice small">No portals standing.</div>';
+    } else {
+      html += '<div class="table-wrap"><table><thead><tr><th>Tag</th><th>Kind</th><th>Builder</th><th>Connected</th><th style="text-align:right">Position</th></tr></thead><tbody>';
+      portals.forEach(function (p) {
+        html += '<tr><td>' + (p.tag ? esc(p.tag) : '<span class="detail-sub">(no tag)</span>') + '</td>' +
+          '<td>' + esc(p.kind) + '</td>' +
+          '<td>' + builderCell(p.builder, p.builder_id) + '</td>' +
+          '<td><span class="tag' + (p.connected ? ' green' : '') + '">' + (p.connected ? 'linked' : 'no pair') + '</span></td>' +
+          '<td class="num">' + fmtNum(p.x) + ', ' + fmtNum(p.z) + '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+      if (data.portals_truncated) html += '<div class="notice small">Showing the first 500 portals.</div>';
+    }
+
+    // 4. Beds / Wards — closed-by-default <details>, same class the "N more
+    // counters" disclosure elsewhere on this page already uses.
+    var beds = data.beds || [];
+    html += '<details class="more" data-details-key="census-beds"><summary>Beds (' + fmtNum(beds.length) + ')</summary>';
+    if (beds.length === 0) {
+      html += '<div class="notice small">No beds standing.</div>';
+    } else {
+      html += '<div class="table-wrap"><table><thead><tr><th>Owner</th><th>Builder</th><th style="text-align:right">Position</th></tr></thead><tbody>';
+      beds.forEach(function (b) {
+        html += '<tr><td>' + (b.owner ? esc(b.owner) : '<span class="detail-sub">Unclaimed</span>') + '</td>' +
+          '<td>' + builderCell(b.builder, b.builder_id) + '</td>' +
+          '<td class="num">' + fmtNum(b.x) + ', ' + fmtNum(b.z) + '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+      if (data.beds_truncated) html += '<div class="notice small">Showing the first 500 beds.</div>';
+    }
+    html += '</details>';
+
+    var wards = data.wards || [];
+    html += '<details class="more" data-details-key="census-wards"><summary>Wards (' + fmtNum(wards.length) + ')</summary>';
+    if (wards.length === 0) {
+      html += '<div class="notice small">No wards standing.</div>';
+    } else {
+      html += '<div class="table-wrap"><table><thead><tr><th>Builder</th><th>Active</th><th style="text-align:right">Position</th></tr></thead><tbody>';
+      wards.forEach(function (w) {
+        html += '<tr><td>' + builderCell(w.builder, w.builder_id) + '</td>' +
+          '<td><span class="tag' + (w.enabled ? ' green' : '') + '">' + (w.enabled ? 'active' : 'inactive') + '</span></td>' +
+          '<td class="num">' + fmtNum(w.x) + ', ' + fmtNum(w.z) + '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+      if (data.wards_truncated) html += '<div class="notice small">Showing the first 500 wards.</div>';
+    }
+    html += '</details>';
+
+    // 5. Footer.
+    var mins = data.interval_minutes || 0;
+    html += '<div class="detail-sub" style="margin-top:10px">Counted ' + fmtNum(data.scanned_objects) + ' objects in ' +
+      fmtNum(data.duration_ms) + ' ms, ' + esc(relativeTime(data.generated_at)) + '; runs every ' + fmtNum(mins) + ' minute' + (mins === 1 ? '' : 's') + '.</div>';
+
+    html += '</div>';
+    return html;
   }
 
   function renderSeasonPanel(season) {
@@ -1591,11 +1839,37 @@
     return html;
   }
 
+  // 1.5.0: what this player has standing in the world right now, from
+  // /api/census's builders[] (matched by name — see censusBuilderRowFor).
+  // Independent of the crow client mod (the census is server-only), so it
+  // renders whether or not this player has ever run WhereTheCrowFlies.
+  function renderCensusStandingCard(p) {
+    if (state.censusSupported !== true) return ''; // pre-1.5.0 server or not yet confirmed — say nothing, same as the panel itself staying hidden
+    if (state.censusAuth === false) {
+      return '<div class="card"><h3>World census</h3><div class="notice small">Needs the API token (Settings).</div></div>';
+    }
+    var row = censusBuilderRowFor((state.censusData && state.censusData.builders) || [], p.name);
+    var line;
+    if (!row) {
+      line = 'Nothing counted yet.';
+    } else {
+      var parts = [];
+      var add = function (n, singular) { if (n) parts.push(fmtNum(n) + ' ' + singular + (n === 1 ? '' : 's')); };
+      add(row.pieces, 'piece'); add(row.portals, 'portal'); add(row.beds, 'bed'); add(row.wards, 'ward');
+      add(row.ships, 'ship'); add(row.carts, 'cart'); add(row.chests, 'chest'); add(row.stations, 'station');
+      line = parts.length ? ('Standing in the world: ' + parts.join(' · ') + '.') : 'Nothing counted yet.';
+    }
+    var vs = p.vanilla_stats || {};
+    if (vs.PortalsPlaced !== undefined) line += ' Portals placed, ever: ' + fmtNum(vs.PortalsPlaced) + '.';
+    return '<div class="card"><h3>World census</h3><div class="detail-sub">' + line + '</div></div>';
+  }
+
   function renderBuildTab(p) {
     var neverSynced = isEmpty(p.vanilla_stats) && isEmpty(p.skill_levels);
-    if (neverSynced) return crowNotice(p);
+    var censusCard = renderCensusStandingCard(p);
+    if (neverSynced) return censusCard + crowNotice(p);
     var net = (p.builds_placed || 0) - (p.builds_removed || 0);
-    return '<div class="card"><h3>Building activity</h3><div class="stat-grid">' +
+    return censusCard + '<div class="card"><h3>Building activity</h3><div class="stat-grid">' +
       statTile(fmtNum(p.builds_placed), 'Placed', 'green') +
       statTile(fmtNum(p.builds_removed), 'Removed', 'red') +
       statTile(fmtNum(p.builds_repaired), 'Repaired', 'blue') +
@@ -1641,10 +1915,14 @@
     state.activitySupported = null;
     state.activityAuth = true;
     state.lastActivityCompare = null;
+    state.censusSupported = null;
+    state.censusAuth = true;
+    state.lastCensusCompare = null;
     render();
     pollState();
     loadGameData();
     pollActivity();
+    pollCensus();
   }
 
   // ───────────────────────── events (delegated, bound once) ─────────────────────────
@@ -1709,9 +1987,18 @@
     var sortTh = e.target.closest('[data-sort]');
     if (sortTh) {
       var key = sortTh.getAttribute('data-sort');
-      if (state.seasonSort.key === key) state.seasonSort.dir = (state.seasonSort.dir === 'asc' ? 'desc' : 'asc');
-      else state.seasonSort = { key: key, dir: (key === 'name' ? 'asc' : 'desc') };
-      renderActivity();
+      // #censusPanel has its own sort headers (the Builders table) sharing
+      // #worldPanels' one click listener with the season standings board's —
+      // route by which panel the header is actually inside.
+      if (e.target.closest('#censusPanel')) {
+        if (state.censusSort.key === key) state.censusSort.dir = (state.censusSort.dir === 'asc' ? 'desc' : 'asc');
+        else state.censusSort = { key: key, dir: (key === 'name' ? 'asc' : 'desc') };
+        renderCensus();
+      } else {
+        if (state.seasonSort.key === key) state.seasonSort.dir = (state.seasonSort.dir === 'asc' ? 'desc' : 'asc');
+        else state.seasonSort = { key: key, dir: (key === 'name' ? 'asc' : 'desc') };
+        renderActivity();
+      }
       return;
     }
     var chip = e.target.closest('[data-feed-filter]');
@@ -1737,8 +2024,10 @@
   pollState();
   loadGameData();
   pollActivity();
+  pollCensus();
   setInterval(pollState, POLL_MS);
   setInterval(pollActivity, POLL_MS);
+  setInterval(pollCensus, CENSUS_POLL_MS);
   setInterval(function () { if (state.stateData) renderHeader(); }, 1000);
 })();
 </script>

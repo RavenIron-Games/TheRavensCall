@@ -33,7 +33,7 @@ namespace TheRavensCall
     {
         public const string PluginGUID = "com.raveniron.theravenscall";
         public const string PluginName = "TheRavensCall";
-        public const string PluginVersion = "1.4.2";
+        public const string PluginVersion = "1.5.0";
 
         internal static ManualLogSource Log;
         internal static Plugin Instance;
@@ -88,6 +88,9 @@ namespace TheRavensCall
         public static ConfigEntry<string> HttpApiToken;
         public static ConfigEntry<int> EventFeedCapacity;
 
+        // ── Census ────────────────────────────────────────────────────────────
+        public static ConfigEntry<int> CensusIntervalMinutes;
+
         // ── Combat (client-reported — see CombatReportReceiver) ──────────────
         public static ConfigEntry<bool> AcceptClientReports;
         public static ConfigEntry<bool> LogCombatReports;
@@ -129,8 +132,10 @@ namespace TheRavensCall
             HttpServerPort = Config.Bind("Companion", "HttpServerPort", 2112, "Port for the HTTP dashboard/API (/api/state is exactly the BarrkBOT export, the same JSON written to BarrkBOT_data1.json)");
             StatsPushIntervalSeconds = Config.Bind("Companion", "StatsPushIntervalSeconds", 10f, "How often (seconds) to snapshot every online player's state, check for new biomes/gear tiers, and refresh the BarrkBOT export file");
             HttpBindAllInterfaces = Config.Bind("Companion", "HttpBindAllInterfaces", false, "Also listen on every network interface (http://+:port), not only localhost. Off by default since 1.2.4: the API hands every known player's stats, skills, titles and death coordinates to anyone who can reach the port, with no login. Turn on only behind a firewall or together with HttpApiToken");
-            HttpApiToken = Config.Bind("Companion", "HttpApiToken", "", "If set, /api/state, /api/gamedata, /api/pins and /api/activity require ?token=<this value> (or an X-Api-Token header). /api/health and the dashboard page stay open. Since 1.3.0 the bundled dashboard page has a settings panel (gear icon) to enter this token itself, stored in the browser and sent as X-Api-Token — a 401 opens that panel automatically. A pre-1.3.0 page still does not send a token");
+            HttpApiToken = Config.Bind("Companion", "HttpApiToken", "", "If set, /api/state, /api/gamedata, /api/pins, /api/activity and /api/census require ?token=<this value> (or an X-Api-Token header). /api/health and the dashboard page stay open. Since 1.3.0 the bundled dashboard page has a settings panel (gear icon) to enter this token itself, stored in the browser and sent as X-Api-Token — a 401 opens that panel automatically. A pre-1.3.0 page still does not send a token");
             EventFeedCapacity = Config.Bind("Companion", "EventFeedCapacity", 200, "Number of recent Chronicle lines kept in memory and served by /api/activity, newest first (0 to 1000). They are saved to event_feed.json so the feed survives a restart. 0 turns the feed off; the endpoint still answers, with an empty events array, so a 1.4.0 dashboard can tell \"turned off\" from \"older server\".");
+
+            CensusIntervalMinutes = Config.Bind("Census", "CensusIntervalMinutes", 5, "How often (minutes) to walk every object in the loaded world and count portals, beds, wards, ships, carts, chests and crafting stations for /api/census. Clamped to 1..1440. 0 turns the census off; the endpoint still answers 200 with enabled:false instead of 404.");
 
             AcceptClientReports = Config.Bind("Combat", "AcceptClientReports", true, "Accept RavensCall_CombatReport_V1 RPC reports (kills/deaths/damage/fish) from players running the WhereTheCrowFlies client mod. Every report is verified against the connected-player list before anything is credited");
             LogCombatReports = Config.Bind("Combat", "LogCombatReports", false, "Log every accepted/dropped/rate-limited combat report. Verbose — enable during rollout/verification, then turn back off");
@@ -242,7 +247,12 @@ namespace TheRavensCall
         // both more reliable and fresher. Used for boss-kill proximity
         // credit, biome polling, combat-report name verification, and
         // orphaned-session reconcile. ─────────────────────────────────────
-        public static IEnumerable<(string name, Vector3 pos, long peerUid)> GetConnectedPlayers()
+        // playerID: the profile ID Player.SetPlayerID wrote onto the
+        // character's own ZDO (ZDOVars.s_playerID) — 0 when the character
+        // ZDO isn't resolvable yet. Added in 1.5.0 for WorldCensus, which
+        // matches it against ZDO.GetLong(ZDOVars.s_creator) to name builders
+        // while they're connected (see WorldCensus.cs).
+        public static IEnumerable<(string name, Vector3 pos, long peerUid, long playerID)> GetConnectedPlayers()
         {
             if (ZNet.instance == null) yield break;
             foreach (var peer in ZNet.instance.GetPeers())
@@ -250,7 +260,8 @@ namespace TheRavensCall
                 if (peer == null || !peer.IsReady() || string.IsNullOrEmpty(peer.m_playerName)) continue;
                 var zdo = ZDOMan.instance?.GetZDO(peer.m_characterID);
                 Vector3 pos = zdo != null ? zdo.GetPosition() : peer.m_refPos;
-                yield return (peer.m_playerName, pos, peer.m_uid);
+                long playerID = zdo != null ? zdo.GetLong(ZDOVars.s_playerID, 0L) : 0L;
+                yield return (peer.m_playerName, pos, peer.m_uid, playerID);
             }
         }
 
@@ -346,6 +357,7 @@ namespace TheRavensCall
                 if (!ZNet.instance.IsServer()) return;
                 Plugin.WasServer = true;
                 EventFeed.Init();
+                WorldCensus.Init();
                 PlayerRegistry.LoadAll();
                 Companion.PrimeStateCache();
                 SessionTracker.Begin();

@@ -54,6 +54,18 @@ namespace TheRavensCall
         // events, so /api/activity has one shape for its whole lifetime.
         internal const string EmptyActivityJson = "{\"generated_at\":\"\",\"season\":{\"active\":false,\"name\":\"\",\"started_at\":null,\"standings_since\":null,\"last_ended\":null,\"last_ended_at\":null,\"standings\":[]},\"events\":[]}";
 
+        // /api/census is served from this string, rebuilt on the main thread
+        // by WorldCensus.MaybeRun() (called from PollAllPlayers) on its own
+        // CensusIntervalMinutes schedule — never a live walk from an HTTP
+        // worker thread, same discipline as _stateCache/_activityCache.
+        internal static volatile string _censusCache;
+        // Served until the first completed census (or if CensusIntervalMinutes
+        // is 0, replaced by WorldCensus with the same shape and enabled:false —
+        // /api/census never 404s while the HTTP server is up, the same
+        // contract /api/activity already keeps). Keep in step with
+        // WorldCensus's own envelope builder.
+        internal const string EmptyCensusJson = "{\"generated_at\":\"\",\"enabled\":true,\"interval_minutes\":5,\"scanned_objects\":0,\"duration_ms\":0,\"groups\":{\"portals\":{\"total\":0,\"player_built\":0},\"beds\":{\"total\":0,\"player_built\":0},\"wards\":{\"total\":0,\"player_built\":0},\"ships\":{\"total\":0,\"player_built\":0},\"carts\":{\"total\":0,\"player_built\":0},\"chests\":{\"total\":0,\"player_built\":0},\"stations\":{\"total\":0,\"player_built\":0}},\"builders\":[],\"unknown_builders\":0,\"portals\":[],\"beds\":[],\"wards\":[]}";
+
         // HTTP server
         private HttpListener _listener;
         private Thread _serverThread;
@@ -121,7 +133,7 @@ namespace TheRavensCall
                 _serverThread.Start();
                 Log.LogInfo("HTTP server listening on http://localhost:" + port + (bindAll ? " and every interface" : " (localhost only; set HttpBindAllInterfaces=true to expose it)"));
                 if (bindAll) Log.LogInfo("Mobile devices: http://" + GetLocalIP() + ":" + port);
-                if (!string.IsNullOrEmpty(Plugin.HttpApiToken?.Value)) Log.LogInfo("HTTP API token required on /api/state, /api/gamedata, /api/pins and /api/activity.");
+                if (!string.IsNullOrEmpty(Plugin.HttpApiToken?.Value)) Log.LogInfo("HTTP API token required on /api/state, /api/gamedata, /api/pins, /api/activity and /api/census.");
             }
             catch (Exception ex)
             {
@@ -222,6 +234,14 @@ namespace TheRavensCall
                     // still answers 200 with an empty events array (§2), which
                     // is exactly what the empty envelope already carries.
                     body = Encoding.UTF8.GetBytes(_activityCache ?? EmptyActivityJson);
+                }
+                else if (path == "/api/census")
+                {
+                    ctx.Response.ContentType = "application/json";
+                    // Same cached-string-or-fixed-envelope discipline as
+                    // /api/activity — never a live walk from this worker
+                    // thread, never 404 while the HTTP server is up (§5).
+                    body = Encoding.UTF8.GetBytes(_censusCache ?? EmptyCensusJson);
                 }
                 else if (path == "/" || path == "/index" || path.EndsWith(".html"))
                 {
@@ -362,7 +382,7 @@ namespace TheRavensCall
         {
             string token = Plugin.HttpApiToken?.Value;
             if (string.IsNullOrEmpty(token)) return true;
-            if (path != "/api/state" && path != "/api/gamedata" && path != "/api/pins" && path != "/api/activity") return true;
+            if (path != "/api/state" && path != "/api/gamedata" && path != "/api/pins" && path != "/api/activity" && path != "/api/census") return true;
             string given = ctx.Request.QueryString["token"] ?? ctx.Request.Headers["X-Api-Token"];
             return !string.IsNullOrEmpty(given) && string.Equals(given, token, StringComparison.Ordinal);
         }
@@ -519,6 +539,10 @@ namespace TheRavensCall
                     _stateCache = barrkBotJson;
                     // A fault inside can never disturb the assignment above.
                     BuildActivityCache();
+                    // Own schedule (CensusIntervalMinutes), not every tick —
+                    // WorldCensus checks its own last-run clock and no-ops
+                    // until due (§4). A fault inside is caught there too.
+                    WorldCensus.MaybeRun();
                 }
 
                 Log.LogInfo($"Poll tick — {online.Count} online, {PlayerRegistry.All.Count()} known player(s).");
@@ -900,6 +924,33 @@ namespace TheRavensCall
             long.TryParse(json.Substring(start, i - start), out long v);
             return v;
         }
+
+        // Reflects ZDOMan's own object table (ZDOMan.m_objectsByID, private)
+        // — nothing public enumerates every ZDO in the loaded world. Used by
+        // TimerTracker (client-era, dead on a dedicated server — see its own
+        // comment) and, since 1.5.0, by WorldCensus's own walk. internal
+        // (moved here from TimerTracker in 1.5.0) so WorldCensus can call it
+        // as Companion.GetAllZDOs(). Returns an empty list, silently, on any
+        // reflection failure; WorldCensus logs one warning the first time
+        // that happens while ZDOMan.instance still exists, so a future game
+        // build that renames the field is visible in the log instead of
+        // silently reporting a zero census.
+        internal static List<ZDO> GetAllZDOs()
+        {
+            var result = new List<ZDO>();
+            try
+            {
+                var field = typeof(ZDOMan).GetField("m_objectsByID",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                if (field != null)
+                {
+                    var dict = field.GetValue(ZDOMan.instance) as System.Collections.Generic.Dictionary<ZDOID, ZDO>;
+                    if (dict != null) { result.AddRange(dict.Values); return result; }
+                }
+            }
+            catch { }
+            return result;
+        }
     }
 
     static class RecipeDumper
@@ -1074,23 +1125,6 @@ namespace TheRavensCall
             return 0;
         }
 
-        static List<ZDO> GetAllZDOs()
-        {
-            var result = new List<ZDO>();
-            try
-            {
-                var field = typeof(ZDOMan).GetField("m_objectsByID",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                if (field != null)
-                {
-                    var dict = field.GetValue(ZDOMan.instance) as System.Collections.Generic.Dictionary<ZDOID, ZDO>;
-                    if (dict != null) { result.AddRange(dict.Values); return result; }
-                }
-            }
-            catch { }
-            return result;
-        }
-
         public static string GetJson(long playerID)
         {
             if (ZDOMan.instance == null || ZNet.instance == null)
@@ -1098,7 +1132,7 @@ namespace TheRavensCall
 
             double now = ZNet.instance.GetTimeSeconds();
             long unixNow = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            var allZDOs = GetAllZDOs();
+            var allZDOs = Companion.GetAllZDOs();
 
 
             var fermenters = new System.Text.StringBuilder();
