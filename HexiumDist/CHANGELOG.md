@@ -40,7 +40,7 @@
 - **A `season_baseline.json` written by 1.4.0 or 1.4.1 for a season whose name ends in a period is still accepted** after this update: the name it carries is compared trimmed, the way 1.4.1 already trims the running season's name at load. Without that, the first 1.4.2 boot would have taken a fresh baseline and reset the running season's standings.
 
 ### 🔧 Changed
-- The packaged `HexiumDist/plugins/TheRavensCall.dll` is **not** rebuilt as part of this change — it still contains 1.4.1's bytes. It needs a clean `dotnet build -c Release` from this source (and its md5 recorded here) before 1.4.2 is released.
+- 1.4.2 was never packaged on its own: `HexiumDist/plugins/TheRavensCall.dll` kept 1.4.1's bytes until the 1.5.0 build above, which carries these fixes.
 
 ---
 

@@ -223,15 +223,18 @@ who placed them, and directories of portals, beds and wards.
 2. A **Builders** table, sortable the same way the other boards are
    (`state.censusSort`, the same keyboard-accessible sortable headers):
    Player, Portals, Beds, Wards, Ships, Carts, Chests, Stations, Pieces. A
-   known name links into the detail view through the existing `data-select`
-   delegation; an unknown builder renders as "Unknown (id …)" in plain text,
-   not a link.
+   name the roster knows links into the detail view through the existing
+   `data-select` delegation; a name the roster has never seen (a bed owner
+   learned from the bed itself) is plain text; a creator id with no name yet
+   renders as "Unknown (id …)"; and a world-generated object (creator id 0)
+   renders as "Not player-built".
 3. A **portal directory** table: Tag, Kind, Builder, Connected (a tag badge,
    "linked" or "no pair"), Position ("x, z"). An empty tag renders as "(no
    tag)".
 4. **Beds** and **Wards**, each as its own closed-by-default `<details>`
    block holding a compact table.
 5. A footer line: "Counted N objects in M ms, T ago; runs every K minutes."
+   ("minute" when K is 1).
 
 **Polling.** `/api/census` on load, then every **60 seconds** on its own
 `setInterval` — unlike the feed and season panels, which share `/api/state`'s
@@ -249,10 +252,10 @@ force a re-render.
   are unaffected.
 - **401** — the same "Needs the API token (Settings)." notice the other
   panels show.
-- **`enabled: false`** — the panel shows one line: "The census is off
-  (`CensusIntervalMinutes = 0`)."
+- **`enabled: false`** — the card holds only its "World" heading and one
+  line: "The census is off (`CensusIntervalMinutes = 0`)."
 - **The empty pre-first-run payload** (`enabled: true`, every count and list
-  empty, `generated_at: ""`) — the panel shows one line: "First count runs a
+  empty, `generated_at: ""`) — the heading and one line: "First count runs a
   few seconds after boot."
 
 **Detail view.** The Build tab gains one line built from that player's row in

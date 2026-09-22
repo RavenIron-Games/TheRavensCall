@@ -657,6 +657,7 @@
     activityAuth: true,        // tier 2: false after a 401 from /api/activity, cleared by the next 200
     feedFilter: 'all',         // tier 2: selected feed chip group — all | combat | players | world | season
     feedHighlightSince: null,  // tier 2: previous poll's newest events[0].timestamp_utc, for the "new row" highlight
+    lastRosterKey: null,       // sorted roster names at the last render, so a roster change can rebuild the census panel's builder links
     censusSort: { key: 'pieces', dir: 'desc' }, // 1.5.0: the World panel's Builders table sort, same mechanics as boardSort/seasonSort
     censusData: null,          // 1.5.0: parsed /api/census payload
     lastCensusCompare: null,   // 1.5.0: last /api/census response text with generated_at stripped
@@ -973,7 +974,7 @@
   // (review 2026-09-22).
   function builderCell(name, id) {
     if (name) {
-      var known = !!(state.stateData && state.stateData.players && state.stateData.players[name]);
+      var known = isKnownPlayerName(name, state.stateData && state.stateData.players);
       return known ? '<span class="name-link" data-select="' + esc(name) + '">' + esc(name) + '</span>' : esc(name);
     }
     return id ? 'Unknown (id ' + esc(id) + ')' : '<span class="detail-sub">Not player-built</span>';
@@ -1086,6 +1087,17 @@
         state.lastStateCompare = compare;
         try { state.stateData = JSON.parse(text); } catch (e) { throw new Error('invalid JSON from server'); }
         render();
+        // The census panel links a builder only when the roster knows the
+        // name (builderCell), so when the set of roster names changes — the
+        // first /api/state after load, or a player the server has just met —
+        // rebuild it now instead of waiting for the next changed census
+        // payload, up to CensusIntervalMinutes away (pre-publish review
+        // 2026-09-22).
+        var rosterKey = Object.keys((state.stateData && state.stateData.players) || {}).sort().join('\n');
+        if (rosterKey !== state.lastRosterKey) {
+          state.lastRosterKey = rosterKey;
+          if (state.censusData) renderCensus();
+        }
       } else {
         renderHeader();
       }
@@ -1160,6 +1172,16 @@
   // other's panel (§6: "the World panel needs its own censusSupported/
   // censusAuth latches ... or scope §6's '404 → hide the World panel only'
   // cannot hold").
+  // Every census outcome redraws the World panel; while a detail view is
+  // open its Build tab census card (part of renderDetail(), which only
+  // render() rebuilds) is redrawn too, so "First count runs a few seconds
+  // after boot." and the standing counts never outlive the payload they
+  // came from (pre-publish review 2026-09-22).
+  function afterCensusChange() {
+    renderCensus();
+    if (state.view === 'detail' && state.stateData) render();
+  }
+
   function pollCensus() {
     if (state.censusSupported === false) return; // confirmed 404 once already; a pre-1.5.0 server never grows the route mid-session
     apiFetch('/api/census').then(function (text) {
@@ -1174,20 +1196,20 @@
         try { parsed = JSON.parse(text); } catch (e) { return; }
         state.lastCensusCompare = compare;
         state.censusData = parsed;
-        renderCensus();
+        afterCensusChange();
       } else if (wasUnauthorized) {
-        renderCensus();
+        afterCensusChange();
       }
     }).catch(function (err) {
       if (err && err.unauthorized) {
         state.censusSupported = true;
         state.censusAuth = false;
-        renderCensus();
+        afterCensusChange();
         return;
       }
       if (err && err.message === 'HTTP 404') {
         state.censusSupported = false;
-        renderCensus();
+        afterCensusChange();
         return;
       }
       // Timeout, network error, or a non-404 HTTP error: leave censusData
@@ -1220,7 +1242,7 @@
         : '<div class="empty-state"><div class="big">Connecting…</div>Fetching the roster from the mod’s API.</div>';
       return;
     }
-    if (state.view === 'detail' && state.selectedPlayer && state.stateData.players && state.stateData.players[state.selectedPlayer]) {
+    if (state.view === 'detail' && state.selectedPlayer && isKnownPlayerName(state.selectedPlayer, state.stateData.players)) {
       app.innerHTML = renderDetail(state.stateData.players[state.selectedPlayer]);
     } else {
       state.view = 'roster';
@@ -1615,7 +1637,10 @@
     } else {
       html += '<div class="feed-list">';
       rows.forEach(function (e) {
-        var isNew = isNewFeedEvent(e.timestamp_utc, state.feedHighlightSince);
+        // Not while the panels are hidden (detail view): a CSS animation in a
+        // display:none subtree starts the moment display returns, so rows
+        // flagged now would flash as new on Back (pre-publish review 2026-09-22).
+        var isNew = state.view !== 'detail' && isNewFeedEvent(e.timestamp_utc, state.feedHighlightSince);
         var who = isKnownPlayerName(e.player_name, players)
           ? '<span class="name-link" data-select="' + esc(e.player_name) + '">' + esc(e.player_name) + '</span>'
           : esc(e.player_name);
