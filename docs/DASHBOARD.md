@@ -379,7 +379,10 @@ blank Base URL means the hosted API when the page is hosted, otherwise this page
   (`file://...`) instead of served by the mod; blank means "this page's own origin". **In hosted
   mode** the field's label becomes "Base URL override (hosted: `<id>`)", its placeholder becomes
   "(blank = this server's hosted API)", and — when a value is set anyway — one line names the
-  receiver it is bypassing.
+  receiver it is bypassing. From a hosted `https://` page the override must itself be an `https://`
+  address: the page's CSP (`connect-src 'self' https:`) and the browser's own mixed-content
+  blocking both rule out an `http://localhost:2112` target, so a hosted dashboard cannot reach an
+  admin's own machine this way — open the mod's own page at `localhost:2112` for that instead.
 - **API token** — matches the server's `HttpApiToken` config value, if set. Still the same value
   in hosted mode; the receiver has no separate reader account.
 

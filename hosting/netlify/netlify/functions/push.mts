@@ -64,12 +64,38 @@ function isEnvelopeField(v: unknown): v is Envelope {
   return v === null || v === undefined || typeof v === "string";
 }
 
+// Thrown by readBodyLimited once the streamed byte count crosses
+// MAX_BODY_BYTES, so a chunked request (no Content-Length, skipping the
+// precheck below) is still bounded before it is ever buffered whole.
+class PayloadTooLargeError extends Error {}
+
+async function readBodyLimited(req: Request, maxBytes: number): Promise<string> {
+  if (!req.body) return "";
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw new PayloadTooLargeError();
+      }
+      chunks.push(value);
+    }
+  }
+  return Buffer.concat(chunks.map((c) => Buffer.from(c))).toString("utf8");
+}
+
 export default async (req: Request, _context: Context): Promise<Response> => {
   if (req.method !== "POST") {
     return jsonResponse(404, { error: "not found" });
   }
 
-  // --- 413: Content-Length precheck -----------------------------------
+  // --- 413: Content-Length precheck (cheap fast path; a chunked request has
+  // no Content-Length and falls through to the streamed byte count below) --
   const contentLengthHeader = req.headers.get("content-length");
   if (contentLengthHeader) {
     const declaredLength = Number(contentLengthHeader);
@@ -78,17 +104,18 @@ export default async (req: Request, _context: Context): Promise<Response> => {
     }
   }
 
+  // --- 413: actual byte count, enforced while streaming so a chunked body
+  // is refused as soon as it crosses the limit rather than buffered whole
+  // first (§6: the only bound left otherwise is one the client chooses to
+  // send) ------------------------------------------------------------------
   let bodyText: string;
   try {
-    bodyText = await req.text();
-  } catch {
+    bodyText = await readBodyLimited(req, MAX_BODY_BYTES);
+  } catch (err) {
+    if (err instanceof PayloadTooLargeError) {
+      return jsonResponse(413, { error: "payload too large" });
+    }
     return jsonResponse(422, { error: "validation failed", field: "body" });
-  }
-
-  // --- 413: actual byte count ------------------------------------------
-  const bodyBytes = Buffer.byteLength(bodyText, "utf8");
-  if (bodyBytes > MAX_BODY_BYTES) {
-    return jsonResponse(413, { error: "payload too large" });
   }
 
   // --- 422: JSON parse ---------------------------------------------------
@@ -103,10 +130,14 @@ export default async (req: Request, _context: Context): Promise<Response> => {
   }
 
   // --- 422: field-shape validation ---------------------------------------
-  if (!isValidId(String(body.server_id ?? ""))) {
+  // Type-checked before isValidId ever runs: isValidId takes a string, so a
+  // non-string body.server_id (e.g. ["storm10"]) must fail here, not reach
+  // the registry lookup as some coerced value that could miss by identity
+  // and come back 401 instead of the 422 a bad field is owed (§4).
+  if (typeof body.server_id !== "string" || !isValidId(body.server_id)) {
     return jsonResponse(422, { error: "validation failed", field: "server_id" });
   }
-  const serverId = body.server_id as string;
+  const serverId = body.server_id;
 
   if (!isValidModVersion(body.mod_version)) {
     return jsonResponse(422, { error: "validation failed", field: "mod_version" });
@@ -170,11 +201,16 @@ export default async (req: Request, _context: Context): Promise<Response> => {
   // --- 429: per-id rate limit (10 s), strong read+write on <id>/meta -----
   const store = trcStore();
   const metaKey = blobKey(serverId, "meta");
-  let prevMeta: ServerMeta | null = null;
+  let prevMeta: ServerMeta | null;
   try {
     prevMeta = (await store.get(metaKey, { type: "json" })) as ServerMeta | null;
   } catch {
-    prevMeta = null;
+    // A thrown read is a storage fault, not "no prior push": treated as a
+    // first push it would skip the rate-limit gate below entirely and let
+    // the sizes fallback record 0 for envelopes this push did not carry
+    // (§4/§6). Answer as the gate itself would on a too-soon retry; only a
+    // genuine null return (no throw) means "first push, no prior meta".
+    return jsonResponse(429, { error: "too many requests" }, { "Retry-After": "10" });
   }
 
   const nowMs = Date.now();
@@ -206,19 +242,30 @@ export default async (req: Request, _context: Context): Promise<Response> => {
     stored.push(kind);
   }
 
-  await storeEnvelope("state", stateEnvelope);
-  await storeEnvelope("activity", activityEnvelope);
-  await storeEnvelope("census", censusEnvelope);
+  // Unlike every read above, these writes had no try/catch: a storage 5xx
+  // here would escape as an unhandled rejection and whatever the Functions
+  // runtime emits for that becomes the response body — never a
+  // receiver-authored one, and never one that echoes the request (§6).
+  try {
+    await storeEnvelope("state", stateEnvelope);
+    await storeEnvelope("activity", activityEnvelope);
+    await storeEnvelope("census", censusEnvelope);
 
-  const meta: ServerMeta = {
-    received_at: nowIso,
-    pushed_at: pushedAt,
-    mod_version: modVersion,
-    heartbeat_seconds: heartbeatSeconds,
-    sizes,
-    last_accepted_at_ms: nowMs,
-  };
-  await store.set(metaKey, JSON.stringify(meta));
+    const meta: ServerMeta = {
+      received_at: nowIso,
+      pushed_at: pushedAt,
+      mod_version: modVersion,
+      heartbeat_seconds: heartbeatSeconds,
+      sizes,
+      last_accepted_at_ms: nowMs,
+    };
+    // Kept last, as before: a failed envelope write must never reach here
+    // and advance the rate-limit gate.
+    await store.set(metaKey, JSON.stringify(meta));
+  } catch {
+    console.warn(`[push] storage write failed: id=${serverId}, status=500`);
+    return jsonResponse(500, { error: "storage unavailable" });
+  }
 
   return jsonResponse(200, { ok: true, stored });
 };

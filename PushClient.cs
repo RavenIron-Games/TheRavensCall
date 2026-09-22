@@ -72,9 +72,13 @@ namespace TheRavensCall
 
         // ── Failure bookkeeping for the hourly re-log (§3) ──────────────────
         private static int _consecutiveFailures;
-        private static string _lastErrorText;
         private static DateTime _lastFailureLogUtc = DateTime.MinValue;
         private static DateTime _lastOversizeWarnUtc = DateTime.MinValue; // rate-caps the over-2MB warning at most once an hour (§3)
+        // Text of the last ConfigRefusal message actually logged — a refusal
+        // repeats every 15 minutes (§3), so it is re-logged only when the
+        // message changed or an hour has passed, the same cap the transport-
+        // failure re-log uses (shares _lastFailureLogUtc with it).
+        private static string _lastConfigRefusalMessageLogged;
 
         // §2: a failure of any kind (ConfigRefusal/OtherFailure) leaves this
         // set so the *next* attempt resends all three envelopes regardless
@@ -207,6 +211,8 @@ namespace TheRavensCall
         {
             if (!Enabled) return;
 
+            try
+            {
             // _requestInFlight is checked *before* DrainOutcome(): it is
             // volatile and the worker releases _outcomeLock (publishing the
             // pending outcome) before it clears this flag, so reading it
@@ -223,6 +229,17 @@ namespace TheRavensCall
             DrainOutcome();
 
             DateTime now = DateTime.UtcNow;
+            if (now < _lastAttemptUtc || now < _lastSuccessUtc)
+            {
+                // An NTP step backwards (common on a containerised rented
+                // host that boots with a fast clock) would otherwise freeze
+                // every schedule gate below for the length of the jump, on
+                // the silent "nothing changed" path, with nothing logged.
+                _lastAttemptUtc = DateTime.MinValue;
+                _lastSuccessUtc = DateTime.MinValue;
+                _nextAllowedAttemptUtc = DateTime.MinValue;
+                Plugin.Log.LogWarning("[TheRavensCall] System clock stepped backwards — push schedule reset.");
+            }
             if (_lastAttemptUtc != DateTime.MinValue && (now - _lastAttemptUtc).TotalSeconds < _effectiveIntervalSeconds) return;
             if (now < _nextAllowedAttemptUtc) return; // backoff, a 429's Retry-After, or a config-refusal's 15-minute retry
 
@@ -332,6 +349,15 @@ namespace TheRavensCall
             _forceAllNextAttempt = false;
 
             ThreadPool.QueueUserWorkItem(_ => SendWorker(url, token, body, attemptUtc, sentFlags, blankedForms));
+            }
+            catch (Exception ex)
+            {
+                // A throw anywhere above must not wedge _requestInFlight true
+                // forever (every later MaybeSend would return at the top) —
+                // matches BuildActivityCache/DiscordWebhook.Send's pattern.
+                _requestInFlight = false;
+                Plugin.Log.LogError("[TheRavensCall] Push tick failed: " + ex.Message);
+            }
         }
 
         private static string BuildPayload(string pushedAt, string stateField, string activityField, string censusField)
@@ -485,7 +511,6 @@ namespace TheRavensCall
 
                     int failuresBeforeThis = _consecutiveFailures;
                     _consecutiveFailures = 0;
-                    _lastErrorText = null;
                     _nextAllowedAttemptUtc = DateTime.MinValue;
                     _lastSuccessUtc = outcome.AttemptUtc;
                     if (failuresBeforeThis > 0)
@@ -495,9 +520,26 @@ namespace TheRavensCall
 
                 case PushOutcome.Kind.RateLimited:
                     // §3/§6: not a failure — no warning, no backoff step,
-                    // the change gate untouched. Honour Retry-After if present.
+                    // the change gate untouched. Honour Retry-After if
+                    // present, but never past 15 minutes: an edge rule
+                    // answering with an oversize Retry-After (e.g. a day)
+                    // would otherwise silently suspend pushing with nothing
+                    // in the log, the only place a broken push can be seen.
                     if (outcome.RetryAfterSeconds.HasValue && outcome.RetryAfterSeconds.Value > 0)
-                        _nextAllowedAttemptUtc = outcome.AttemptUtc.AddSeconds(outcome.RetryAfterSeconds.Value);
+                    {
+                        int retryAfter = outcome.RetryAfterSeconds.Value;
+                        int wait = Math.Min(retryAfter, 900);
+                        _nextAllowedAttemptUtc = outcome.AttemptUtc.AddSeconds(wait);
+                        if (retryAfter > wait && (outcome.AttemptUtc - _lastFailureLogUtc).TotalHours >= 1.0)
+                        {
+                            // Gated by the same hourly suppression as the
+                            // failure re-log, so a normal 429 still logs nothing.
+                            Plugin.Log.LogInfo("[TheRavensCall] Push rate-limited: receiver asked for a " +
+                                retryAfter.ToString(CultureInfo.InvariantCulture) + "s wait, clamped to " +
+                                wait.ToString(CultureInfo.InvariantCulture) + "s.");
+                            _lastFailureLogUtc = outcome.AttemptUtc;
+                        }
+                    }
                     break;
 
                 case PushOutcome.Kind.ConfigRefusal:
@@ -509,13 +551,27 @@ namespace TheRavensCall
                     // that lost its blobs during the outage recovers
                     // immediately once the config is fixed.
                     _forceAllNextAttempt = true;
-                    Plugin.Log.LogWarning("[TheRavensCall] Push rejected: " + outcome.ConfigRefusalMessage);
+                    // A named refusal is the receiver answering, not a
+                    // transport streak — reset it so a transport failure
+                    // arriving mid-backoff is counted as failure 1, not a
+                    // continuation of a stale streak.
+                    _consecutiveFailures = 0;
+                    // §3 "never a line per attempt": a refusal retries every
+                    // 15 minutes (96/day) — re-log only when the message
+                    // changed or an hour passed, the same cap the transport-
+                    // failure re-log below uses.
+                    if (!string.Equals(outcome.ConfigRefusalMessage, _lastConfigRefusalMessageLogged, StringComparison.Ordinal) ||
+                        (outcome.AttemptUtc - _lastFailureLogUtc).TotalHours >= 1.0)
+                    {
+                        Plugin.Log.LogWarning("[TheRavensCall] Push rejected: " + outcome.ConfigRefusalMessage);
+                        _lastFailureLogUtc = outcome.AttemptUtc;
+                        _lastConfigRefusalMessageLogged = outcome.ConfigRefusalMessage;
+                    }
                     break;
 
                 case PushOutcome.Kind.OtherFailure:
                     _consecutiveFailures++;
                     _forceAllNextAttempt = true; // §2: see ConfigRefusal above
-                    _lastErrorText = outcome.ErrorText;
                     int backoffSeconds = BackoffSecondsFor(_consecutiveFailures);
                     _nextAllowedAttemptUtc = outcome.AttemptUtc.AddSeconds(backoffSeconds);
                     if (_consecutiveFailures == 1)

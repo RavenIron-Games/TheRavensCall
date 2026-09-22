@@ -180,8 +180,7 @@ curl -i -X POST "$BASE/push" \
 curl -i -X POST "$BASE/push" -H "Authorization: Bearer wrong" -H "Content-Type: application/json" -d '{}'
 
 # Over 2 MB -> 413
-head -c 3000000 /dev/zero | tr '\0' 'a' | \
-  xargs -0 -I{} curl -i -X POST "$BASE/push" -H "Authorization: Bearer $WRITE" -H "Content-Type: application/json" --data-binary @-
+head -c 3000000 /dev/zero | tr '\0' 'a' | curl -i -X POST "$BASE/push" -H "Authorization: Bearer $WRITE" -H "Content-Type: application/json" --data-binary @-
 
 # Burst inside 10 s -> 429 with Retry-After (send the same valid push twice in a row)
 
@@ -225,13 +224,13 @@ credits/GB; a production deploy 15 credits.
 - Two or three servers plus normal viewing is on the order of **150–250
   credits/month** — extra cost **$0** of the 3,000/month allowance unless
   viewing habits change by an order of magnitude.
-- **Assumed, not yet confirmed: inbound push bodies are not metered.**
-  Netlify's bandwidth credits are understood to meter egress only, so a push
-  body should cost a request + compute and no bandwidth — that is what makes
-  the per-server estimate above hold, and it has **not** been checked against
-  the pricing page or with support yet. Confirm it before the DNS record
-  points anywhere; if inbound is metered, see scope §4 (shorter default
-  cadence and/or gzip on the push), not a receiver rewrite.
+- **Confirmed: inbound push bodies are not metered as bandwidth.** Netlify's
+  own docs page on credit-based billing (["Credit usage for
+  bandwidth"](https://docs.netlify.com/manage/accounts-and-billing/billing/billing-for-credit-based-plans/how-credits-work/),
+  read 2026-09-22) says: "Bandwidth is the amount of data traffic your site
+  or app sends out to the internet." — outbound only, nothing about request
+  bodies. That is what makes the per-server estimate above hold. Netlify
+  support was not separately asked to confirm it.
 - None of the above bounds an *unauthenticated* flood — that's what the
   spend cap and the Firewall Traffic Rule (step 1.7 above) are for, not
   advice.

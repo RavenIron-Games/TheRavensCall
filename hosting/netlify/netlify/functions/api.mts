@@ -52,9 +52,14 @@ export default async (req: Request, _context: Context): Promise<Response> => {
   const route = segments.slice(3).join("/"); // "" for DELETE /s/<id>/api
 
   if (req.method === "OPTIONS") {
+    // Max-Age caches the preflight answer for a day: nothing in it depends
+    // on the request, so without this a cross-origin page (the Base URL
+    // override the CORS headers exist for) preflights nearly every poll at
+    // the browser's short default cache, roughly doubling the request rate
+    // per open dashboard (§4).
     return new Response(null, {
       status: 204,
-      headers: readHeaders(),
+      headers: readHeaders({ "Access-Control-Max-Age": "86400" }),
     });
   }
 
@@ -105,11 +110,19 @@ export default async (req: Request, _context: Context): Promise<Response> => {
     }
 
     if (route === "health") {
-      let meta: ServerMeta | null = null;
+      let meta: ServerMeta | null;
       try {
         meta = (await store.get(blobKey(id, "meta"), { type: "json" })) as ServerMeta | null;
       } catch {
-        meta = null;
+        // A thrown read is a storage fault, not "never pushed": treating it
+        // as the latter would drop age_seconds and clear the freshness
+        // line for a server that is actually live (§4). Only a genuine
+        // null return (no throw) means "no meta yet".
+        return jsonResponse(
+          500,
+          { error: "storage unavailable" },
+          readHeaders({ "Cache-Control": "private, no-cache", Vary: "X-Api-Token" })
+        );
       }
       if (!meta) {
         return jsonResponse(
@@ -166,7 +179,16 @@ export default async (req: Request, _context: Context): Promise<Response> => {
     try {
       result = await store.getWithMetadata(blobKey(id, kind), { type: "text" });
     } catch {
-      result = null;
+      // A thrown read is a storage fault, indistinguishable from "key
+      // absent" if swallowed into null — that would answer 200 no_data:true
+      // for a live, pushing server on one transient fault (§4 scopes the
+      // no_data response to "before the first push"). Only a genuine null
+      // return (no throw) takes the no_data path below.
+      return jsonResponse(
+        500,
+        { error: "storage unavailable" },
+        readHeaders({ "Cache-Control": "private, no-cache", Vary: "X-Api-Token" })
+      );
     }
 
     if (!result) {

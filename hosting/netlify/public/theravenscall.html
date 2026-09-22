@@ -584,7 +584,7 @@
     <div class="field">
       <label for="baseUrlInput" id="baseUrlLabel">Base URL override</label>
       <input type="text" id="baseUrlInput" placeholder="(blank = this page's own origin)" autocomplete="off" spellcheck="false">
-      <div class="hint">Only needed when opening this file directly (e.g. from disk) instead of through the mod's server. Leave blank when the page is already served from <span class="mono">http://&lt;host&gt;:2112</span>.</div>
+      <div class="hint" id="baseUrlHint">Only needed when opening this file directly (e.g. from disk) instead of through the mod's server. Leave blank when the page is already served from <span class="mono">http://&lt;host&gt;:2112</span>.</div>
       <div class="hint" id="baseUrlBypassNote"></div>
     </div>
     <div class="field">
@@ -1617,7 +1617,7 @@
     // §5 "Waiting": no_data tested on the envelope before every other guard.
     if (state.activityData && state.activityData.no_data) {
       seasonPanel.innerHTML = waitingPanelHtml();
-      feedPanel.innerHTML = '';
+      feedPanel.innerHTML = waitingPanelHtml();
       return;
     }
     if (state.activityAuth === false) {
@@ -2187,6 +2187,12 @@
     state.censusAuth = true;
     state.lastCensusCompare = null;
     etagMap = {}; // §5 "Conditional fetches": cleared wherever the compare gates are, so a save always gets a full body
+    // A Base URL change away from the previous server must drop its freshness
+    // latch too, or an unreachable new host keeps showing the old server's
+    // "server silent since <time>" line and stale grey-out under a
+    // "Could not reach …" error (pollHealth's catch is a deliberate no-op).
+    state.serverReportedAt = null;
+    state.staleAfterSeconds = null;
     render();
     pollState();
     pollHealth();
@@ -2294,6 +2300,11 @@
   if (hostedId) {
     document.getElementById('baseUrlLabel').textContent = 'Base URL override (hosted: ' + hostedId + ')';
     document.getElementById('baseUrlInput').placeholder = "(blank = this server's hosted API)";
+    // This page's own CSP (connect-src 'self' https:) blocks a plain-http
+    // override before the request ever leaves the browser, so an admin who
+    // tries e.g. http://localhost:2112 here just sees "Could not reach …"
+    // with no hint that the page's own policy is what refused it.
+    document.getElementById('baseUrlHint').textContent = 'From this hosted page, an override must be an https address — a plain http address (such as a mod running on your own machine) is blocked by this page’s own security policy before the request is sent. Open the mod’s own page instead for that.';
     document.getElementById('connHelp1').innerHTML = 'This dashboard is hosted: it reads this server’s data from a small receiver that stores whatever the game server last pushed to it. The game server pushes its data out on its own schedule rather than listening for connections, so nothing has to be opened on the machine running it.';
     document.getElementById('connHelp2').innerHTML = 'The API token is still the server’s own <span class="mono">HttpApiToken</span> value — enter it in Settings (gear icon above) before the roster will load; a 401 opens Settings automatically.';
   }
