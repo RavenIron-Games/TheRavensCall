@@ -19,8 +19,8 @@ small **receiver** on the owner's Netlify team keeps the latest copy and serves 
 Sizes and cadences below were measured on Storm10 (Valheim 1.0.12) on 2026-09-22 with the 1.5.0
 build; prices are from the Netlify pricing page read the same day, and the owner's plan is
 **Pro, 3,000 credits a month**. This revision takes the edits of the 2026-09-22 design review
-(five lenses, 69 findings, 66 verified, 25 must-change) and of its second pass (three lenses,
-15 findings, 9 must-change verified).
+(five lenses, 69 findings, 66 verified, 25 must-change), of its second pass (three lenses, 15
+findings, 9 must-change verified) and of a final pass (two lenses, 8 findings, 4 must-change).
 
 ## 1. What ships
 
@@ -33,7 +33,9 @@ build; prices are from the Netlify pricing page read the same day, and the owner
   `BuildActivityCache()` and `WorldCensus.MaybeRun()` all sit inside
   `if (Instance != null && Plugin.EnableHttpServer.Value)` in `PollAllPlayers`, and
   `PrimeStateCache`/`BuildActivityCache` return early on the same flag. 1.6.0 widens that
-  condition to `EnableHttpServer.Value || PushClient.Enabled` in all four places;
+  condition to `EnableHttpServer.Value || PushClient.Enabled` in all three places — the
+  `PollAllPlayers` guard and the early returns in `PrimeStateCache` and `BuildActivityCache`;
+  `WorldCensus.MaybeRun()` has no flag of its own and is reached through that guard — while
   `StartHttpServer()` stays behind `EnableHttpServer` alone. An admin on a rented box can turn
   off a listener nothing can reach and still push. `PushClient.MaybeSend()` is the last call
   inside that block, after the three assignments, so every push sees this tick's strings.
@@ -109,8 +111,10 @@ Content-Type: application/json
   `Plugin.Awake` before `ZNet.instance` exists, so no world-derived value can be baked into the
   `.cfg`, and the season-folder sanitizer keeps spaces and case, so "Storm 10" would fail the
   receiver's charset anyway. The receiver resolves the body's `server_id` in its registry and
-  compares the bearer's hash to the one registered under that id (§4); `409` means the two no
-  longer agree.
+  compares the bearer's hash to the `w` registered under that id (§4); a mismatch is `401`, the
+  same answer an unregistered id gets, because the registry is read id-first and never scanned
+  — the receiver cannot tell a wrong token from a valid token registered under another id.
+  `409` is reserved for a `read_token_sha256` that is not the registered `r`.
 
 Measured sizes: `state` 12,312 bytes with 2 known players (about 6 KB per known player, so a
 server 30 players have ever joined is around 180 KB); `activity` 5,796 bytes (the 200-event cap
@@ -152,10 +156,10 @@ case a push is about 300 KB; a typical one is 20–200 KB.
   cannot reach `/api/health`; the BepInEx log pulled over FTP is the only place a broken push
   can be seen, and one line at boot will be long gone.
 - The receiver's four configuration refusals are named, each retrying every 15 minutes: `401`
-  "PushToken rejected — check [Push] PushToken against the receiver's registry"; `409`
-  "PushServerId '<id>' is not the id this token is registered under"; `422` "the receiver
-  refused the bundle — set [Companion] HttpApiToken (24+ characters)"; `413` "bundle over the
-  receiver's 2 MB limit". A `429` is not a failure: no warning, no backoff step, the change gate
+  "PushToken rejected — check [Push] PushToken and PushServerId against the receiver's
+  registry"; `409` "the receiver has a different HttpApiToken hash registered for '<id>' —
+  re-register read_token_sha256 and redeploy"; `422` "the receiver refused the bundle — set
+  [Companion] HttpApiToken (24+ characters)"; `413` "bundle over the receiver's 2 MB limit". A `429` is not a failure: no warning, no backoff step, the change gate
   untouched, retry on the next due tick honouring `Retry-After`. Tokens never appear in a log
   line; neither side logs a body, a hash or a header value.
 - `PushUrl` is parsed with `new Uri()` and accepted only when its scheme is `https`, or `http`
@@ -234,13 +238,13 @@ concatenation. The only string that ever becomes a storage key is a validated re
 
 | Route | Behaviour |
 |---|---|
-| `POST /push` | `401` missing or wrong bearer (same body for an unknown id); `409` the registered hash is not the bearer's; `413` body over 2 MB; `422` a field fails validation or `read_token_sha256` is missing; `429` more often than every **10 s** per server (below the mod's 15 s floor, so a correctly configured server is never throttled by tick jitter; the counter lives in `<server_id>/meta`, read and written strongly — a Function keeps nothing between invocations, so a module-level counter would limit one warm instance and let every cold or concurrent one through; the response carries `Retry-After`); else `200 {"ok":true,"stored":["state","census"]}` naming the envelopes that were non-null |
-| `GET /s/<id>/api/state`, `/activity`, `/census` | read token in the `X-Api-Token` header **only**, hashed and compared to the registry's `r` for `<id>` before anything is looked up in Blobs, else `401 {"error":"token required"}` — the same body for a wrong token and an unregistered id, so nobody can enumerate servers; a request carrying a `token` query parameter is answered `400 {"error":"use the X-Api-Token header"}` and the parameter is never logged (a hosted URL has to stay safe to paste into a chat window; `?token=` stays supported on the mod's own `localhost:2112`, unchanged). Then the stored envelope, `Content-Type: application/json`, `ETag` = its sha256, `Cache-Control: private, no-cache`, `Vary: X-Api-Token`; `If-None-Match` matching → `304`. Before the first push carrying that envelope: **`200` with an empty envelope of the right shape** plus `"no_data":true` — never `503`, because `apiFetch` throws on any non-2xx and the first thing the owner would see on a fresh server would be "Could not reach …". For the census the receiver cannot reproduce the mod's own empty envelope (it is built from the game server's `CensusIntervalMinutes`, which no push carries), so it sends `enabled:true`, `interval_minutes:0`, empty groups and lists, and the page tests `no_data` before the `enabled`/`generated_at` guards (§5) |
+| `POST /push` | `401` missing bearer, or a bearer whose sha256 is not the `w` registered under the body's `server_id` — the same body whether that id is registered or not, so nobody can enumerate servers; `409` the body's `read_token_sha256` is not the `r` registered under that id; `413` body over 2 MB; `422` a field fails validation or `read_token_sha256` is missing; `429` more often than every **10 s** per server (below the mod's 15 s floor, so a correctly configured server is never throttled by tick jitter; the counter lives in `<server_id>/meta`, read and written strongly — a Function keeps nothing between invocations, so a module-level counter would limit one warm instance and let every cold or concurrent one through; the response carries `Retry-After`); else `200 {"ok":true,"stored":["state","census"]}` naming the envelopes that were non-null |
+| `GET /s/<id>/api/state`, `/activity`, `/census` | read token in the `X-Api-Token` header **only**, hashed and compared to the registry's `r` for `<id>` before anything is looked up in Blobs, else `401 {"error":"token required"}` — the same body for a wrong token and an unregistered id, so nobody can enumerate servers; a request carrying a `token` query parameter is answered `400 {"error":"use the X-Api-Token header"}` and the parameter is never logged (a hosted URL has to stay safe to paste into a chat window; `?token=` stays supported on the mod's own `localhost:2112`, unchanged). Then the stored envelope, `Content-Type: application/json`, `ETag` = its sha256, `Cache-Control: private, no-cache`, `Vary: X-Api-Token`; `If-None-Match` matching → `304`. Before the first push carrying that envelope: **`200` with an empty envelope of the right shape** plus `"no_data":true` — never `503`, because `apiFetch` throws on any non-2xx and the first thing the owner would see on a fresh server would be "Could not reach …". For the census the receiver cannot reproduce the mod's own empty envelope (it is built from the game server's `CensusIntervalMinutes`, which no push carries), so it sends `enabled:true`, `interval_minutes:0`, empty groups and lists, and the page tests `no_data` before the `enabled`/`generated_at` guards (§5). A no-data response carries no `ETag` and is sent `Cache-Control: no-store`, so a page that has not yet seen a real envelope is never answered `304` |
 | `GET /s/<id>/api/health` | read token required, exactly like the data routes (the page has it and fetches health with the state poll); `{"status":"ok","hosted":true,"pushed_at":"…","age_seconds":N,"stale_after_seconds":M}` — no `version`: which build an admin runs is the admin's business. `age_seconds` is measured from `received_at`, the receiver's own clock, never from `pushed_at`, so a skewed game-server clock or a forward-dated push from a stolen write token cannot make the dashboard say "just now" about a server that is down. `M` = 3 × the `heartbeat_seconds` of the last accepted push. The mod's own `/api/health` on `localhost:2112` stays open and unchanged: it is open because it is not reachable off the machine, and that reason does not travel to a public URL where the same route would be a liveness oracle |
 | `GET /s/<id>/api/gamedata` | token-gated like the others; `200 {"recipes":[],"items":[],"buildables":[]}` so no 404 lands in the network log |
 | `GET /s/<id>` | `301` to `/s/<id>/` (what a browser makes of a pasted address) |
 | `GET /s/<id>/` | the release's `theravenscall.html` served as a **static asset**. `netlify.toml` declares the receiver's routes as ordered `[[redirects]]` rules, most specific first, because Netlify evaluates them top to bottom, the first match wins, and a `*` splat matches across `/`: `/push` → `/.netlify/functions/push` (200); `/s/:id/api/*` → `/.netlify/functions/api` (200, `force = true`); `/s/:id` → `/s/:id/` (301); and only then the catch-all `/s/*` → `/theravenscall.html` (200) that serves the page. The functions are reached through these rules, not through a `config.path` declaration, so the order lives in one file; an unknown path under `/s/<id>/api/` is the function's own 404, anything outside `/push` and `/s/` falls through to the site's 404. The page derives its hosted base from its own location (§5). Netlify serves static assets from the CDN byte for byte and cannot template one per id, so nothing is injected; a page view is one CDN request and no compute |
-| `DELETE /s/<id>` | write token required; removes the four blobs and answers `200 {"deleted":true}` — how an admin unpublishes. Deleting a registry entry takes the dashboard offline on the next request; the stored copy stays until this runs |
+| `DELETE /s/<id>/api` | write token in the `Authorization: Bearer` header; removes the four blobs and answers `200 {"deleted":true}` — how an admin unpublishes. It sits under `/s/<id>/api/` because the `/s/:id/api/*` rule is the only `/s/` rule that reaches a function: the rules match on path alone, so a `DELETE /s/<id>` would take the `/s/:id` → `/s/:id/` 301 and then the `/s/*` catch-all and never reach code. Deleting a registry entry takes the dashboard offline on the next request; the stored copy stays until this runs |
 | `OPTIONS /s/<id>/api/*` | `204` with the CORS headers below |
 | anything else | `404` |
 
@@ -330,7 +334,8 @@ keeps open.
   (`304` is not `res.ok`; otherwise every unchanged poll would paint "Could not reach …" and the
   red dot over a current dashboard). The sentinel takes the path an unchanged body takes today:
   no parse, no re-render, but `pollState` still sets `lastUpdated`, `connStatus = 'ok'`, clears
-  the error and calls `renderHeader()`, and `pollActivity`/`pollCensus` still take their
+  the error and calls `renderHeader()` — except that the sentinel leaves `connStatus` as it
+  found it when that value is `waiting` — and `pollActivity`/`pollCensus` still take their
   `wasUnauthorized` re-render branch so a fixed token clears the notice. The map is cleared
   wherever `saveSettings()` clears the compare gates, so a settings save is always answered with
   a full body. Against the mod's own listener nothing changes (it sends no `ETag`).
@@ -359,11 +364,15 @@ keeps open.
   palette has no amber today, `--gold` is it. `pollState` parses the body **before** it touches
   `connStatus` (today it sets `lastUpdated`, `connStatus = 'ok'` and clears the error first): an
   envelope carrying `"no_data":true` sets `connStatus = 'waiting'`, leaves `state.stateData`
-  null and returns, so `render()` keeps its not-yet-connected branch (with "Registered, waiting
-  for <id> to report" in place of "Connecting…") and `renderHeader()` writes no world/day/online
-  strip over a server that has never reported. `renderHeader()`'s dot class and its connection
-  text learn the new value, and the error banner and auto-open-Settings paths treat `waiting`
-  as neither ok nor error. `renderActivity()` and `renderCensus()` test `no_data` on their own
+  null, calls `render()` and returns — `render()` is the only thing that paints the
+  not-yet-connected branch (with "Registered, waiting for <id> to report" in place of
+  "Connecting…") and it calls `renderHeader()` on its first line, so the amber dot and the new
+  connection text arrive with it, while `renderHeader()` still writes no world/day/online strip
+  over a server that has never reported. The once-a-second header tick
+  (`if (state.stateData) renderHeader()`) is unchanged and is a no-op while waiting: the
+  waiting line carries no relative time. `renderHeader()`'s dot class and its connection text
+  learn the new value, and the error banner and auto-open-Settings paths treat `waiting` as
+  neither ok nor error. `renderActivity()` and `renderCensus()` test `no_data` on their own
   envelope before every other guard and write the same line into the season, feed and World
   panels. The state is left the moment a body arrives without the flag, within one push
   interval of the server's first push.
@@ -447,15 +456,16 @@ keeps open.
    shows the roster, feed and World panel.
 5. **Failures**: stop the receiver → one warning, attempts at 60/120/240 s visible in the
    receiver's log once it is back, the hourly re-log with the failure count, one info line on
-   recovery, and the next bundle carries all three; a wrong `PushToken` → `401`, one named
-   warning, a retry 15 minutes later; a `PushServerId` the registry maps to another hash →
-   `409` and its named warning; `PushUrl = http://localhost.example.com/` → disabled at boot
+   recovery, and the next bundle carries all three; a wrong `PushToken`, or a `PushServerId`
+   whose registered `w` is not this token's → `401`, one named warning, a retry 15 minutes
+   later; a `read_token_sha256` that is not the registered `r` → `409` and its named warning;
+   `PushUrl = http://localhost.example.com/` → disabled at boot
    naming the host; `HttpApiToken` of 10 characters → disabled at boot naming the fix;
    `PushIntervalSeconds = 15` → pushes 20 s apart; a receiver `429` → no warning, no backoff.
 6. **Receiver refusals** (curl against `netlify dev`, no game server needed): a 3 MB body →
    `413` and nothing stored; a burst inside the 10 s window → `429` with `Retry-After` from the
    second on, the first one's envelopes still readable; a bundle whose `server_id` is not the
-   bearer's → `409` and nothing stored; ids `../trc`, `a%2fb`, a 33-character id and an empty
+   bearer's → `401` and nothing stored; ids `../trc`, `a%2fb`, a 33-character id and an empty
    string → `422`, never a blob key written; a missing `read_token_sha256` → `422`, one that is
    not the registered `r` → `409` and nothing stored; a read with no token, a wrong token, an
    unregistered id and the right token → `401`, `401`, `401`, `200`; a read with `?token=` →
@@ -463,7 +473,7 @@ keeps open.
    → `200` with `age_seconds` absent; `/s/<id>/api/state` before any push → `200` with
    `"no_data":true`. Confirm the store
    afterwards holds exactly `<id>/state|activity|census|meta` and nothing else, and that
-   `DELETE /s/<id>` removes them.
+   `DELETE /s/<id>/api` removes them.
 7. **Hosted page**: open `http://localhost:8888/s/storm10/` **before** the first push →
    "Registered, waiting for storm10 to report" with the amber dot, replaced within one push
    interval; then the same roster, feed, season and World panel as `localhost:2112` from the
