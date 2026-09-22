@@ -35,7 +35,10 @@ function stripEtagQuotes(raw: string): string {
 }
 
 function notFound(): Response {
-  return jsonResponse(404, { error: "not found" });
+  // Serves both the route-level 404 (pollActivity/pollCensus branch on it)
+  // and the shape 404 — needs the same CORS as the routes it stands in for
+  // (§4: a status the page branches on must carry the same headers as a 200).
+  return jsonResponse(404, { error: "not found" }, readHeaders());
 }
 
 export default async (req: Request, _context: Context): Promise<Response> => {
@@ -59,7 +62,7 @@ export default async (req: Request, _context: Context): Promise<Response> => {
     // A ?token= query parameter is always refused, before anything else,
     // and never logged (§4).
     if (url.searchParams.has("token")) {
-      return jsonResponse(400, { error: "use the X-Api-Token header" });
+      return jsonResponse(400, { error: "use the X-Api-Token header" }, readHeaders());
     }
 
     if (route !== "state" && route !== "activity" && route !== "census" && route !== "health" && route !== "gamedata") {
@@ -75,21 +78,30 @@ export default async (req: Request, _context: Context): Promise<Response> => {
 
     const tokenHeader = req.headers.get("x-api-token");
     if (!tokenHeader) {
-      return jsonResponse(401, TOKEN_REQUIRED_BODY);
+      return jsonResponse(401, TOKEN_REQUIRED_BODY, readHeaders());
     }
     if (!entry) {
-      return jsonResponse(401, TOKEN_REQUIRED_BODY);
+      return jsonResponse(401, TOKEN_REQUIRED_BODY, readHeaders());
     }
     const tokenSha256 = sha256Hex(tokenHeader);
     if (!hexEquals(tokenSha256, entry.r)) {
-      return jsonResponse(401, TOKEN_REQUIRED_BODY);
+      return jsonResponse(401, TOKEN_REQUIRED_BODY, readHeaders());
     }
 
     const id = rawId;
     const store = trcStore();
 
+    // health and gamedata are token-gated bodies with no envelope ETag of
+    // their own, so they need the private/no-cache + Vary pair on top of
+    // readHeaders() — the same pair the state/activity/census responses
+    // below already carry — or a shared proxy could cache a gated body
+    // keyed on URL alone and hand it to a request with no token (§6).
     if (route === "gamedata") {
-      return jsonResponse(200, JSON.parse(EMPTY_GAMEDATA_JSON), readHeaders());
+      return jsonResponse(
+        200,
+        JSON.parse(EMPTY_GAMEDATA_JSON),
+        readHeaders({ "Cache-Control": "private, no-cache", Vary: "X-Api-Token" })
+      );
     }
 
     if (route === "health") {
@@ -100,7 +112,11 @@ export default async (req: Request, _context: Context): Promise<Response> => {
         meta = null;
       }
       if (!meta) {
-        return jsonResponse(200, { status: "ok", hosted: true }, readHeaders());
+        return jsonResponse(
+          200,
+          { status: "ok", hosted: true },
+          readHeaders({ "Cache-Control": "private, no-cache", Vary: "X-Api-Token" })
+        );
       }
       const ageSeconds = Math.max(0, Math.floor((Date.now() - Date.parse(meta.received_at)) / 1000));
       const staleAfterSeconds = 3 * meta.heartbeat_seconds;
@@ -113,12 +129,39 @@ export default async (req: Request, _context: Context): Promise<Response> => {
           age_seconds: ageSeconds,
           stale_after_seconds: staleAfterSeconds,
         },
-        readHeaders()
+        readHeaders({ "Cache-Control": "private, no-cache", Vary: "X-Api-Token" })
       );
     }
 
     // state | activity | census
     const kind = route as "state" | "activity" | "census";
+
+    // An If-None-Match hit is a getMetadata with no body fetched (§4
+    // Storage): check the stored sha256 before ever calling
+    // getWithMetadata below, which pulls up to 300 KB from the blob's
+    // origin region on every call.
+    const ifNoneMatch = req.headers.get("if-none-match");
+    if (ifNoneMatch) {
+      let meta: Awaited<ReturnType<typeof store.getMetadata>> | null = null;
+      try {
+        meta = await store.getMetadata(blobKey(id, kind));
+      } catch {
+        meta = null;
+      }
+      const metaSha256 = String(meta?.metadata?.sha256 ?? "");
+      if (meta && metaSha256 && stripEtagQuotes(ifNoneMatch) === metaSha256) {
+        return new Response(null, {
+          status: 304,
+          headers: {
+            ETag: `"${metaSha256}"`,
+            "Cache-Control": "private, no-cache",
+            Vary: "X-Api-Token",
+            ...readHeaders(),
+          },
+        });
+      }
+    }
+
     let result: Awaited<ReturnType<typeof store.getWithMetadata>> | null;
     try {
       result = await store.getWithMetadata(blobKey(id, kind), { type: "text" });
@@ -142,7 +185,6 @@ export default async (req: Request, _context: Context): Promise<Response> => {
     const sha256 = String(result.metadata?.sha256 ?? "");
     const etag = `"${sha256}"`;
 
-    const ifNoneMatch = req.headers.get("if-none-match");
     if (ifNoneMatch && sha256 && stripEtagQuotes(ifNoneMatch) === sha256) {
       return new Response(null, {
         status: 304,

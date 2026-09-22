@@ -1146,6 +1146,11 @@
       if (parsed && parsed.no_data === true) {
         state.connStatus = 'waiting';
         state.stateData = null;
+        // Clear the compare gate too: otherwise a later real envelope that
+        // happens to strip to the same bytes as the last one seen before
+        // this no_data (quiet server, day not turned) would fail the
+        // compare at the change gate below and leave the page waiting (§5).
+        state.lastStateCompare = null;
         render();
         return;
       }
@@ -1456,7 +1461,7 @@
       stale = ageSec > state.staleAfterSeconds;
       var reportedIso = new Date(state.serverReportedAt).toISOString();
       freshB.innerHTML = '<div class="freshness-banner' + (stale ? ' stale' : '') + '">' +
-        (stale ? 'server silent since ' + esc(fmtAbs(reportedIso)) : 'server reported ' + esc(relativeTime(reportedIso)) + ' ago') +
+        (stale ? 'server silent since ' + esc(fmtAbs(reportedIso)) : 'server reported ' + esc(relativeTime(reportedIso))) +
         '</div>';
     } else {
       freshB.innerHTML = '';
@@ -2176,6 +2181,7 @@
     state.settingsAutoOpened = false;
     state.activitySupported = null;
     state.activityAuth = true;
+    state.lastStateCompare = null;
     state.lastActivityCompare = null;
     state.censusSupported = null;
     state.censusAuth = true;

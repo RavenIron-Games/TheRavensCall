@@ -71,8 +71,8 @@ openssl rand -hex 24
 ```
 
 ```powershell
-# PowerShell
--join ((1..24) | ForEach-Object { "{0:x2}" -f (Get-Random -Max 256) })
+# PowerShell (CSPRNG — Get-Random is not cryptographically secure)
+$b=[byte[]]::new(24); [System.Security.Cryptography.RandomNumberGenerator]::Fill($b); -join ($b | ForEach-Object { $_.ToString("x2") })
 ```
 
 **Hash a token** (only the hash goes in `TRC_SERVERS` — never the plaintext;
@@ -225,13 +225,13 @@ credits/GB; a production deploy 15 credits.
 - Two or three servers plus normal viewing is on the order of **150–250
   credits/month** — extra cost **$0** of the 3,000/month allowance unless
   viewing habits change by an order of magnitude.
-- **Inbound push bodies are not metered.** Netlify's bandwidth (egress)
-  credits are for data the site *sends out*; a push's request body is data
-  coming *in*, so it costs a request + compute, not bandwidth — confirmed
-  against docs.netlify.com before any of this receiver was written. This is
-  what makes the per-server estimate above hold; if that ever turns out to
-  be wrong for this account, the fix is a shorter default cadence and/or
-  gzip on the push, not a receiver rewrite.
+- **Assumed, not yet confirmed: inbound push bodies are not metered.**
+  Netlify's bandwidth credits are understood to meter egress only, so a push
+  body should cost a request + compute and no bandwidth — that is what makes
+  the per-server estimate above hold, and it has **not** been checked against
+  the pricing page or with support yet. Confirm it before the DNS record
+  points anywhere; if inbound is metered, see scope §4 (shorter default
+  cadence and/or gzip on the push), not a receiver rewrite.
 - None of the above bounds an *unauthenticated* flood — that's what the
   spend cap and the Firewall Traffic Rule (step 1.7 above) are for, not
   advice.

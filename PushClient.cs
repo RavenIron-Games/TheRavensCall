@@ -74,6 +74,18 @@ namespace TheRavensCall
         private static int _consecutiveFailures;
         private static string _lastErrorText;
         private static DateTime _lastFailureLogUtc = DateTime.MinValue;
+        private static DateTime _lastOversizeWarnUtc = DateTime.MinValue; // rate-caps the over-2MB warning at most once an hour (§3)
+
+        // §2: a failure of any kind (ConfigRefusal/OtherFailure) leaves this
+        // set so the *next* attempt resends all three envelopes regardless
+        // of the change gate — a receiver that lost its blobs during the
+        // outage recovers on the first push after the fix, not the next
+        // heartbeat (up to 24h). Cleared only once a bundle is actually
+        // queued for send (right before QueueUserWorkItem below), so it
+        // survives every path that returns early — including the new
+        // oversize-drop-to-nothing return — and is re-set by the next
+        // failure.
+        private static bool _forceAllNextAttempt;
 
         // ── Outcome handoff between the worker thread and the main thread ──
         private static readonly object _outcomeLock = new object();
@@ -193,14 +205,22 @@ namespace TheRavensCall
         // cache assignments (§1), so every attempt sees this tick's strings.
         internal static void MaybeSend()
         {
-            // Drain first: last tick's outcome (if any) has to update the
-            // gate/backoff state before this tick decides anything, and
-            // draining is safe even when Enabled is false or nothing is
-            // pending (a no-op read of a null field).
-            DrainOutcome();
-
             if (!Enabled) return;
+
+            // _requestInFlight is checked *before* DrainOutcome(): it is
+            // volatile and the worker releases _outcomeLock (publishing the
+            // pending outcome) before it clears this flag, so reading it
+            // false here guarantees any outcome from the just-finished
+            // worker is already visible to the drain that follows. Draining
+            // first (the old order) could miss an outcome published between
+            // the drain and this read, leaving it undrained while a second
+            // attempt starts — losing a gate commit or a backoff step when
+            // that second outcome later overwrites the first.
             if (_requestInFlight) return;
+
+            // Last tick's outcome (if any) has to update the gate/backoff
+            // state before this tick decides anything.
+            DrainOutcome();
 
             DateTime now = DateTime.UtcNow;
             if (_lastAttemptUtc != DateTime.MinValue && (now - _lastAttemptUtc).TotalSeconds < _effectiveIntervalSeconds) return;
@@ -226,9 +246,9 @@ namespace TheRavensCall
             bool heartbeatDue = _lastSuccessUtc == DateTime.MinValue ||
                 (now - _lastSuccessUtc).TotalSeconds >= _effectiveHeartbeatSeconds;
 
-            bool sendState = heartbeatDue || !string.Equals(blankedState, _lastAcceptedStateBlanked, StringComparison.Ordinal);
-            bool sendActivity = heartbeatDue || !string.Equals(blankedActivity, _lastAcceptedActivityBlanked, StringComparison.Ordinal);
-            bool sendCensus = heartbeatDue || !string.Equals(blankedCensus, _lastAcceptedCensusBlanked, StringComparison.Ordinal);
+            bool sendState = heartbeatDue || _forceAllNextAttempt || !string.Equals(blankedState, _lastAcceptedStateBlanked, StringComparison.Ordinal);
+            bool sendActivity = heartbeatDue || _forceAllNextAttempt || !string.Equals(blankedActivity, _lastAcceptedActivityBlanked, StringComparison.Ordinal);
+            bool sendCensus = heartbeatDue || _forceAllNextAttempt || !string.Equals(blankedCensus, _lastAcceptedCensusBlanked, StringComparison.Ordinal);
 
             if (!sendState && !sendActivity && !sendCensus) return; // nothing changed, no heartbeat due — no request at all (§3)
 
@@ -266,9 +286,34 @@ namespace TheRavensCall
                     censusField = "null";
                 }
 
+                if (!sendState && !sendActivity && !sendCensus)
+                {
+                    // The only envelope due was itself over 2MB: the drop
+                    // chain above nulled it and there is nothing left to
+                    // send. Sending the bundle anyway would be state/
+                    // activity/census all null, which the receiver answers
+                    // 200 {"stored":[]} — DrainOutcome takes that as Success
+                    // and advances _lastSuccessUtc, so the hosted page keeps
+                    // reporting a fresh "server reported Ns ago" over data
+                    // that is never stored. Drop the whole attempt instead.
+                    // _forceAllNextAttempt is left untouched — it is cleared
+                    // only once a bundle is actually queued for send.
+                    if (_lastOversizeWarnUtc == DateTime.MinValue || (now - _lastOversizeWarnUtc).TotalHours >= 1.0)
+                    {
+                        Plugin.Log.LogWarning("[TheRavensCall] Push bundle for '" + _serverId + "' was " +
+                            bodyBytes.ToString(CultureInfo.InvariantCulture) + " bytes, over the receiver's 2 MB limit — dropped entirely (nothing sent) this attempt.");
+                        _lastOversizeWarnUtc = now;
+                    }
+                    return;
+                }
+
                 payload = BuildPayload(pushedAt, stateField, activityField, censusField);
-                Plugin.Log.LogWarning("[TheRavensCall] Push bundle for '" + _serverId + "' was " +
-                    bodyBytes.ToString(CultureInfo.InvariantCulture) + " bytes, over the receiver's 2 MB limit — dropped the largest envelope this attempt.");
+                if (_lastOversizeWarnUtc == DateTime.MinValue || (now - _lastOversizeWarnUtc).TotalHours >= 1.0)
+                {
+                    Plugin.Log.LogWarning("[TheRavensCall] Push bundle for '" + _serverId + "' was " +
+                        bodyBytes.ToString(CultureInfo.InvariantCulture) + " bytes, over the receiver's 2 MB limit — dropped the largest envelope this attempt.");
+                    _lastOversizeWarnUtc = now;
+                }
             }
 
             var sentFlags = new bool[3] { sendState, sendActivity, sendCensus };
@@ -279,6 +324,12 @@ namespace TheRavensCall
             string token = _pushToken;
             string body = payload;
             DateTime attemptUtc = now;
+
+            // §2/mod-contract-1: this attempt is carrying the forced full
+            // bundle (if it was set) — clear it here, only once the bundle
+            // is actually queued for send, so it is not lost by an earlier
+            // return (e.g. nothing to send, or dropped entirely for size).
+            _forceAllNextAttempt = false;
 
             ThreadPool.QueueUserWorkItem(_ => SendWorker(url, token, body, attemptUtc, sentFlags, blankedForms));
         }
@@ -328,58 +379,66 @@ namespace TheRavensCall
             }
             catch (WebException wex)
             {
-                var httpResp = wex.Response as HttpWebResponse;
-                if (httpResp == null)
+                // Scoped and disposed (a using over a null value is legal):
+                // an undisposed HttpWebResponse here leaks a pooled
+                // connection on every non-2xx, and with
+                // DefaultConnectionLimit = 2 the third refusal in a row
+                // times out and is reported as a transport failure instead
+                // of the named refusal it actually was.
+                using (var httpResp = wex.Response as HttpWebResponse)
                 {
-                    // §3: DNS, connect timeout, TrustFailure/SecureChannelFailure
-                    // (no response at all) — a transport failure, exponential backoff.
-                    outcome.ResultKind = PushOutcome.Kind.OtherFailure;
-                    if (wex.Status == WebExceptionStatus.TrustFailure || wex.Status == WebExceptionStatus.SecureChannelFailure)
+                    if (httpResp == null)
                     {
-                        // Named cause, no SecurityProtocol change and no
-                        // ServerCertificateValidationCallback — that property
-                        // is process-global and would blind the Discord
-                        // webhook's own TLS validation too (§3).
-                        outcome.ErrorText = "TLS certificate validation failed (" + wex.Status +
-                            ") — the receiver's certificate is not trusted by this machine's CA bundle";
+                        // §3: DNS, connect timeout, TrustFailure/SecureChannelFailure
+                        // (no response at all) — a transport failure, exponential backoff.
+                        outcome.ResultKind = PushOutcome.Kind.OtherFailure;
+                        if (wex.Status == WebExceptionStatus.TrustFailure || wex.Status == WebExceptionStatus.SecureChannelFailure)
+                        {
+                            // Named cause, no SecurityProtocol change and no
+                            // ServerCertificateValidationCallback — that property
+                            // is process-global and would blind the Discord
+                            // webhook's own TLS validation too (§3).
+                            outcome.ErrorText = "TLS certificate validation failed (" + wex.Status +
+                                ") — the receiver's certificate is not trusted by this machine's CA bundle";
+                        }
+                        else
+                        {
+                            outcome.ErrorText = wex.Status + ": " + wex.Message;
+                        }
                     }
                     else
                     {
-                        outcome.ErrorText = wex.Status + ": " + wex.Message;
-                    }
-                }
-                else
-                {
-                    int status = (int)httpResp.StatusCode;
-                    switch (status)
-                    {
-                        case 429:
-                            outcome.ResultKind = PushOutcome.Kind.RateLimited;
-                            string retryAfter = httpResp.Headers["Retry-After"];
-                            int retrySeconds;
-                            outcome.RetryAfterSeconds = int.TryParse(retryAfter, NumberStyles.Integer, CultureInfo.InvariantCulture, out retrySeconds)
-                                ? (int?)retrySeconds : null;
-                            break;
-                        case 401:
-                            outcome.ResultKind = PushOutcome.Kind.ConfigRefusal;
-                            outcome.ConfigRefusalMessage = "PushToken rejected — check [Push] PushToken and PushServerId against the receiver's registry";
-                            break;
-                        case 409:
-                            outcome.ResultKind = PushOutcome.Kind.ConfigRefusal;
-                            outcome.ConfigRefusalMessage = "the receiver has a different HttpApiToken hash registered for '" + _serverId + "' — re-register read_token_sha256 and redeploy";
-                            break;
-                        case 413:
-                            outcome.ResultKind = PushOutcome.Kind.ConfigRefusal;
-                            outcome.ConfigRefusalMessage = "bundle over the receiver's 2 MB limit";
-                            break;
-                        case 422:
-                            outcome.ResultKind = PushOutcome.Kind.ConfigRefusal;
-                            outcome.ConfigRefusalMessage = "the receiver refused the bundle — set [Companion] HttpApiToken (24+ characters)";
-                            break;
-                        default:
-                            outcome.ResultKind = PushOutcome.Kind.OtherFailure;
-                            outcome.ErrorText = "HTTP " + status.ToString(CultureInfo.InvariantCulture);
-                            break;
+                        int status = (int)httpResp.StatusCode;
+                        switch (status)
+                        {
+                            case 429:
+                                outcome.ResultKind = PushOutcome.Kind.RateLimited;
+                                string retryAfter = httpResp.Headers["Retry-After"];
+                                int retrySeconds;
+                                outcome.RetryAfterSeconds = int.TryParse(retryAfter, NumberStyles.Integer, CultureInfo.InvariantCulture, out retrySeconds)
+                                    ? (int?)retrySeconds : null;
+                                break;
+                            case 401:
+                                outcome.ResultKind = PushOutcome.Kind.ConfigRefusal;
+                                outcome.ConfigRefusalMessage = "PushToken rejected — check [Push] PushToken and PushServerId against the receiver's registry";
+                                break;
+                            case 409:
+                                outcome.ResultKind = PushOutcome.Kind.ConfigRefusal;
+                                outcome.ConfigRefusalMessage = "the receiver has a different HttpApiToken hash registered for '" + _serverId + "' — re-register read_token_sha256 and redeploy";
+                                break;
+                            case 413:
+                                outcome.ResultKind = PushOutcome.Kind.ConfigRefusal;
+                                outcome.ConfigRefusalMessage = "bundle over the receiver's 2 MB limit";
+                                break;
+                            case 422:
+                                outcome.ResultKind = PushOutcome.Kind.ConfigRefusal;
+                                outcome.ConfigRefusalMessage = "the receiver refused the bundle — set [Companion] HttpApiToken (24+ characters)";
+                                break;
+                            default:
+                                outcome.ResultKind = PushOutcome.Kind.OtherFailure;
+                                outcome.ErrorText = "HTTP " + status.ToString(CultureInfo.InvariantCulture);
+                                break;
+                        }
                     }
                 }
             }
@@ -444,11 +503,18 @@ namespace TheRavensCall
                 case PushOutcome.Kind.ConfigRefusal:
                     // §3: the four named refusals retry every 15 minutes, gate untouched.
                     _nextAllowedAttemptUtc = outcome.AttemptUtc.AddMinutes(15);
+                    // §2: a failure never advances the gate on its own, but
+                    // it must not leave one behind either — force the next
+                    // attempt to carry all three envelopes so a receiver
+                    // that lost its blobs during the outage recovers
+                    // immediately once the config is fixed.
+                    _forceAllNextAttempt = true;
                     Plugin.Log.LogWarning("[TheRavensCall] Push rejected: " + outcome.ConfigRefusalMessage);
                     break;
 
                 case PushOutcome.Kind.OtherFailure:
                     _consecutiveFailures++;
+                    _forceAllNextAttempt = true; // §2: see ConfigRefusal above
                     _lastErrorText = outcome.ErrorText;
                     int backoffSeconds = BackoffSecondsFor(_consecutiveFailures);
                     _nextAllowedAttemptUtc = outcome.AttemptUtc.AddSeconds(backoffSeconds);

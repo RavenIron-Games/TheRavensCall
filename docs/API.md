@@ -270,7 +270,9 @@ is never bypassed, so a heartbeat only lands on a tick already allowed to push.
   effective cadence rounds up to the next multiple of `StatsPushIntervalSeconds`.
 - Nothing changed and no heartbeat due → no request at all.
 - One request in flight at a time, on a ThreadPool worker (`HttpWebRequest`, the Discord
-  webhook's pattern); the main thread never waits on the network. `PushTimeoutSeconds` is 20.
+  webhook's pattern); the main thread never waits on the network. The request timeout is a fixed
+  20 s — deliberately above the receiver Function's own 10 s execution budget — and is not
+  configurable.
 - A bundle over 2 MB drops the largest envelope, sends the rest, and logs one warning naming
   `server_id` and the size.
 - Failure → exponential backoff: 60 s, 2, 4, 8, then 15 minutes flat. One warning on the first

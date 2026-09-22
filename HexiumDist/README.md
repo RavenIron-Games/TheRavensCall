@@ -255,6 +255,8 @@ On a rented game server the admin gets the game's ports, a web panel and FTP —
 
 ### Setup
 
+The receiver described here is the owner's own and isn't open to other servers in 1.6.0; if you want a hosted dashboard for your own server, deploy your own private copy of `hosting/netlify/` from the [GitHub repo](https://github.com/RavenIron-Games/TheRavensCall) — steps 3 and 4 below are then done in your own Netlify account against your own domain.
+
 1. **Generate both tokens** — `openssl rand -hex 24`, run twice: once for `HttpApiToken` (if you don't already have one at least 24 characters long) and once for `PushToken`.
 2. **Set `HttpApiToken` (24+ characters), `PushUrl`, `PushToken` and `PushServerId`** under `[Companion]`/`[Push]` in `com.raveniron.theravenscall.cfg`.
 3. **Register the id** with both tokens' sha256 hashes in the receiver's `TRC_SERVERS` environment variable, then redeploy the receiver — a change in the Netlify UI does nothing until the site is redeployed.
@@ -276,7 +278,7 @@ A rented server's admin has no shell and can't reach `/api/health` — the BepIn
 
 ### Where this has actually run
 
-As of this release the push has run on a Linux dedicated server (Valheim 1.0.15, under WSL2), not yet on a rented host.
+As of this release the 1.6.0 push has only been exercised against a local receiver on the test server's own machine. The mod itself boots and completes https requests with certificate validation on a Linux dedicated server (Valheim 1.0.15, under WSL2 — tested on 1.5.0); the push itself has not yet run on Linux, over https, or on a rented host.
 
 ---
 
