@@ -20,7 +20,9 @@ Sizes and cadences below were measured on Storm10 (Valheim 1.0.12) on 2026-09-22
 build; prices are from the Netlify pricing page read the same day, and the owner's plan is
 **Pro, 3,000 credits a month**. This revision takes the edits of the 2026-09-22 design review
 (five lenses, 69 findings, 66 verified, 25 must-change), of its second pass (three lenses, 15
-findings, 9 must-change verified) and of a final pass (two lenses, 8 findings, 4 must-change).
+findings, 9 must-change verified) and of a final pass (two lenses, 8 findings, 4 must-change). Amended 2026-09-22 after the
+mod's first Linux boot (revision 5): §3's TLS bullet, §7's README line, §8 step 9 and §10 —
+`docs/TESTPLAN-linux-wsl2-2026-09-22.md` is the evidence.
 
 ## 1. What ships
 
@@ -167,16 +169,22 @@ case a push is about 300 KB; a typical one is 20–200 KB.
   `http://localhost.example.com/` would pass. Anything else disables the push at boot with one
   warning naming the host. `PushUrl` set while `HttpApiToken` is short or empty likewise
   disables the push at boot rather than sending 1,440 refused requests a day.
-- **TLS on Linux is the one unproven piece.** Under BepInEx the push runs on Valheim's bundled
-  Mono, whose `HttpWebRequest` validates against Mono's own certificate store, not the OS trust
-  store; on a bare rented-server image that store can be empty and every https request fails
-  with `SecureChannelFailure`. There is no `ServicePointManager` call anywhere in the mod today
-  and the Discord webhook has only ever run on Windows. At boot the mod adds TLS 1.2 to
-  `ServicePointManager.SecurityProtocol`, and on that specific failure logs one warning naming
-  the cause and the README's fix (`cert-sync --user` / `mozroots --import --sync`). It does
-  **not** install a `ServerCertificateValidationCallback`: that property is process-global and
-  would disable certificate validation for the Discord webhook in the same process. §8 step 9
-  is the release gate for this.
+- **TLS on Linux — proven 2026-09-22** (`docs/TESTPLAN-linux-wsl2-2026-09-22.md`). Under
+  BepInEx the push runs on Valheim's bundled Mono, and until that run the Discord webhook had
+  only ever run on Windows. On the Linux dedicated server build that Storm10 and every current
+  server runs (1.0.15, network version 40, Steam's default branch) `HttpWebRequest` completes
+  https requests with certificate validation on and nothing installed or configured: an expired
+  and a self-signed certificate are both rejected with `TrustFailure` (UnityTLS,
+  `UNITYTLS_X509VERIFY_FLAG_NOT_TRUSTED`), so there is no `SecurityProtocol` change, no
+  `cert-sync`, no README fix to write. The mod still logs one warning naming the cause on a
+  `TrustFailure` or `SecureChannelFailure`, because a rented image with no CA bundle at all is
+  untested. It does **not** install a `ServerCertificateValidationCallback`: that property is
+  process-global and would disable certificate validation for the Discord webhook in the same
+  process. One caveat stands: on the older build Steam's `public-test` branch carried that day
+  (0.221.13, network version 37) `System.dll`'s `WebRequest` prefix table is empty and
+  `HttpWebRequest` cannot complete a request at all, while `UnityWebRequest` (a main-thread
+  coroutine) works with validation on both builds — it is the fallback transport if a future
+  build ships that way, not this release's. §8 step 9 is the release gate for this.
 - **Shutdown.** No final push is attempted: the sender is a background worker, a request in
   flight dies with the process, and `Plugin.OnDestroy` on a dedicated server is already a
   destruction-order minefield (the 1.4.1 shutdown-row race) that a blocking network call has no
@@ -428,7 +436,8 @@ keeps open.
   tokens' hashes in `TRC_SERVERS` and redeploy; open `https://dash.ravenirongames.com/s/<id>/`;
   how to unpublish), the `[Push]` rows in *Configuration*, and a line in *The Web Dashboard* on
   what the hosted page shows that the local one does not; until §8 step 9 has run, the section
-  says "designed for, not yet run on" a rented Linux server. `docs/API.md`: the push contract
+  says "run on a Linux dedicated server (Valheim 1.0.15, under WSL2), not yet on a rented
+  host". `docs/API.md`: the push contract
   and the hosted routes, and its title bumped from "the 1.4.0 contract". `docs/DASHBOARD.md`:
   hosted mode, the conditional fetches, the visibility gate, and a rewrite of the token/settings
   flow, which currently says a blank Base URL means this page's own origin.
@@ -486,12 +495,15 @@ keeps open.
 8. **Real site**: deploy to `dash.ravenirongames.com`, repeat 2 and 7 against it, measure the
    Function duration and after 24 hours read the credit usage in the Netlify UI into the
    changelog, and confirm the spend cap and the rate-limit rule are in place.
-9. **Nitrado — the release gate, not optional** (needs a rented test server): one boot on the
-   Linux box — the mod's first on Linux — checking the BepInEx log, the FTP files, and the point
-   of the step: a real **https** push to the deployed receiver completing and landing. No
-   earlier step exercises TLS at all (2 and 7 are plaintext localhost, 8 runs from Windows).
-   Until this passes, the README says "designed for, not yet run on" and the changelog claims no
-   Nitrado support.
+9. **Linux — the release gate, not optional** (the WSL2 dedicated server at `/opt/valheim`,
+   no rented box: the owner's call, 2026-09-22): one boot of the 1.6.0 build on it, on Valheim
+   1.0.15, checking the BepInEx log and the point of the step: a real **https** push to the
+   deployed receiver completing and landing. The mod's first Linux boot is already done — 1.5.0
+   on 2026-09-22, `docs/TESTPLAN-linux-wsl2-2026-09-22.md`: it boots, serves, counts a copy of
+   Storm10's world to the object, and `HttpWebRequest` completes https with certificate
+   validation on. No earlier step exercises TLS at all (2 and 7 are plaintext localhost, 8 runs
+   from Windows). Until this passes, the README says "not yet run on a rented host" and the
+   changelog claims no Nitrado support.
 10. **No regression**: with `PushUrl` empty the 1.5.0 test plan still passes on
     `localhost:2112`, including the page against a 1.5.0 server (no extra header line, no
     `NaN`).
@@ -519,7 +531,8 @@ keeps open.
 
 - The release name.
 - The hostname (`dash.ravenirongames.com` is the placeholder).
-- Renting a Nitrado test server for step 9 — it is the release gate, so before the cut.
+- ~~Renting a Nitrado test server for step 9~~ — settled 2026-09-22: no rented server; the
+  WSL2 Linux dedicated server is the step 9 box (`docs/TESTPLAN-linux-wsl2-2026-09-22.md`).
 - Whether the conditional-fetch rewrite (§5) ships in 1.6.0 or 1.6.1: it touches `apiFetch`,
   which every existing localhost install's pollers run every 10 s. Deferred, the receiver would
   still send `ETag` and the browser would revalidate on its own, the cost table stands (it
