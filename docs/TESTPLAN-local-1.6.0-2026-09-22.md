@@ -51,6 +51,16 @@ The first deploy answered the site root with Netlify's default 404 page (the own
 
 Live: **PASS 12/12** at 14:46 — PR #18 merged (main `7427928`) and deployed on the owner's word as `6ab2f6e8` ("CDN requesting 2 files and 0 functions"): the same script against `https://theravenscall-dash.netlify.app` gives every row above the same answer, the root carries the three headers, `/s/` answers `302 Location: /`, and the browser pane shows the page at the live root with zero scripts and no horizontal scroll.
 
+## Custom domain (§8 step 8, hostname)
+
+Decided by the owner 2026-09-22: `trc.ravenirongames.com` (the scope's placeholder had been `dash.ravenirongames.com`). Added at 15:03 on his word, at no cost: `netlify api updateSite` set it as the site's primary domain; because `ravenirongames.com` is a Netlify DNS zone in the same team, the `NETLIFY trc.ravenirongames.com -> theravenscall-dash.netlify.app` record (ttl 3600, managed) appeared in the zone by itself and the site's certificate already covered `*.ravenirongames.com` (state `issued`, expires 2026-11-22). No deploy, no alias, no branch subdomain. Google and Cloudflare resolvers answered the name within ten minutes (the same two Netlify addresses as `live.ravenirongames.com`); this machine's upstream resolver kept the negative answer from the first lookup for longer, so the proof ran with curl `--resolve` on one of those addresses, which still validates the certificate for the hostname:
+
+| Request on `https://trc.ravenirongames.com` | Result |
+|---|---|
+| the 12 landing-page routing checks | 12/12 PASS, identical answers to the `*.netlify.app` name; `/s/` → `302 Location: /` resolves to `https://trc.ravenirongames.com/` |
+| TLS | `ssl_verify_result 0` for the hostname |
+| `https://theravenscall-dash.netlify.app/` afterwards | still `200`, and `POST /push` there still reaches the push function — Netlify's docs: the Netlify subdomain URLs always work even with a custom domain set; only an apex and its `www` redirect to each other. So `PushUrl` may name either host; the custom domain is the one to give out |
+
 ## Harness notes
 
 - Storm10 was started with `Start-Process` and stopped with `taskkill` without `/F` each cycle
