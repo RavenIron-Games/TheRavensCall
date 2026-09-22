@@ -165,8 +165,9 @@ server contract. The selected chip lives in `state.feedFilter`, not the DOM,
 so it survives a re-render. A row whose `timestamp_utc` is strictly newer
 than the previous poll's newest event gets a brief highlight
 (`isNewFeedEvent`/`.feed-row-new`); nothing highlights on the very first
-load, since there's no "previous poll" yet. "No events yet" on an empty feed, or since 1.4.1 "Nothing in <chip> yet." when the feed has rows but the selected chip has none, on an empty
-feed (a fresh install, or `EventFeedCapacity = 0`).
+load, since there's no "previous poll" yet. "No events yet" on an empty
+feed (a fresh install, or `EventFeedCapacity = 0`); since 1.4.1, "Nothing in <chip> yet."
+instead when the feed has rows but the selected chip has none.
 
 **Season panel.** `season.active === true`: the season name, a green
 `ACTIVE` tag, "started today" / "started yesterday" / "started N days ago" (`startedText(daysAgo(...))`, 1.4.1), and a standings table headed

@@ -10,8 +10,8 @@ repeated here.
 Build under test: the release DLL, md5 `f9ee434b8b4ed8872c70023c759bd9a9`, 207,872 bytes,
 staged as `BepInEx\plugins\RavenIronStudios-TheRavensCall\TheRavensCall.dll` with the 1.3.0
 DLL renamed `.off`. The same bytes are in `TheRavensCall-v1.4.0.zip` on the v1.4.0
-pre-release. Six server cycles between 18:51 and 20:23 local (UTC-7); Chronicle and feed
-stamps are UTC. Every start was a PowerShell `Start-Process`, every stop a graceful
+pre-release. Five server cycles on 1.4.0 (boots at 18:51, 19:33, 20:00, 20:13 and 20:23
+local, UTC-7); Chronicle and feed stamps are UTC. Every start was a PowerShell `Start-Process`, every stop a graceful
 `taskkill`.
 
 ## Results
@@ -19,7 +19,7 @@ stamps are UTC. Every start was a PowerShell `Start-Process`, every stop a grace
 | §9 step | Result | Evidence |
 |---|---|---|
 | 1 | PASS | no `theravenscall.html` under the config or plugin folder before the first boot |
-| 2 | PASS | `TheRavensCall 1.4.0 awakens (server-only).`, `All patches applied.`, `Server systems initialized.`, `HTTP server listening on http://localhost:2112`; `/api/health` → `{"status":"ok","version":"1.4.0"}`; no exception attributed to the mod on any of the six boots. The `ravenscall` console command registered on this build (the StormTest `MissingMethodException` is a 0.221.12 artefact) |
+| 2 | PASS | `TheRavensCall 1.4.0 awakens (server-only).`, `All patches applied.`, `Server systems initialized.`, `HTTP server listening on http://localhost:2112`; `/api/health` → `{"status":"ok","version":"1.4.0"}`; no exception attributed to the mod on any of the five boots. The `ravenscall` console command registered on this build (the StormTest `MissingMethodException` is a 0.221.12 artefact) |
 | 3 | PASS | first boot: `season.active=false` with the last season remembered from the previous run, `events` = the `startup` row; later boots reload the previous run's rows under the new `startup` row from `event_feed.json` |
 | 4 | PASS | feed showed the startup row, the season panel "No season is running. Last season: …", the all-time board from the roster; no console errors |
 | 5 | PASS | `player_join` within one poll, `message` equal to the Chronicle line; on the client quitting, a `player_leave` row with detail `(connection lost)` 90 s after the drop (Valheim's lost-connection timeout), playtime accrued, the player offline in the export |
@@ -46,12 +46,15 @@ stamps are UTC. Every start was a PowerShell `Start-Process`, every stop a grace
   the stop and the boot, showed the new `startup` row 10 s after the server was back with
   no reload, in a pane the browser reports as `visibilityState: hidden`. One earlier cycle
   needed a manual reload; that did not reproduce.
-- **The `shutdown` row is a race on 1.0.12.** Five graceful stops; one wrote the
-  `shutdown` row and the session summary (03:13:26Z), four wrote nothing. On the stops
-  that wrote nothing `BepInEx\LogOutput.log` shows `ZNet OnDestroy` before the plugin's
-  own `OnDestroy`, so `ZNet.instance` was already null and the guard skipped. The 1.3.0
-  Chronicle from 2026-09-18 shows the same pattern (9 boots, 7 `shutdown` rows). PR #9
-  (1.4.1) remembers the server flag at boot instead of asking `ZNet` at teardown.
+- **The `shutdown` row is a race on 1.0.12.** Five identical graceful stops of 1.4.0
+  (`taskkill`, no `/F`); two wrote the `shutdown` row and the session summary (03:13:26Z
+  and 03:36:34Z), three wrote nothing. Nothing in the stop procedure differed, and the
+  engine's own `ZNet OnDestroy` log line appears after one silent stop and after one that
+  wrote the row, so the log does not show the order of teardown; the guard asks
+  `ZNet.instance` at teardown and Unity does not promise that order. The 1.3.0 Chronicle
+  from 2026-09-18 holds 16 `startup` rows against 7 `shutdown` rows (not every one of
+  those stops was graceful). PR #9 (1.4.1) remembers the server flag at boot instead of
+  asking `ZNet` at teardown; its one graceful stop so far wrote the row.
 - **Raids** went through `event <name>` routed by ServerDevcommands from the admin client.
   The `SetRandomEvent` patch point caught every start and stop; the scope's
   `randomevent` path was not used.
@@ -79,7 +82,7 @@ upgrade case instead: `seasons.json` hand-set to `current_season "TestSeason."` 
 
 ## Storm10 as left
 
-Server up (started 20:39:52 local, the eighth cycle of the evening) on the **1.4.1** DLL
+Server up (started 20:39:52 local, the seventh cycle of the evening) on the **1.4.1** DLL
 (`426bd85f…`), `EventFeedCapacity = 200`, `EnableRaid = true`, `HttpApiToken` empty, the
 page override deleted, no season running. The config folder keeps the evening's artefacts:
 `event_feed.json`, `seasons.json` (last ended TestSeason2), `seasons.json.pre141` (the
