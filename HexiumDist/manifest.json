@@ -1,7 +1,7 @@
 {
   "name": "TheRavensCall",
   "version_number": "1.5.0",
-  "website_url": "https://ravenirongames.rglmobile1.workers.dev/",
+  "website_url": "https://ravenirongames.com",
   "description": "Server admin & analytics mod. Pairs with client mod WhereTheCrowFlies to track player kills, deaths, bosses, skills, playtime and a world census. Narrates to Discord and Chronicle logs, with a web dashboard and BarrkBOT JSON export.",
   "dependencies": [
     "denikson-BepInExPack_Valheim-5.4.2350"
