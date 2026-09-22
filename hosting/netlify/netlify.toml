@@ -1,0 +1,63 @@
+# TheRavensCall 1.6.0 receiver — Netlify site config (scope §4).
+#
+# Header split: the [[headers]] block below applies ONLY to the static page
+# (public/theravenscall.html, served through the /s/* catch-all). Netlify
+# header rules do NOT apply to function responses (netlify/functions/push.mts,
+# netlify/functions/api.mts) — those two functions set every response header
+# themselves, in code (nosniff, no-referrer, CORS, ETag, Cache-Control, Vary),
+# via netlify/functions/_lib/trc.ts. If you are looking for the push/api
+# headers, they are in that TypeScript, not in this file.
+
+[build]
+  publish = "public"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+# Ordered redirects — Netlify evaluates these top to bottom and the first
+# match wins, and a "*" splat matches across "/", so the more specific rules
+# MUST come first (scope §4). Do not reorder this block.
+
+# 1. POST /push -> the push function.
+[[redirects]]
+  from = "/push"
+  to = "/.netlify/functions/push"
+  status = 200
+
+# 2. GET/DELETE/OPTIONS /s/:id/api/* -> the api function. force = true so
+#    this wins over the static-asset lookup Netlify would otherwise try
+#    under /s/:id/api/... first.
+[[redirects]]
+  from = "/s/:id/api/*"
+  to = "/.netlify/functions/api"
+  status = 200
+  force = true
+
+# 3. Catch-all: anything else under /s/* — /s/<id> and /s/<id>/ alike — serves
+#    the page as a static asset. There is deliberately NO "/s/:id -> /s/:id/"
+#    301 rule: Netlify's edge matches rules regardless of a trailing slash
+#    (docs, "Trailing slash"), so that rule would also match /s/<id>/ and
+#    redirect forever (seen under netlify dev at implementation); the page
+#    accepts both forms instead. This MUST be last — it is a "*" splat and
+#    would otherwise shadow rules 1-2.
+[[redirects]]
+  from = "/s/*"
+  to = "/theravenscall.html"
+  status = 200
+
+# Static-page headers only (scope §4/§6). The page is one inline script with
+# inline style attributes and loads no images, hence the CSP below.
+[[headers]]
+  for = "/theravenscall.html"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "no-referrer"
+    Content-Security-Policy = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self' https:; img-src 'self'; frame-ancestors 'none'; base-uri 'none'"
+
+[[headers]]
+  for = "/s/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "no-referrer"
+    Content-Security-Policy = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self' https:; img-src 'self'; frame-ancestors 'none'; base-uri 'none'"

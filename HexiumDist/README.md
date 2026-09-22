@@ -7,7 +7,7 @@
 [![Companion](https://img.shields.io/badge/Client_Companion-WhereTheCrowFlies-blue.svg)]()
 [![Framework](https://img.shields.io/badge/Requires-BepInEx-red.svg)]()
 [![Publisher](https://img.shields.io/badge/RavenIron-Release-8B6F1F.svg)]()
-[![Version](https://img.shields.io/badge/Version-1.5.0-lightgrey.svg)]()
+[![Version](https://img.shields.io/badge/Version-1.6.0-lightgrey.svg)]()
 
 **RavenIron's server admin & analytics engine: aggregates player telemetry from *WhereTheCrowFlies*, chronicles realm history, and feeds live web dashboards and Discord AI bots.**
 
@@ -59,6 +59,7 @@ To provide seamless, 100% accurate tracking without missing a single event, the 
   - [Reading It From a Bot](#reading-it-from-a-bot)
   - [The Discord Webhook (Narration)](#the-discord-webhook-narration)
 - [🖥️ The Web Dashboard](#-the-web-dashboard)
+- [☁️ Hosted Servers (Nitrado, G-Portal)](#-hosted-servers-nitrado-g-portal)
 - [📖 The Chronicle](#-the-chronicle)
 - [🏆 Titles & Milestones](#-titles--milestones)
 - [🗓️ Seasons](#-seasons)
@@ -240,7 +241,42 @@ A full player-stats dashboard served directly by the mod's built-in HTTP server:
 - Shows **every player** who has ever joined the realm across six tabs — **Combat, Death, Progression, Crafting, Build, Raw** — covering online status, lifetime kills and deaths (the crow-reported totals once a player runs WhereTheCrowFlies), titles, biomes, skills, boss kills, death history, fish caught, and the harvest, craft and build counters. A dedicated server has no live vitals, inventories or positions to show, and since 1.3.0 the API does not pretend otherwise.
 - Includes JSON API endpoints: `/api/state`, `/api/gamedata`, `/api/activity`, `/api/census`, and `/api/health`. With `HttpApiToken` set, `/api/state`, `/api/gamedata`, `/api/activity`, `/api/census` and `/api/pins` need `?token=<value>` (or an `X-Api-Token` header); `/api/health` and the page itself stay open. Since 1.3.0 the bundled page holds the token in its own settings panel (gear icon, top right) — enter it there and it's kept in the browser and sent as an `X-Api-Token` header on every request; a 401 opens that panel automatically the first time (the feed/season panels show a one-line "Needs the API token (Settings)." notice instead of loading empty).
 - Can be toggled off with `EnableHttpServer = false` if only file export is desired.
+- **Since 1.6.0, a server on a rented host can publish this same dashboard to a hosted URL** — see [Hosted Servers (Nitrado, G-Portal)](#-hosted-servers-nitrado-g-portal) below. The hosted page shows the same roster, feed and World panel as `localhost:2112`, plus how long ago the game server last reported ("server reported Ns ago" / "server silent since …", greying out once it's gone quiet) and a "Registered, waiting for `<id>` to report" state before its first push lands; fish and resource names fall back to prettified tokens there instead of their real names — the one visible difference from `localhost:2112`.
 - **Upgrading from 1.2.x:** delete any `theravenscall.html` you placed in `BepInEx/config/TheRavensCall/` or next to the DLL. A copy from before 1.3.0 still overrides the bundled page, cannot read the 1.3.0 `/api/state` shape, and makes the server log one warning per run naming the file.
+
+---
+
+## ☁️ Hosted Servers (Nitrado, G-Portal)
+
+On a rented game server the admin gets the game's ports, a web panel and FTP — no shell, no extra services, no way to open the dashboard's port. So `http://localhost:2112` is unreachable from anywhere on a Nitrado or G-Portal box. Since 1.6.0 the mod can instead **push** its data out over HTTPS to a small receiver on the owner's Netlify team, which keeps the latest copy and serves the same dashboard page from a public URL. With `PushUrl` empty (the default) nothing changes — the server behaves exactly like 1.5.0, entirely local.
+
+> [!IMPORTANT]
+> **What hosting publishes.** A read-token holder sees everything the three pushed routes serve: every known player's stats, skills, titles and death coordinates (`/api/state`); the event feed and season standings (`/api/activity`); and the census, which lists every portal, bed and ward in the loaded world with its rounded x/z — in effect where the bases are. Until 1.6.0 all of that stayed on a machine the admin controls; hosting moves the latest copy to a third party's storage behind one shared token. **Leaving `PushUrl` empty keeps a server entirely local, exactly as before.**
+
+### Setup
+
+1. **Generate both tokens** — `openssl rand -hex 24`, run twice: once for `HttpApiToken` (if you don't already have one at least 24 characters long) and once for `PushToken`.
+2. **Set `HttpApiToken` (24+ characters), `PushUrl`, `PushToken` and `PushServerId`** under `[Companion]`/`[Push]` in `com.raveniron.theravenscall.cfg`.
+3. **Register the id** with both tokens' sha256 hashes in the receiver's `TRC_SERVERS` environment variable, then redeploy the receiver — a change in the Netlify UI does nothing until the site is redeployed.
+4. **Open `https://dash.ravenirongames.com/s/<id>/`** (that hostname is the owner's placeholder — use whatever address the receiver is actually deployed to).
+5. **To unpublish**, send `DELETE /s/<id>/api` with the write token in the `Authorization: Bearer` header. It removes the stored envelopes and answers `{"deleted":true}`; how an admin takes a server back offline. Deleting the id from the registry takes the dashboard offline on the next request too, but the stored copy stays until the `DELETE` runs.
+
+### Cadence
+
+The push runs from the same poll tick as everything else, so the effective cadence rounds up to the next multiple of `StatsPushIntervalSeconds` (default 10 s): `PushIntervalSeconds = 15` pushes every 20 s, and a `StatsPushIntervalSeconds` of 120 caps the push at 120 s no matter what `PushIntervalSeconds` is set to. The effective heartbeat is `max(PushHeartbeatMinutes × 60, effective interval)`.
+
+### When the push is refused
+
+A rented server's admin has no shell and can't reach `/api/health` — the BepInEx log pulled over FTP is the only place a broken push can be seen. Four refusals are named there, each retrying every 15 minutes:
+
+- `401` — "PushToken rejected — check [Push] PushToken and PushServerId against the receiver's registry"
+- `409` — "the receiver has a different HttpApiToken hash registered for '\<id>' — re-register read_token_sha256 and redeploy"
+- `422` — "the receiver refused the bundle — set [Companion] HttpApiToken (24+ characters)"
+- `413` — "bundle over the receiver's 2 MB limit"
+
+### Where this has actually run
+
+As of this release the push has run on a Linux dedicated server (Valheim 1.0.15, under WSL2), not yet on a rented host.
 
 ---
 
@@ -298,6 +334,11 @@ Configuration is located at `BepInEx/config/com.raveniron.theravenscall.cfg`:
 | **Companion**| `StatsPushIntervalSeconds` | `10` | Frequency (seconds) for updating `BarrkBOT_data1.json` / `BarrkBOT_data2.json`. |
 | **Companion**| `EventFeedCapacity` | `200` | Number of recent events kept in memory and served by `/api/activity`, newest first (0 to 1000). Saved to `event_feed.json` so the feed survives a restart. `0` turns the feed off; the endpoint still answers, with an empty `events` array. |
 | **Census** | `CensusIntervalMinutes` | `5` | How often (minutes) the server counts portals, beds, wards, ships, carts, chests and crafting stations standing in the world and rebuilds `/api/census`. `0` turns the census off; the endpoint still answers, with `enabled: false`. |
+| **Push** | `PushUrl` | `""` | Since 1.6.0. The hosted receiver's base URL to push to (e.g. `https://dash.ravenirongames.com`). Empty (the default) disables the push entirely — the server behaves exactly like 1.5.0. See [Hosted Servers](#-hosted-servers-nitrado-g-portal). |
+| **Push** | `PushToken` | `""` | Since 1.6.0. Bearer token sent with every push, checked against the receiver's registry. |
+| **Push** | `PushServerId` | `""` | Since 1.6.0. This server's id in the receiver's registry. No default — required to push, and must match `[a-z0-9-]{1,32}` and the id registered in `TRC_SERVERS`. |
+| **Push** | `PushIntervalSeconds` | `60` | Since 1.6.0. How often (seconds) to push, clamped 15..3600. The effective cadence rounds up to the next multiple of `StatsPushIntervalSeconds`. |
+| **Push** | `PushHeartbeatMinutes` | `10` | Since 1.6.0. How often (minutes) to push all three envelopes even when nothing changed, clamped 1..1440. |
 
 ---
 

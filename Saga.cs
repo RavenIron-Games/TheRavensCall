@@ -33,7 +33,7 @@ namespace TheRavensCall
     {
         public const string PluginGUID = "com.raveniron.theravenscall";
         public const string PluginName = "TheRavensCall";
-        public const string PluginVersion = "1.5.0";
+        public const string PluginVersion = "1.6.0";
 
         internal static ManualLogSource Log;
         internal static Plugin Instance;
@@ -88,6 +88,13 @@ namespace TheRavensCall
         public static ConfigEntry<string> HttpApiToken;
         public static ConfigEntry<int> EventFeedCapacity;
 
+        // ── Push (hosted dashboard, 1.6.0 — see PushClient.cs / docs/SCOPE-1.6.0.md) ──
+        public static ConfigEntry<string> PushUrl;
+        public static ConfigEntry<string> PushToken;
+        public static ConfigEntry<string> PushServerId;
+        public static ConfigEntry<int> PushIntervalSeconds;
+        public static ConfigEntry<int> PushHeartbeatMinutes;
+
         // ── Census ────────────────────────────────────────────────────────────
         public static ConfigEntry<int> CensusIntervalMinutes;
 
@@ -134,6 +141,13 @@ namespace TheRavensCall
             HttpBindAllInterfaces = Config.Bind("Companion", "HttpBindAllInterfaces", false, "Also listen on every network interface (http://+:port), not only localhost. Off by default since 1.2.4: the API hands every known player's stats, skills, titles and death coordinates to anyone who can reach the port, with no login. Turn on only behind a firewall or together with HttpApiToken");
             HttpApiToken = Config.Bind("Companion", "HttpApiToken", "", "If set, /api/state, /api/gamedata, /api/pins, /api/activity and /api/census require ?token=<this value> (or an X-Api-Token header). /api/health and the dashboard page stay open. Since 1.3.0 the bundled dashboard page has a settings panel (gear icon) to enter this token itself, stored in the browser and sent as X-Api-Token — a 401 opens that panel automatically. A pre-1.3.0 page still does not send a token");
             EventFeedCapacity = Config.Bind("Companion", "EventFeedCapacity", 200, "Number of recent Chronicle lines kept in memory and served by /api/activity, newest first (0 to 1000). They are saved to event_feed.json so the feed survives a restart. 0 turns the feed off; the endpoint still answers, with an empty events array, so a 1.4.0 dashboard can tell \"turned off\" from \"older server\".");
+
+            PushUrl = Config.Bind("Push", "PushUrl", "", "Base URL of a hosted receiver (see docs/API.md) that this server pushes its /api/state, /api/activity and /api/census envelopes to, e.g. https://dash.example.com. Leave empty (the default) to disable pushing entirely — 1.6.0 then behaves exactly like 1.5.0. Must be https, or http only to a loopback host (for local testing against `netlify dev`); anything else disables the push at boot with a warning naming the host.");
+            PushToken = Config.Bind("Push", "PushToken", "", "The write token this server pushes with — generate one randomly (e.g. `openssl rand -hex 24`) and register its sha256 as this PushServerId's 'w' in the receiver's TRC_SERVERS. The plaintext goes here and in the Authorization header only; it is never logged. 32+ characters recommended — a shorter one still works but logs a warning at boot.");
+            PushServerId = Config.Bind("Push", "PushServerId", "", "The id this server is registered under in the receiver's TRC_SERVERS — must match exactly. 1-32 characters, lowercase a-z, 0-9 and '-' only. No default: pushing stays disabled with a warning at boot until this is set and registered.");
+            PushIntervalSeconds = Config.Bind("Push", "PushIntervalSeconds", 60, "How often (seconds) to attempt a push once something has changed. Clamped 15..3600. The push only runs on the poll tick (StatsPushIntervalSeconds above, default 10s), so the effective cadence rounds up to the next multiple of that — 15 here pushes every 20s, and a StatsPushIntervalSeconds of 120 caps every push at 120s no matter what this is set to. The boot log line reports the effective value actually used.");
+            PushHeartbeatMinutes = Config.Bind("Push", "PushHeartbeatMinutes", 10, "How often (minutes), at minimum, to push all three envelopes even when nothing changed, so a receiver that lost its copy (or never had one) recovers and 'last reported' keeps meaning the server is alive. Clamped 1..1440. The effective heartbeat is never shorter than the effective push interval above (a heartbeat only lands on a tick the interval already allows) — raised to match with a boot warning when this value is too small for that.");
+            PushClient.Init();
 
             CensusIntervalMinutes = Config.Bind("Census", "CensusIntervalMinutes", 5, "How often (minutes) to walk every object in the loaded world and count portals, beds, wards, ships, carts, chests and crafting stations for /api/census. Clamped to 1..1440. 0 turns the census off; the endpoint still answers 200 with enabled:false instead of 404.");
 

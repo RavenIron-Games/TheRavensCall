@@ -22,7 +22,8 @@ build; prices are from the Netlify pricing page read the same day, and the owner
 (five lenses, 69 findings, 66 verified, 25 must-change), of its second pass (three lenses, 15
 findings, 9 must-change verified) and of a final pass (two lenses, 8 findings, 4 must-change). Amended 2026-09-22 after the
 mod's first Linux boot (revision 5): §3's TLS bullet, §7's README line, §8 step 9 and §10 —
-`docs/TESTPLAN-linux-wsl2-2026-09-22.md` is the evidence.
+`docs/TESTPLAN-linux-wsl2-2026-09-22.md` is the evidence. Revision 6 (at implementation, the same
+day): the `/s/<id>` → `/s/<id>/` 301 rule is dropped (§4, §5, §8 step 7) — see the `GET /s/<id>` row.
 
 ## 1. What ships
 
@@ -250,9 +251,9 @@ concatenation. The only string that ever becomes a storage key is a validated re
 | `GET /s/<id>/api/state`, `/activity`, `/census` | read token in the `X-Api-Token` header **only**, hashed and compared to the registry's `r` for `<id>` before anything is looked up in Blobs, else `401 {"error":"token required"}` — the same body for a wrong token and an unregistered id, so nobody can enumerate servers; a request carrying a `token` query parameter is answered `400 {"error":"use the X-Api-Token header"}` and the parameter is never logged (a hosted URL has to stay safe to paste into a chat window; `?token=` stays supported on the mod's own `localhost:2112`, unchanged). Then the stored envelope, `Content-Type: application/json`, `ETag` = its sha256, `Cache-Control: private, no-cache`, `Vary: X-Api-Token`; `If-None-Match` matching → `304`. Before the first push carrying that envelope: **`200` with an empty envelope of the right shape** plus `"no_data":true` — never `503`, because `apiFetch` throws on any non-2xx and the first thing the owner would see on a fresh server would be "Could not reach …". For the census the receiver cannot reproduce the mod's own empty envelope (it is built from the game server's `CensusIntervalMinutes`, which no push carries), so it sends `enabled:true`, `interval_minutes:0`, empty groups and lists, and the page tests `no_data` before the `enabled`/`generated_at` guards (§5). A no-data response carries no `ETag` and is sent `Cache-Control: no-store`, so a page that has not yet seen a real envelope is never answered `304` |
 | `GET /s/<id>/api/health` | read token required, exactly like the data routes (the page has it and fetches health with the state poll); `{"status":"ok","hosted":true,"pushed_at":"…","age_seconds":N,"stale_after_seconds":M}` — no `version`: which build an admin runs is the admin's business. `age_seconds` is measured from `received_at`, the receiver's own clock, never from `pushed_at`, so a skewed game-server clock or a forward-dated push from a stolen write token cannot make the dashboard say "just now" about a server that is down. `M` = 3 × the `heartbeat_seconds` of the last accepted push. The mod's own `/api/health` on `localhost:2112` stays open and unchanged: it is open because it is not reachable off the machine, and that reason does not travel to a public URL where the same route would be a liveness oracle |
 | `GET /s/<id>/api/gamedata` | token-gated like the others; `200 {"recipes":[],"items":[],"buildables":[]}` so no 404 lands in the network log |
-| `GET /s/<id>` | `301` to `/s/<id>/` (what a browser makes of a pasted address) |
-| `GET /s/<id>/` | the release's `theravenscall.html` served as a **static asset**. `netlify.toml` declares the receiver's routes as ordered `[[redirects]]` rules, most specific first, because Netlify evaluates them top to bottom, the first match wins, and a `*` splat matches across `/`: `/push` → `/.netlify/functions/push` (200); `/s/:id/api/*` → `/.netlify/functions/api` (200, `force = true`); `/s/:id` → `/s/:id/` (301); and only then the catch-all `/s/*` → `/theravenscall.html` (200) that serves the page. The functions are reached through these rules, not through a `config.path` declaration, so the order lives in one file; an unknown path under `/s/<id>/api/` is the function's own 404, anything outside `/push` and `/s/` falls through to the site's 404. The page derives its hosted base from its own location (§5). Netlify serves static assets from the CDN byte for byte and cannot template one per id, so nothing is injected; a page view is one CDN request and no compute |
-| `DELETE /s/<id>/api` | write token in the `Authorization: Bearer` header; removes the four blobs and answers `200 {"deleted":true}` — how an admin unpublishes. It sits under `/s/<id>/api/` because the `/s/:id/api/*` rule is the only `/s/` rule that reaches a function: the rules match on path alone, so a `DELETE /s/<id>` would take the `/s/:id` → `/s/:id/` 301 and then the `/s/*` catch-all and never reach code. Deleting a registry entry takes the dashboard offline on the next request; the stored copy stays until this runs |
+| `GET /s/<id>` | the page, exactly as `/s/<id>/` — revision 6: **no `301` rule**, because Netlify's edge matches redirect rules regardless of a trailing slash (its docs, "Trailing slash"), so a `/s/:id` → `/s/:id/` rule also matches `/s/<id>/` and redirects forever (seen under `netlify dev` at implementation); the page's hosted-id match accepts both forms instead |
+| `GET /s/<id>/` | the release's `theravenscall.html` served as a **static asset**. `netlify.toml` declares the receiver's routes as ordered `[[redirects]]` rules, most specific first, because Netlify evaluates them top to bottom, the first match wins, and a `*` splat matches across `/`: `/push` → `/.netlify/functions/push` (200); `/s/:id/api/*` → `/.netlify/functions/api` (200, `force = true`); and only then the catch-all `/s/*` → `/theravenscall.html` (200) that serves the page. The functions are reached through these rules, not through a `config.path` declaration, so the order lives in one file; an unknown path under `/s/<id>/api/` is the function's own 404, anything outside `/push` and `/s/` falls through to the site's 404. The page derives its hosted base from its own location (§5). Netlify serves static assets from the CDN byte for byte and cannot template one per id, so nothing is injected; a page view is one CDN request and no compute |
+| `DELETE /s/<id>/api` | write token in the `Authorization: Bearer` header; removes the four blobs and answers `200 {"deleted":true}` — how an admin unpublishes. It sits under `/s/<id>/api/` because the `/s/:id/api/*` rule is the only `/s/` rule that reaches a function: the rules match on path alone, so a `DELETE /s/<id>` would take the `/s/*` catch-all and never reach code. Deleting a registry entry takes the dashboard offline on the next request; the stored copy stays until this runs |
 | `OPTIONS /s/<id>/api/*` | `204` with the CORS headers below |
 | anything else | `404` |
 
@@ -327,8 +328,8 @@ keeps open.
 ## 5. Dashboard changes
 
 - **Hosted mode.** The page derives its base from its own location:
-  `location.pathname.match(/^\/s\/([a-z0-9-]{1,32})\//)` gives the hosted id and the base
-  `/s/<id>`; when the path does not match, today's behaviour. The Settings Base URL override
+  `location.pathname.match(/^\/s\/([a-z0-9-]{1,32})(?:\/|$)/)` gives the hosted id (both `/s/<id>` and
+  `/s/<id>/`, revision 6) and the base `/s/<id>`; when the path does not match, today's behaviour. The Settings Base URL override
   still wins when set, so the page can also be opened from anywhere and pointed at a receiver
   or at a mod on the admin's own machine; when hosted and an override is set, the Settings panel
   shows one line naming the receiver it is bypassing.
@@ -490,7 +491,7 @@ keeps open.
    notice and recovery; `304` responses in the network log after the first fetch of each route;
    "server reported Ns ago"; the tab hidden for 5 minutes → no requests in the receiver's log,
    one burst on return; stop Storm10 → "server silent since …" and the greyed panels once
-   `stale_after_seconds` passes; `/s/storm10` without the slash → redirected; a second id's
+   `stale_after_seconds` passes; `/s/storm10` without the slash → the same page, same id; a second id's
    page → its own token field, the first id's token untouched.
 8. **Real site**: deploy to `dash.ravenirongames.com`, repeat 2 and 7 against it, measure the
    Function duration and after 24 hours read the credit usage in the Netlify UI into the
