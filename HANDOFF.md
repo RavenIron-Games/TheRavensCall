@@ -1,12 +1,12 @@
 # TheRavensCall — handoff (2026-08-19 update, originally 2026-08-17)
 
-**Status: v1.3.0, cut 2026-09-15, run live on the Storm10 1.0.12 testbed (see docs/TESTPLAN-storm10-2026-09-15.md and the 1.3.0 changelog).** RavenIron release —
+**Status: v1.4.0, cut 2026-09-21 (`docs/SCOPE-1.4.0.md`; server side run live on StormTest, see docs/TESTPLAN-stormtest-2026-09-21.md; the client-side steps of that plan still to run on Storm10). v1.3.0 was cut 2026-09-15 and run live on the Storm10 1.0.12 testbed (docs/TESTPLAN-storm10-2026-09-15.md).** RavenIron release —
 a merge of two client-side Valheim mods (`SkaldSaga`, `SteveCompanionMod`) into one server-only
 admin tool. Source of truth for both originals is gone from this repo; only their `.txt` dumps
 remain (`25d72c2b-...txt` = SkaldSaga, `46dff3c1-...txt` = SteveCompanionMod) alongside the merged
 project. Not a git repo — nothing here has commit history to inspect.
 
-**2026-09-21: 1.4.0 (`docs/SCOPE-1.4.0.md`) in progress** — the `/api/activity` feed/season endpoint, its two dashboard panels, and three bundled fixes (raid tracking, the Chronicle's season folder plus a file-handle leak, the season-start UTC drift); not yet built or tested against a live server.
+**2026-09-21: 1.4.0 cut** — the `/api/activity` feed/season endpoint, its two dashboard panels, and three bundled fixes (raid tracking, the Chronicle's season folder plus a file-handle leak, the season-start UTC drift); PRs #6 (scope), #7 (tier 1), #8 (tier 2); server side booted live on StormTest, client-side steps pending on Storm10.
 
 **v1.0.0's central claim was false.** It shipped believing combat was server-authoritative
 (`Character.OnDeath`/`Damage` "fire there for real combat resolution" — the old `Saga.cs:16`
