@@ -40,8 +40,13 @@ copy of this folder and it works the same way, unmodified.
    Every time you edit `TRC_SERVERS` (add a server, rotate or revoke a
    token), redeploy again. This is also how a leaked write token gets
    revoked: edit the variable, redeploy.
-5. **Custom domain.** Placeholder in the scope: `trc.ravenirongames.com` —
-   the owner's decision, set in Site configuration -> Domain management.
+5. **Custom domain.** `trc.ravenirongames.com` (the owner's decision,
+   2026-09-22), set in Site configuration -> Domain management. This
+   domain's nameservers are Netlify DNS, so adding the subdomain there
+   creates its DNS record as well, and Netlify provisions the certificate
+   once it resolves. Netlify then **redirects the `*.netlify.app` name to
+   the primary domain**, so every server's `PushUrl` must name the custom
+   domain from that moment: a redirected `POST` does not arrive as a push.
    Until it's set, the site's `*.netlify.app` URL works the same way.
 6. **Spend cap.** Site configuration -> Billing -> set a spend cap before
    the DNS record points anywhere. `/push` and `/s/*` are public and every
