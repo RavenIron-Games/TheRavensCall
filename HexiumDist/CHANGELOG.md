@@ -7,6 +7,21 @@
 
 ---
 
+## 🟢 [1.6.1] — (release name TBD by the owner)
+
+*One admin-facing fix and the store README's new FAQ. No config, API or dashboard changes.*
+
+### 🩹 Fixed
+- **`ravenscall season start` no longer replaces a running season.** Through 1.6.0 a second `season start` while a season was active swapped it in place: the old season got no summary and no `season_end` line, and `seasons.json` never recorded it as ended — its `current_season` and `season_start` were simply overwritten with the new season's, while the Chronicle folder and the standings baseline moved to the new name, so the old season's standings could no longer be worked out. Since 1.6.1 the command refuses while a season is running — the console answers with the running season's name and `ravenscall season end` as the next step, the server log carries one warning, and nothing on disk changes. `season end` first, then `season start`, as it always should have been.
+
+### 📝 Docs
+- The store README gained a FAQ of nineteen questions admins actually ask: what players must install, why kills read zero without the crow, the dashboard and its token, rented hosts and what pushing exposes, seasons, the census cost, the BarrkBOT files, Linux, Valheim versions, listen servers, and what to copy when moving a server.
+
+### 🔧 Changed
+- `HexiumDist/plugins/TheRavensCall.dll` not rebuilt yet — refreshed at the cut.
+
+---
+
 ## 🟢 [1.6.0] — The Raven Carries Word
 
 *Owner's ask, 2026-09-22: "ok so say the server is on nitrado," then "ok scope the push design as 1.6.0." On a rented game server (Nitrado, G-Portal and the like) the admin gets the game's ports, a web panel and FTP — no shell, no way to open the dashboard's port — so `http://localhost:2112` is unreachable from anywhere. 1.6.0 pushes the mod's data out over HTTPS instead: a small receiver on the owner's Netlify team keeps the latest copy, and the same dashboard page reads from it. With `PushUrl` empty (the default) nothing changes: 1.6.0 on a home server behaves exactly like 1.5.0.*

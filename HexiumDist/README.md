@@ -7,7 +7,7 @@
 [![Companion](https://img.shields.io/badge/Client_Companion-WhereTheCrowFlies-blue.svg)]()
 [![Framework](https://img.shields.io/badge/Requires-BepInEx-red.svg)]()
 [![Publisher](https://img.shields.io/badge/RavenIron-Release-8B6F1F.svg)]()
-[![Version](https://img.shields.io/badge/Version-1.6.0-lightgrey.svg)]()
+[![Version](https://img.shields.io/badge/Version-1.6.1-lightgrey.svg)]()
 
 **RavenIron's server admin & analytics engine: aggregates player telemetry from *WhereTheCrowFlies*, chronicles realm history, and feeds live web dashboards and Discord AI bots.**
 
@@ -310,7 +310,7 @@ ravenscall season start [name]
 ravenscall season end
 ```
 
-Archives Chronicle logs into dated season folders and writes summary stats on completion.
+Archives Chronicle logs into dated season folders and writes summary stats on completion. Since 1.6.1 `season start` refuses while a season is running: end it first.
 
 ---
 
@@ -407,7 +407,7 @@ Only to whoever holds that server's read token, and only for that server. They s
 Read the BepInEx log. A working push logs one `Push enabled: server_id='…'` line at boot and then stays quiet. A `Push disabled:` line names the config key that is missing or malformed; a `Push rejected:` line names one of the four receiver refusals listed under [When the push is refused](#when-the-push-is-refused); a `Push failed:` line means the receiver could not be reached, and the mod keeps retrying on its own. Until the first push lands the hosted page reads "Registered, waiting for <id> to report"; "server silent since …" means no push has arrived for three heartbeats.
 
 **How do I start or end a season?**
-From an admin's game client that has WhereTheCrowFlies installed, in the console (F5): `ravenscall season start Autumn`, later `ravenscall season end`. The server checks its admin list before running it. Leave the name off and the season is named `Season_` plus today's date; the name becomes the Chronicle's season folder, so trailing periods and spaces are trimmed and it is capped at 64 characters. End the running season first: `season start` overwrites the active season in place — no summary is written, the baseline is not cleared and no season-end line is narrated. See [Seasons](#-seasons).
+From an admin's game client that has WhereTheCrowFlies installed, in the console (F5): `ravenscall season start Autumn`, later `ravenscall season end`. The server checks its admin list before running it. Leave the name off and the season is named `Season_` plus today's date; the name becomes the Chronicle's season folder, so trailing periods and spaces are trimmed and it is capped at 64 characters. End the running season first: since 1.6.1 `season start` refuses while a season is running and names it (before 1.6.1 it replaced the running season in place: the console still answered "Season started", but the old season got no summary and no season-end line). See [Seasons](#-seasons).
 
 **Does the world census slow the server down?**
 It walks the loaded world's objects on the main thread, on a timer, every 5 minutes by default; a real server with about 1.1 million objects finishes in under half a second, so it costs one short hitch every five minutes. `CensusIntervalMinutes = 0` turns it off, and `/api/census` then answers with `enabled: false`.
