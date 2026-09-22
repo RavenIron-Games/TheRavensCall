@@ -9,14 +9,14 @@ was a PowerShell `Start-Process`, every stop a graceful `taskkill` (the vanilla 
 completed on each stop: "World save (5/5) done"). Times below are local (UTC-7);
 `generated_at` is UTC.
 
-Two builds booted:
+Four builds booted:
 
 | Build | md5 | Bytes | Boots |
 |---|---|---|---|
 | branch at `15361d8` (the census as implemented) | `76dc6640bdecb95c6cac03a7163b3e42` | 243,200 | 08:08 |
 | branch at `a5232e2` (after the second review's fixes) | `e073321c20298de82789033ae8cb61f7` | 243,200 | 08:45, 08:51 (interval 0), 08:53 (token), 08:55 (defaults) |
 | branch at `0f2a788` (pre-publish respin: builder links follow the roster, Build tab card follows the census, no feed flash on Back) | `37e73d5dd794c8bcfb977790e442e6a8` | 244,736 | 09:28 |
-| branch at `cbbe5e8` (pass 2 of the pre-publish check; the shipped bytes) | `47bb2d3e4622e3883acf850652aa9f5b` | 246,272 | the release boot, see "Respins" |
+| branch at `cbbe5e8` (pass 2 of the pre-publish check; the shipped bytes) | `47bb2d3e4622e3883acf850652aa9f5b` | 246,272 | 09:45 (the release boot: `262520 objects in 20 ms`, zero mod warnings, `/api/health` 1.5.0) |
 
 The page under test is the one embedded in each DLL (`<meta name="theravenscall-api"
 content="1.5">`), read at `http://localhost:2112/` in the desktop app's browser pane.
@@ -57,7 +57,7 @@ both restored before the last boot, which was left running.
 - `duration_ms` on the same world: 43 ms with the prefab classification inside the clock
   (first build), 18 ms with it outside (second build) — the walk itself is the small part.
 - `player_ids.json` after the run: Nomadtest, "Wubarrk Dev", TestNomad.
-- Storm10 left **up** on `e073321c` (pid 37216, boot 08:55) with the defaults restored.
+- Storm10 left **up** on the shipped bytes `47bb2d3e` (pid 43872, boot 09:45) with the defaults restored.
 
 ## Respins after the pre-publish check
 
