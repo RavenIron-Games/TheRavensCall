@@ -3,8 +3,10 @@
 A Netlify site **of its own** (Functions + Blobs) that receives TheRavensCall
 1.6.0's push, stores the latest `state`/`activity`/`census` envelope per
 server, and serves them — plus the dashboard page itself — at
-`/s/<server_id>/`. See `docs/SCOPE-1.6.0.md` §4 for the full design; this
-file is the operational how-to.
+`/s/<server_id>/`. The site root (`/`) is a separate static landing page —
+no data, no server ids — that points a visitor at that pattern. See
+`docs/SCOPE-1.6.0.md` §4 for the full design; this file is the operational
+how-to.
 
 Nothing in this folder hardcodes the owner's domain, server ids or tokens —
 every such value is either an environment variable (`TRC_SERVERS`) or comes
@@ -47,8 +49,10 @@ copy of this folder and it works the same way, unmodified.
    scope §4 "Cost" section for the worst-case math.
 7. **Firewall Traffic Rule rate limit.** Site configuration -> Firewall ->
    Traffic rules -> add a rate-limit rule on `/push` and on `/s/*` (per
-   source address). This is the guessing-rate limit the read routes have no
-   counter of their own for (Functions keep no state between invocations).
+   source address; the root `/` is static and costs no function invocation,
+   so it needs no rule here). This is the guessing-rate limit the read
+   routes have no counter of their own for (Functions keep no state between
+   invocations).
    **Record here what the rule actually enforces on this plan once it's
    set** (requests per window, per address) — this line is intentionally
    left for whoever sets it up to fill in, so the limit that's live is
@@ -123,8 +127,10 @@ stop a server from being hosted at all, also remove its entry from
 
 ## 5. The page-copy step (every cut from 1.6.0 on)
 
-The static page this site serves is a **copy** of the repo's own
-`theravenscall.html`, not a symlink. Every release cut from 1.6.0 on must
+The dashboard page this site serves is a **copy** of the repo's own
+`theravenscall.html`, not a symlink (`public/index.html`, the landing page,
+is this folder's own file and is not copied — `npm run copy-page` only
+rewrites `theravenscall.html`). Every release cut from 1.6.0 on must
 re-run:
 
 ```bash
@@ -206,6 +212,10 @@ curl -i "$BASE/s/storm10/api/health" -H "X-Api-Token: $READ"
 # The page
 curl -i "$BASE/s/storm10"    # -> 200, the page (no redirect: both forms serve it)
 curl -i "$BASE/s/storm10/"   # -> 200, the page HTML, CSP header present
+
+# The landing page and its redirect
+curl -i "$BASE/"             # -> 200, the landing page (static asset, no function invocation)
+curl -i "$BASE/s/"           # -> 302 to /  (same for "$BASE/s")
 
 # Unpublish
 curl -i -X DELETE "$BASE/s/storm10/api" -H "Authorization: Bearer $WRITE"

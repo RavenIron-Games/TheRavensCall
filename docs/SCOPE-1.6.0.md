@@ -24,6 +24,9 @@ findings, 9 must-change verified) and of a final pass (two lenses, 8 findings, 4
 mod's first Linux boot (revision 5): §3's TLS bullet, §7's README line, §8 step 9 and §10 —
 `docs/TESTPLAN-linux-wsl2-2026-09-22.md` is the evidence. Revision 6 (at implementation, the same
 day): the `/s/<id>` → `/s/<id>/` 301 rule is dropped (§4, §5, §8 step 7) — see the `GET /s/<id>` row.
+Revision 7 (at implementation, the same day): the site root answered Netlify's default 404 on
+the first deploy; a static landing page now serves at `/` and `/s/` redirects to it — nothing
+else changes (§4) — see the `GET /` and `GET /s/` rows.
 
 ## 1. What ships
 
@@ -201,7 +204,7 @@ case a push is about 300 KB; a typical one is 20–200 KB.
 **Where.** A Netlify site **of its own** in the owner's team — not the site serving
 ravenirongames.com, so an abusive month cannot take the main site down with it — at
 `dash.ravenirongames.com` (placeholder), built from `hosting/netlify/` in this repo:
-`netlify.toml`, `netlify/functions/push.mts`, `netlify/functions/api.mts`, the page as a static
+`netlify.toml`, `netlify/functions/push.mts`, `netlify/functions/api.mts`, the dashboard page and the landing page as static
 file, and a README with the deploy steps (`netlify init`, the env var, the custom domain, the
 spend cap, the rate-limit rule).
 
@@ -252,9 +255,11 @@ concatenation. The only string that ever becomes a storage key is a validated re
 | `GET /s/<id>/api/health` | read token required, exactly like the data routes (the page has it and fetches health with the state poll); `{"status":"ok","hosted":true,"pushed_at":"…","age_seconds":N,"stale_after_seconds":M}` — no `version`: which build an admin runs is the admin's business. `age_seconds` is measured from `received_at`, the receiver's own clock, never from `pushed_at`, so a skewed game-server clock or a forward-dated push from a stolen write token cannot make the dashboard say "just now" about a server that is down. `M` = 3 × the `heartbeat_seconds` of the last accepted push. The mod's own `/api/health` on `localhost:2112` stays open and unchanged: it is open because it is not reachable off the machine, and that reason does not travel to a public URL where the same route would be a liveness oracle |
 | `GET /s/<id>/api/gamedata` | token-gated like the others; `200 {"recipes":[],"items":[],"buildables":[]}` so no 404 lands in the network log |
 | `GET /s/<id>` | the page, exactly as `/s/<id>/` — revision 6: **no `301` rule**, because Netlify's edge matches redirect rules regardless of a trailing slash (its docs, "Trailing slash"), so a `/s/:id` → `/s/:id/` rule also matches `/s/<id>/` and redirects forever (seen under `netlify dev` at implementation); the page's hosted-id match accepts both forms instead |
-| `GET /s/<id>/` | the release's `theravenscall.html` served as a **static asset**. `netlify.toml` declares the receiver's routes as ordered `[[redirects]]` rules, most specific first, because Netlify evaluates them top to bottom, the first match wins, and a `*` splat matches across `/`: `/push` → `/.netlify/functions/push` (200); `/s/:id/api/*` → `/.netlify/functions/api` (200, `force = true`); and only then the catch-all `/s/*` → `/theravenscall.html` (200) that serves the page. The functions are reached through these rules, not through a `config.path` declaration, so the order lives in one file; an unknown path under `/s/<id>/api/` is the function's own 404, anything outside `/push` and `/s/` falls through to the site's 404. The page derives its hosted base from its own location (§5). Netlify serves static assets from the CDN byte for byte and cannot template one per id, so nothing is injected; a page view is one CDN request and no compute |
+| `GET /s/<id>/` | the release's `theravenscall.html` served as a **static asset**. `netlify.toml` declares the receiver's routes as ordered `[[redirects]]` rules, most specific first, because Netlify evaluates them top to bottom, the first match wins, and a `*` splat matches across `/`: `/push` → `/.netlify/functions/push` (200); `/s/:id/api/*` → `/.netlify/functions/api` (200, `force = true`); then `/s/` → `/` (302, revision 7); and only then the catch-all `/s/*` → `/theravenscall.html` (200) that serves the page. The functions are reached through these rules, not through a `config.path` declaration, so the order lives in one file; an unknown path under `/s/<id>/api/` is the function's own 404, anything outside `/`, `/push` and `/s/` falls through to the site's 404. The page derives its hosted base from its own location (§5). Netlify serves static assets from the CDN byte for byte and cannot template one per id, so nothing is injected; a page view is one CDN request and no compute |
 | `DELETE /s/<id>/api` | write token in the `Authorization: Bearer` header; removes the four blobs and answers `200 {"deleted":true}` — how an admin unpublishes. It sits under `/s/<id>/api/` because the `/s/:id/api/*` rule is the only `/s/` rule that reaches a function: the rules match on path alone, so a `DELETE /s/<id>` would take the `/s/*` catch-all and never reach code. Deleting a registry entry takes the dashboard offline on the next request; the stored copy stays until this runs |
 | `OPTIONS /s/<id>/api/*` | `204` with the CORS headers below |
+| `GET /` | revision 7: a static landing page — no data, no ids — that says where a server's dashboard lives (the `/s/<server-id>/` pattern), served as a static asset with no function invocation |
+| `GET /s/` or `GET /s` | revision 7: `302` to `/` — Netlify matches this rule with or without the trailing slash, and it sits above the `/s/*` catch-all so the empty remainder after `/s/` does not fall through to the dashboard with no id |
 | anything else | `404` |
 
 The read routes send `Access-Control-Allow-Origin: *`, `Access-Control-Allow-Methods: GET,
@@ -264,14 +269,17 @@ so §5's Base URL override can point a page served anywhere at the receiver; the
 token-gated either way, so `*` grants a browser nothing `curl` does not have. `POST /push`
 needs no CORS. A `304` carries the same CORS headers as a `200`, or the one case they exist
 for breaks. Every hosted response carries `X-Content-Type-Options: nosniff` and
-`Referrer-Policy: no-referrer`; the page is served with `Content-Security-Policy: default-src
-'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self' https:;
-img-src 'self'; frame-ancestors 'none'; base-uri 'none'` — the page is one inline script with
-inline `style` attributes and loads no images, and `connect-src https:` is what keeps §5's Base
-URL override working from a hosted page (a typed base receiving the token is the admin's own
-act) — so a future escaping slip in player-supplied text cannot load a foreign script or frame
-the page. Function routes set their headers in code and the static page gets its own
-`[[headers]]` block in `netlify.toml`; the two sets are not the same and the file says which is
+`Referrer-Policy: no-referrer`; the dashboard page is served with `Content-Security-Policy:
+default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'
+https:; img-src 'self'; frame-ancestors 'none'; base-uri 'none'` — the page is one inline script
+with inline `style` attributes and loads no images, and `connect-src https:` is what keeps §5's
+Base URL override working from a hosted page (a typed base receiving the token is the admin's
+own act) — so a future escaping slip in player-supplied text cannot load a foreign script or
+frame the page. The landing page at `/` (revision 7) carries `default-src 'none'; style-src
+'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'` — no `script-src`, `connect-src` or
+`img-src`, because it has no script, fetches nothing and loads no images. Function routes set
+their headers in code, and the dashboard page and the landing page each get their own
+`[[headers]]` block in `netlify.toml`; the sets are not the same and the file says which is
 which. The hosted read routes have no counter of their own to throttle by — a Function keeps
 nothing between invocations, and a Blobs write per read would cost more than the read — so the
 guessing-rate limit on `/s/*` is a Netlify Firewall Traffic Rule per source address, set in the

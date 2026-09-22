@@ -1,8 +1,10 @@
 # TheRavensCall 1.6.0 receiver — Netlify site config (scope §4).
 #
-# Header split: the [[headers]] block below applies ONLY to the static page
-# (public/theravenscall.html, served through the /s/* catch-all). Netlify
-# header rules do NOT apply to function responses (netlify/functions/push.mts,
+# Two static pages ship in public/: theravenscall.html, the dashboard served
+# through the /s/* catch-all at /s/<id>/, and index.html, the site-root
+# landing page served at /. Each gets its own [[headers]] block below — the
+# landing page has no script, so its policy is tighter. Netlify header rules
+# do NOT apply to function responses (netlify/functions/push.mts,
 # netlify/functions/api.mts) — those two functions set every response header
 # themselves, in code (nosniff, no-referrer, CORS, ETag, Cache-Control, Vary),
 # via netlify/functions/_lib/trc.ts. If you are looking for the push/api
@@ -34,13 +36,26 @@
   status = 200
   force = true
 
-# 3. Catch-all: anything else under /s/* — /s/<id> and /s/<id>/ alike — serves
+# 3. /s/ (and /s, no trailing slash — Netlify matches a rule regardless of a
+#    trailing slash) -> the landing page at "/". This sits ABOVE the /s/*
+#    catch-all on purpose: without it, the "*" splat in rule 4 matches the
+#    empty remainder after "/s/" and would serve the dashboard with no
+#    server id, which then behaves like the mod's own localhost page and
+#    fails every fetch. /s/<id> (a non-empty remainder) does NOT match this
+#    rule — there is no splat or placeholder here to catch it — so it falls
+#    through to rule 4 as before.
+[[redirects]]
+  from = "/s/"
+  to = "/"
+  status = 302
+
+# 4. Catch-all: anything else under /s/* — /s/<id> and /s/<id>/ alike — serves
 #    the page as a static asset. There is deliberately NO "/s/:id -> /s/:id/"
 #    301 rule: Netlify's edge matches rules regardless of a trailing slash
 #    (docs, "Trailing slash"), so that rule would also match /s/<id>/ and
 #    redirect forever (seen under netlify dev at implementation); the page
 #    accepts both forms instead. This MUST be last — it is a "*" splat and
-#    would otherwise shadow rules 1-2.
+#    would otherwise shadow rules 1-3.
 [[redirects]]
   from = "/s/*"
   to = "/theravenscall.html"
@@ -61,3 +76,20 @@
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "no-referrer"
     Content-Security-Policy = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self' https:; img-src 'self'; frame-ancestors 'none'; base-uri 'none'"
+
+# Landing-page headers (the site root, "/" and "/index.html"). The landing
+# page has no script at all, so this policy is tighter than the dashboard's
+# above — no script-src, no connect-src, no img-src.
+[[headers]]
+  for = "/"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "no-referrer"
+    Content-Security-Policy = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'"
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "no-referrer"
+    Content-Security-Policy = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'"
