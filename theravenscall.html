@@ -1111,7 +1111,11 @@
       if (res.status === 304) return FETCH_UNCHANGED;
       if (!res.ok) throw new Error('HTTP ' + res.status);
       var etag = res.headers.get('ETag');
-      if (etag) etagMap[path] = etag; else delete etagMap[path];
+      // A hosting edge that compresses the body hands the browser "<sha>-df"
+      // and then drops any suffixed If-None-Match before the function sees it
+      // (Netlify, seen live 2026-09-22), so a suffixed echo never yields a 304.
+      // Keep the bare tag: the edge forwards that form and the receiver matches it.
+      if (etag) etagMap[path] = etag.replace(/^(W\/)?"([0-9a-f]{64})-[A-Za-z0-9]+"$/, '"$2"'); else delete etagMap[path];
       return res.text();
     });
   }
