@@ -49,7 +49,7 @@ The first deploy answered the site root with Netlify's default 404 page (the own
 | `GET /nothing` | `404` |
 | The page in the browser pane | desktop and the 375 px phone preset: one card with a 16 px gutter, `scrollWidth === innerWidth` (no horizontal scroll), `document.scripts.length === 0`, the single link reads "TheRavensCall on GitHub" |
 
-Live: **not deployed**. The deploy is a 15-credit production deploy on the owner's word; the same script runs against the live site afterwards.
+Live: **PASS 12/12** at 14:46 — PR #18 merged (main `7427928`) and deployed on the owner's word as `6ab2f6e8` ("CDN requesting 2 files and 0 functions"): the same script against `https://theravenscall-dash.netlify.app` gives every row above the same answer, the root carries the three headers, `/s/` answers `302 Location: /`, and the browser pane shows the page at the live root with zero scripts and no horizontal scroll.
 
 ## Harness notes
 
