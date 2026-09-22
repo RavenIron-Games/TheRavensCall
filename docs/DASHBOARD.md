@@ -170,7 +170,7 @@ feed (a fresh install, or `EventFeedCapacity = 0`); since 1.4.1, "Nothing in <ch
 instead when the feed has rows but the selected chip has none.
 
 **Season panel.** `season.active === true`: the season name, a green
-`ACTIVE` tag, "started today" / "started yesterday" / "started N days ago" (`startedText(daysAgo(...))`, 1.4.1), and a standings table headed
+`ACTIVE` tag, "started today" / "started yesterday" / "started N days ago" (`startedText(calendarDaysAgo(...))`, calendar days in the viewer's local time, 1.4.1), and a standings table headed
 **This season** — deliberately not "All time", so the two boards never share
 a heading. Ranked by kills with deaths, boss kills and playtime as sortable
 columns, reusing tier 1's exact `sortBoardRows` and click-to-sort mechanics

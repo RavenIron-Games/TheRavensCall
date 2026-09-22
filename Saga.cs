@@ -351,13 +351,16 @@ namespace TheRavensCall
                 SessionTracker.Begin();
                 // SeasonSystem.Init() re-points the Chronicle at the active
                 // season's archive folder when a season is running (§4.6).
-                // Only call the bare Chronicle.Init() when no season is
-                // active — otherwise it eagerly opens (and creates) the
-                // default-folder log file first, which SeasonSystem.Init
-                // then abandons, leaving a stray 0-byte file behind on
-                // every mid-season restart.
+                // Only call the bare Chronicle.Init() when that left no
+                // writer open — calling it first would eagerly open (and
+                // create) the default-folder log file, which SeasonSystem.Init
+                // then abandons, leaving a stray 0-byte file behind on every
+                // mid-season restart. Keyed on the writer rather than the
+                // season name (1.4.1): a season whose re-point failed, or a
+                // throw inside SeasonSystem.Init before the re-point, must
+                // still end up with the default Chronicle, not with none.
                 SeasonSystem.Init();
-                if (string.IsNullOrEmpty(SeasonSystem.GetCurrentSeasonName())) Chronicle.Init();
+                if (Chronicle.CurrentLogPath == null) Chronicle.Init();
                 LoreSystem.Init();
                 // Per-world-session registration (ZRoutedRpc.instance is new
                 // every time ZNet.Awake runs) — same lifecycle point every
@@ -2176,7 +2179,10 @@ namespace TheRavensCall
             }
         }
 
-        public static void Close() { lock (_lock) { try { _writer?.Close(); } catch { } } }
+        // Leaves the class in its initial state (1.4.1): with _writer left
+        // non-null after a Close, Init's same-path short-circuit would keep
+        // a disposed writer.
+        public static void Close() { lock (_lock) { try { _writer?.Close(); } catch { } _writer = null; _logPath = null; } }
 
         // §4.8: delegates to Companion.Esc, which additionally escapes \t and
         // strips other control characters — a tab or stray control char in a
@@ -2522,7 +2528,11 @@ namespace TheRavensCall
             // 1.4.1: keep the folder well inside MAX_PATH — the season log's
             // full path adds ~90 chars below the BepInEx config folder.
             if (s.Length > MaxFolderNameLength)
-                s = TrimTrailingPeriodsAndWhitespace(s.Substring(0, MaxFolderNameLength));
+            {
+                s = s.Substring(0, MaxFolderNameLength);
+                if (char.IsHighSurrogate(s[s.Length - 1])) s = s.Substring(0, s.Length - 1);
+                s = TrimTrailingPeriodsAndWhitespace(s);
+            }
             if (string.IsNullOrEmpty(s)) return "season";
             return ReservedFolderNames.Contains(s) ? "_" + s : s;
         }
@@ -2532,6 +2542,28 @@ namespace TheRavensCall
         // folder a live StartSeason would have (Storm10 review 2026-09-21).
         private static string ArchiveDir(string seasonName) =>
             Path.Combine(BepInEx.Paths.ConfigPath, "TheRavensCall", "Chronicle", "seasons", SanitizeFolderName(seasonName));
+
+        // One string field of seasons.json, decoded: finds "<key>" : "
+        // (whitespace allowed, as the old regex did) and then reads to the
+        // closing quote honouring EscJ's backslash escapes. null when absent.
+        private static string MetaString(string json, string key)
+        {
+            if (json == null) return null;
+            var m = System.Text.RegularExpressions.Regex.Match(json, "\"" + System.Text.RegularExpressions.Regex.Escape(key) + "\"\\s*:\\s*\"");
+            if (!m.Success) return null;
+            int i = m.Index + m.Length;
+            var sb = new System.Text.StringBuilder();
+            bool esc = false;
+            while (i < json.Length)
+            {
+                char c = json[i++];
+                if (esc) { sb.Append(c); esc = false; }
+                else if (c == '\\') esc = true;
+                else if (c == '"') break;
+                else sb.Append(c);
+            }
+            return sb.ToString();
+        }
 
         private class Baseline
         {
@@ -2549,19 +2581,28 @@ namespace TheRavensCall
             {
                 if (!File.Exists(MetaPath)) return;
                 string raw = File.ReadAllText(MetaPath);
-                var m = System.Text.RegularExpressions.Regex.Match(raw, "\"current_season\"\\s*:\\s*\"([^\"]+)\"");
-                if (m.Success) _currentSeason = m.Groups[1].Value;
-                var ms = System.Text.RegularExpressions.Regex.Match(raw, "\"season_start\"\\s*:\\s*\"([^\"]+)\"");
+                // 1.4.1: the four strings are read back through an
+                // escape-aware reader. SaveMeta writes them through EscJ,
+                // and the old regex handed the still-escaped text to
+                // ArchiveDir, so a name holding a backslash or a quote
+                // resolved a different folder after a restart than the live
+                // season start had. The loaded name is trimmed the same way
+                // StartSeason trims what was typed, so the name shown and the
+                // folder used agree on the upgrade path too.
+                string cs = MetaString(raw, "current_season");
+                _currentSeason = string.IsNullOrEmpty(cs) ? null : TrimTrailingPeriodsAndWhitespace(cs);
+                if (string.IsNullOrEmpty(_currentSeason)) _currentSeason = null;
+                string ss = MetaString(raw, "season_start");
                 // §4.4 fix: a bare TryParse read a "...Z" string back as local
                 // time, and SaveMeta/SeasonJson then re-stamped that local
                 // value with a "Z" — a two-hour drift on a UTC+2 host on every
                 // mid-season boot.
-                if (ms.Success) DateTime.TryParse(ms.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture,
+                if (!string.IsNullOrEmpty(ss)) DateTime.TryParse(ss, System.Globalization.CultureInfo.InvariantCulture,
                     System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal, out _seasonStart);
-                var le = System.Text.RegularExpressions.Regex.Match(raw, "\"last_ended\"\\s*:\\s*\"([^\"]+)\"");
-                if (le.Success) _lastEnded = le.Groups[1].Value;
-                var lea = System.Text.RegularExpressions.Regex.Match(raw, "\"last_ended_at\"\\s*:\\s*\"([^\"]+)\"");
-                if (lea.Success) _lastEndedAt = lea.Groups[1].Value;
+                string le = MetaString(raw, "last_ended");
+                if (!string.IsNullOrEmpty(le)) _lastEnded = le;
+                string lea = MetaString(raw, "last_ended_at");
+                if (!string.IsNullOrEmpty(lea)) _lastEndedAt = lea;
 
                 if (!string.IsNullOrEmpty(_currentSeason))
                 {
@@ -2572,9 +2613,19 @@ namespace TheRavensCall
                         // A 1.4.0 upgrade landing mid-season: no baseline file
                         // exists yet. Snapshot now rather than report every
                         // player's lifetime total as their season score.
-                        SnapshotBaseline(_currentSeason, DateTime.UtcNow);
-                        Plugin.Log.LogInfo("[TheRavensCall] season_baseline.json missing for active season " +
-                            _currentSeason + "; standings count from this restart (" + _standingsSince + ").");
+                        // Guarded on its own (1.4.1) so a failed baseline
+                        // write cannot skip the Chronicle re-point below.
+                        try
+                        {
+                            SnapshotBaseline(_currentSeason, DateTime.UtcNow);
+                            Plugin.Log.LogInfo("[TheRavensCall] season_baseline.json missing for active season " +
+                                _currentSeason + "; standings count from this restart (" + _standingsSince + ").");
+                        }
+                        catch (Exception ex)
+                        {
+                            Plugin.Log.LogWarning("[TheRavensCall] SeasonSystem: season_baseline.json could not be written: " +
+                                ex.Message + " (standings count from this restart in memory; the next boot retries).");
+                        }
                     }
 
                     // §4.6: re-point the Chronicle at the season's archive

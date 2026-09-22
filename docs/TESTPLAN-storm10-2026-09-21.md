@@ -28,7 +28,7 @@ local, UTC-7); Chronicle and feed stamps are UTC. Every start was a PowerShell `
 | 8 | PASS | a kill by hand, one death and the Black Forest discovery each landed within one poll, newest first, right badge and `detail`; the all-time board flipped from the server-observed 9 kills / 8 deaths to the crow's 23 / 20 |
 | 9 | not run | the lore tab case; the escape path is `Companion.Esc`, the same one `/api/state` has used since 1.2.4 |
 | 10, 11 | *StormTest* | 401 without a token, 200 with `?token=` and the header, the page's token notice and recovery. `HttpApiToken` stayed empty on Storm10 |
-| 12 | PASS, with a defect | the tester typed `ravenscall season start TestSeason.` (trailing period). Panel active within 10 s, all-zero rows hidden, `season_start` row, `season_baseline.json` written. **Defect:** Windows refuses a folder ending in a period, the Chronicle re-point to `Chronicle\seasons\TestSeason.\` failed, and because 1.4.0 closes the old writer before opening the new one, no Chronicle line reached disk for that season (7 `Chronicle` warnings). The feed captures before the disk write, so the page never noticed. Fixed on PR #9 (1.4.1): open-before-close, sanitized folder names. Recovered live with `season end` + `season start TestSeason2`: the disk log resumed under `seasons\TestSeason2\` |
+| 12 | PASS, with a defect | the tester typed `ravenscall season start TestSeason.` (trailing period). Panel active within 10 s, all-zero rows hidden, `season_start` row, `season_baseline.json` written. **Defect:** Windows refuses a folder ending in a period, the Chronicle re-point to `Chronicle\seasons\TestSeason.\` failed, and because 1.4.0 closes the old writer before opening the new one, no Chronicle line reached disk for that season (8 `Chronicle` warnings: one `init failed`, six `write failed`, one `raw write failed`). The feed captures before the disk write, so the page never noticed. Fixed on PR #9 (1.4.1): open-before-close, sanitized folder names. Recovered live with `season end` + `season start TestSeason2`: the disk log resumed under `seasons\TestSeason2\` |
 | 13 | PASS | one kill and one death → Nomadtest's standings row 1 / 1 while its lifetime counters in `/api/state` stayed far higher |
 | 14 | PASS | restart mid-season (TestSeason2): `active=true` before the first tick, `started_at` unchanged on a UTC-7 host, `standings_since` equal to it, kills and deaths unchanged, playtime higher by the session, the pre-restart rows retained under the new `startup` row, the Chronicle log line naming the season folder, no second default-folder file. A new character (TestNomad) joining mid-season got a row without a baseline entry: 0 kills, 0 deaths, 1 boss kill, while Nomadtest kept 1 / 1 |
 | 15 | PASS | `ravenscall season end`: `active=false`, `last_ended="TestSeason2"`, a `season_end` row, `season_baseline.json` gone, the Chronicle back in the default folder; after two more restarts `seasons.json` still says `last_ended "TestSeason2"`, `last_ended_at 2026-09-22T03:09:27Z` and the panel reads "Last season: TestSeason2, ended Nm ago" |
@@ -54,7 +54,7 @@ local, UTC-7); Chronicle and feed stamps are UTC. Every start was a PowerShell `
   `ZNet.instance` at teardown and Unity does not promise that order. The 1.3.0 Chronicle
   from 2026-09-18 holds 16 `startup` rows against 7 `shutdown` rows (not every one of
   those stops was graceful). PR #9 (1.4.1) remembers the server flag at boot instead of
-  asking `ZNet` at teardown; its one graceful stop so far wrote the row.
+  asking `ZNet` at teardown; every 1.4.1 stop of the evening wrote the row (3 of 3).
 - **Raids** went through `event <name>` routed by ServerDevcommands from the admin client.
   The `SetRandomEvent` patch point caught every start and stop; the scope's
   `randomevent` path was not used.
@@ -67,25 +67,32 @@ Step 9 (a tab in `lore.txt`). Steps 10, 11, 18 and 20 ran on StormTest only.
 
 ## 1.4.1 fix check (same evening, after PR #9 merged)
 
-Build md5 `426bd85f0201662958df140e83b0fa24`, 209,408 bytes, staged over the 1.4.0 DLL.
-With nobody able to type the console command, the defect path was reproduced through the
-upgrade case instead: `seasons.json` hand-set to `current_season "TestSeason."` with a
-`season_start`, no baseline file, then a boot.
+Two builds were checked. The first (md5 `426bd85f…`, 209,408 bytes, PR #9 plus the two page
+nits and the folder cap) went through a 45-agent pre-publish review, which found the
+"started today" label counting 24-hour windows instead of calendar days, the season file
+being read back without decoding its escapes, and a boot path that could leave no Chronicle
+open; those were fixed and the shipped build (md5 `a1ed4838d0aff30148e64d0fa9e33616`,
+210,432 bytes) was checked the same way. With nobody able to type the console command, the
+defect path was reproduced through the upgrade case: `seasons.json` hand-set to an active
+season with a `season_start`, no baseline file, then a boot.
 
 | Check | Result | Evidence |
 |---|---|---|
-| Sanitizer, direct | PASS | reflection on the built DLL: `TestSeason.` → `TestSeason`, `CON` → `_CON`, `a<b>c:d` → `a_b_c_d`, `...` and blanks → `season`, 80 chars → 64, 63 chars + `.` → 63, an apostrophe kept |
-| Boot with the broken name | PASS | `Active season loaded: TestSeason.`, the baseline-missing line with `standings count from this restart`, `Chronicle: …\Chronicle\seasons\TestSeason\TheRavensCall_Chronicle_2026-09-22.log`, 0 warnings; the file holds the `startup` row; `season_baseline.json` written; `/api/activity` `active=true`, `name "TestSeason."`, `standings_since` = the boot |
-| Page on the embedded 1.4.1 copy | PASS | marker `1.4`, "started today", "No standings yet.", the counted-since note; the Combat chip reads "Nothing in Combat yet." while Players/World/Season list rows |
-| Graceful stop | PASS | `session_summary` and `shutdown` rows in the season folder file, the feed on disk with `shutdown` on top, the default-folder file untouched |
-| Restore | PASS | `seasons.json` back to no season / `last_ended TestSeason2`, baseline deleted, server booted again and left up; `Chronicle\seasons\TestSeason\` kept as evidence |
+| Sanitizer, direct | PASS | reflection on the built DLL: `TestSeason.` → `TestSeason`, `CON` → `_CON`, `a<b>c:d` → `a_b_c_d`, `Test\Season "Q".` → `Test_Season _Q_`, `...` and blanks → `season`, 80 chars → 64, 63 chars + `.` → 63, 63 chars + an emoji → 63 (the cut never splits a surrogate pair), an apostrophe kept |
+| Season file reader, direct | PASS | `MetaString` on the shipped DLL decodes `Test\\Season \"Q\".` to `Test\Season "Q".`, tolerates spaces around the colon, and returns nothing for a missing key |
+| Boot with the broken name, first build | PASS | season `TestSeason.`: `Active season loaded: TestSeason.`, the baseline-missing line with `standings count from this restart`, `Chronicle: …\Chronicle\seasons\TestSeason\TheRavensCall_Chronicle_2026-09-22.log`, 0 warnings; the file holds the `startup` row; `season_baseline.json` written; `/api/activity` `active=true`, `name "TestSeason."` (that build did not trim at load), `standings_since` = the boot |
+| Boot with the broken name, shipped build | PASS | season `Test\Season "Q".`: `Active season loaded: Test\Season "Q"` (decoded, trimmed), `Chronicle: …\Chronicle\seasons\Test_Season _Q_\TheRavensCall_Chronicle_2026-09-22.log`, 0 warnings, the `startup` row on disk there, the baseline snapshotted under the trimmed name, `/api/activity` `name "Test\Season \"Q\""` |
+| Page on the embedded copy, both builds | PASS | marker `1.4`, the season name as plain text (no child elements), "started today", "No standings yet.", the counted-since note; the Combat chip reads "Nothing in Combat yet." while the other chips list rows; the shipped page carries `calendarDaysAgo` |
+| Graceful stop, both builds | PASS | `session_summary` and `shutdown` rows in the season folder file, the feed on disk with `shutdown` on top, the default-folder file untouched; every 1.4.1 stop of the evening wrote the row (3 of 3) |
+| Restore, both builds | PASS | `seasons.json` back to no season / `last_ended TestSeason2`, baseline deleted, the server booted again with the Chronicle in the default folder and left up; `Chronicle\seasons\TestSeason\` and `Chronicle\seasons\Test_Season _Q_\` kept as evidence |
 
 ## Storm10 as left
 
-Server up (started 20:39:52 local, the seventh cycle of the evening) on the **1.4.1** DLL
-(`426bd85f…`), `EventFeedCapacity = 200`, `EnableRaid = true`, `HttpApiToken` empty, the
-page override deleted, no season running. The config folder keeps the evening's artefacts:
-`event_feed.json`, `seasons.json` (last ended TestSeason2), `seasons.json.pre141` (the
-backup taken for the fix check), `Chronicle\seasons\TestSeason2\`, the 1.4.1 check's
-`Chronicle\seasons\TestSeason\` and the empty `Chronicle\seasons\TestSeason.\` folder from
-the 1.4.0 defect.
+Server up (started 21:10:08 local, the ninth cycle of the evening: five on 1.4.0, four on
+1.4.1) on the shipped **1.4.1** DLL (`a1ed4838…`), `EventFeedCapacity = 200`,
+`EnableRaid = true`, `HttpApiToken` empty, the page override deleted, no season running.
+The config folder keeps the evening's artefacts: `event_feed.json`, `seasons.json` (last
+ended TestSeason2), `seasons.json.pre141` (the backup taken for the fix checks),
+`Chronicle\seasons\TestSeason2\`, the 1.4.1 checks' `Chronicle\seasons\TestSeason\` and
+`Chronicle\seasons\Test_Season _Q_\`, and the empty `Chronicle\seasons\TestSeason.\` folder
+from the 1.4.0 defect.

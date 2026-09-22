@@ -906,19 +906,24 @@
     return 'counted since ' + fmtAbs(season.standings_since);
   }
 
-  // now defaults to Date.now() but takes an override so this stays testable
-  // without mocking the clock.
-  function daysAgo(iso, now) {
+  // Calendar days between the season start and now, in the viewer's local
+  // time — "today" has to mean the calendar day, not "less than 24 hours"
+  // (1.4.1). now defaults to Date.now() but takes an override so this stays
+  // testable without mocking the clock.
+  function calendarDaysAgo(iso, now) {
     if (!iso) return 0;
-    var then = Date.parse(iso);
-    if (isNaN(then)) return 0;
-    return Math.max(0, Math.floor(((now || Date.now()) - then) / 86400000));
+    var t = new Date(iso);
+    if (isNaN(t.getTime())) return 0;
+    var n = new Date(now || Date.now());
+    var a = new Date(t.getFullYear(), t.getMonth(), t.getDate());
+    var b = new Date(n.getFullYear(), n.getMonth(), n.getDate());
+    return Math.max(0, Math.round((b - a) / 86400000));
   }
 
   // "started today" / "started yesterday" / "started N days ago" — 1.4.1,
   // the Storm10 run read "started 0 days ago" on a fresh season.
   function startedText(days) {
-    if (days <= 0) return 'started today';
+    if (!(days > 0)) return 'started today';
     if (days === 1) return 'started yesterday';
     return 'started ' + days + ' days ago';
   }
@@ -1280,7 +1285,7 @@
       html += '<div style="margin-bottom:4px">' +
         '<span class="season-name">' + esc(season.name || 'Unnamed season') + '</span>' +
         '<span class="tag green">ACTIVE</span></div>' +
-        '<div class="detail-sub" style="margin-bottom:12px">' + startedText(daysAgo(season.started_at)) + '</div>';
+        '<div class="detail-sub" style="margin-bottom:12px">' + startedText(calendarDaysAgo(season.started_at)) + '</div>';
       var rows = sortBoardRows(nonZeroSeasonRows(seasonStandingsRows(season.standings)), state.seasonSort);
       if (rows.length === 0) {
         html += '<div class="notice small">No standings yet.</div>';
