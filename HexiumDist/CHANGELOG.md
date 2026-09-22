@@ -7,14 +7,31 @@
 
 ---
 
-## 🟢 [1.4.0] — (unreleased)
+## 🟢 [1.4.0] — The Raven Remembers
 
-*Tier 1 of the 1.4.0 dashboard release: a page-only PR, no server change, `/api/state`'s shape untouched. Tier 2 (the `/api/activity` feed and season standings) ships separately. `Saga.cs`, `manifest.json` and the README badge stay at 1.3.0 until tier 2 lands.*
+*The dashboard's front door now says what's actually happening: a recent-events feed and live season standings, both from a new `/api/activity` endpoint. Getting there meant fixing three pre-existing bugs the feature depends on — raids never registered on a dedicated server, a mid-season restart lost the Chronicle to the wrong folder and leaked a file handle, and the season start time could drift by the host's UTC offset. `/api/state` and the BarrkBOT export are untouched.*
 
 ### Dashboard
 - **A "World overview" now sits above the roster**, four cards computed entirely from the existing `/api/state` payload (no new endpoint): **Online now** (who's online and how long, or the last player seen when nobody is); **All time**, one sortable table ranking every known player by kills, deaths, boss kills and playtime, click a column header to sort by it, click again to flip direction; **Bosses defeated**, the union of every player's defeated bosses on the same strip the Combat tab uses; and **Latest deaths**, the ten most recent deaths merged across all players. Only shown once at least one player is known.
+- **A recent-events feed**, backed by the new `/api/activity` endpoint: the last 30 events — joins, leaves, kills, deaths, boss kills, milestones, biome discoveries, titles, raids, lore, season starts/ends, server start/stop — newest first, with a relative timestamp, a type badge, and filter chips by group (combat, players, world, season). Once the feed holds at least one death, **Latest deaths** switches from the per-player merge above to this true cross-player order.
+- **A season panel**, also from `/api/activity`: the active season's name and a standings table — kills, deaths, boss kills and playtime since the season started, sortable, ranked by the page — or "No season is running" plus the last one that ended.
 - **The phone header no longer wraps to three rows at 375px.** The settings gear now stays on the logo's row; the world name/day/online-count line wraps to its own row underneath instead.
 - **The two "how to reach this server" footer paragraphs are now collapsed behind a "Connection help" toggle**, closed by default, so the footer doesn't dominate a first-time load. The feedback link stays visible outside it.
+
+### Added
+- **`GET /api/activity`** — the recent-events feed and the active season's standings; see `docs/API.md` for the full shape. Token-gated the same as `/api/state`. Answers 200 with empty arrays rather than 404, so a 1.4.0 dashboard can tell "turned off" from "server predates 1.4.0".
+- New config: `[Companion] EventFeedCapacity` (default `200`, 0-1000) — how many recent events are kept in memory and served, newest first; `0` turns the feed off without breaking the endpoint. `[Events] EnableRaid` (default `true`) — records raid start/end in the Chronicle and the feed; the raid banner and `raid_active` work either way, this only gates the narration.
+- Two new files under `BepInEx/config/TheRavensCall/`: `event_feed.json` (the feed, so it survives a restart) and `season_baseline.json` (each known player's counters at season start, so the season standings can be reported as deltas).
+
+### 🩹 Fixed
+- **Raids never showed on a dedicated server.** The banner and the `raid_active`/`raid_type` fields only ever flipped for a raid restored from a saved world at boot, and once set, never cleared — a natural raid starting or ending on a running server never touched them at all. Raids now track correctly from start to end, and `raid_type` carries the real event name.
+- **The Chronicle stayed in the default folder after a mid-season restart**, instead of returning to that season's own folder, and every restart leaked one open file handle (three call sites, one root cause). Both fixed.
+- **The season start time could drift by the host's UTC offset.** A restart mid-season re-read the stored start time as local time and re-stamped it `Z`, so a host running at UTC+2 saw its season "start" two hours later on every reboot. Now parsed and stored correctly as UTC.
+
+### 🔧 Changed
+- The `HttpApiToken` config description now lists `/api/activity` among the routes it gates.
+- Chronicle line escaping now goes through the same escaper as the rest of the mod, so a stray tab or other control character in a `lore.txt` broadcast can no longer produce a Chronicle line — or a feed entry — that isn't valid JSON.
+- `HexiumDist/plugins/TheRavensCall.dll` is **not** rebuilt in this change; it is still the 1.3.0 build and needs rebuilding at release, together with `HexiumDist/TheRavensCall-v1.4.0.zip` (SCOPE §7).
 
 ---
 

@@ -7,7 +7,7 @@
 [![Companion](https://img.shields.io/badge/Client_Companion-WhereTheCrowFlies-blue.svg)]()
 [![Framework](https://img.shields.io/badge/Requires-BepInEx-red.svg)]()
 [![Publisher](https://img.shields.io/badge/RavenIron-Release-8B6F1F.svg)]()
-[![Version](https://img.shields.io/badge/Version-1.3.0-lightgrey.svg)]()
+[![Version](https://img.shields.io/badge/Version-1.4.0-lightgrey.svg)]()
 
 **RavenIron's server admin & analytics engine: aggregates player telemetry from *WhereTheCrowFlies*, chronicles realm history, and feeds live web dashboards and Discord AI bots.**
 
@@ -74,11 +74,12 @@ To provide seamless, 100% accurate tracking without missing a single event, the 
 
 Every death, every kill, every fallen god, every shoreline first walked — The Raven's Call aggregates full-spectrum player telemetry sent by *WhereTheCrowFlies*:
 
-- **Deaths**, with rich root-cause resolution — named creatures, bosses, PvP opponents, fire, frost, poison, drowning, smoke, or falls — and a rolling history of the last 10 deaths per player (killer, biome, position, items lost).
+- **Deaths**, with rich root-cause resolution — named creatures, bosses, PvP opponents, fire, frost, poison, spirit damage, drowning, or falls — and a rolling history of the last 10 deaths per player (killer, biome, position; the item-loss list is always empty on a dedicated server, see `docs/API.md`).
 - **Boss kills**, credited to everyone within a configurable radius of the kill — no one who stood and fought goes unrecognized.
 - **Kill and death milestones** — 1, 10, 100, 500, 1000 kills; 1, 5, 10, 25, 50, 100 deaths, and beyond.
 - **Biome discovery**, tracked per player so "first time in the Mistlands" only fires once, ever, per Viking.
-- **Gear tier**, tracked as players advance their equipment from Leather through Flametal.
+- **Raids**, tracked from the moment one starts to the moment it ends — the dashboard's raid banner and the export's `raid_active`/`raid_type` reflect a real raid in progress, not just one restored from a saved world.
+- **Gear tier** is in the schema (`gear_tier`) but always reads `0` on a dedicated server today — advancing equipment needs a client report that doesn't exist yet.
 - **Titles**, earned through creature-family kill counts, boss kills, and the number of gods felled — up to and including *Slayer of Gods* for felling all seven.
 - **Damage dealt & taken**, tracked both for current sessions and lifetime cumulative combat, plus blocks, parries, and damage blocked.
 - **Every vanilla stat on your own in-game Stats screen** — kills, hits, deaths, jumps, cheats, world loads, PvP hits/kills, arrows shot, portals, distance traveled, and the rest of Valheim's ~205 built-in counters (105 before 1.0) — reported as an absolute snapshot, so it backfills whatever a player had already earned before installing the mod instead of starting from zero.
@@ -233,8 +234,9 @@ Set `WebhookUrl` under `[Discord]` in `BepInEx/config/com.raveniron.theravenscal
 A full player-stats dashboard served directly by the mod's built-in HTTP server:
 
 - Open `http://localhost:2112` on the server machine. Since 1.2.4 the server listens on localhost only unless `HttpBindAllInterfaces = true`; the API hands every known player's stats, skills, titles and death coordinates to anyone who can reach the port, so open it to the network only behind a firewall or with `HttpApiToken` set.
+- **Since 1.4.0, a world overview sits above the roster**: who's online now (or the last player seen, if nobody is), an all-time leaderboard sortable by kills, deaths, boss kills or playtime, the server's combined boss progress, and the most recent deaths across everyone — all read from `/api/state`, no extra request. Above it sit two panels fed by the new `/api/activity` endpoint: the **active season's standings**, and a **recent-events feed** (joins, leaves, kills, deaths, boss kills, raids, milestones, titles, biome discoveries, lore, season starts/ends, server start/stop — newest first, filterable by type); against a 1.3.0 server (or `EventFeedCapacity = 0`) they degrade quietly — the feed and season panels stay hidden or show an empty state, the roster still works.
 - Shows **every player** who has ever joined the realm across six tabs — **Combat, Death, Progression, Crafting, Build, Raw** — covering online status, lifetime kills and deaths (the crow-reported totals once a player runs WhereTheCrowFlies), titles, biomes, skills, boss kills, death history, fish caught, and the harvest, craft and build counters. A dedicated server has no live vitals, inventories or positions to show, and since 1.3.0 the API does not pretend otherwise.
-- Includes JSON API endpoints: `/api/state`, `/api/gamedata`, and `/api/health`. With `HttpApiToken` set, `/api/state`, `/api/gamedata` and `/api/pins` need `?token=<value>` (or an `X-Api-Token` header); `/api/health` and the page itself stay open. Since 1.3.0 the bundled page holds the token in its own settings panel (gear icon, top right) — enter it there and it's kept in the browser and sent as an `X-Api-Token` header on every request; a 401 opens that panel automatically the first time.
+- Includes JSON API endpoints: `/api/state`, `/api/gamedata`, `/api/activity`, and `/api/health`. With `HttpApiToken` set, `/api/state`, `/api/gamedata`, `/api/activity` and `/api/pins` need `?token=<value>` (or an `X-Api-Token` header); `/api/health` and the page itself stay open. Since 1.3.0 the bundled page holds the token in its own settings panel (gear icon, top right) — enter it there and it's kept in the browser and sent as an `X-Api-Token` header on every request; a 401 opens that panel automatically the first time (the feed/season panels show a one-line "needs the API token" notice instead of loading empty).
 - Can be toggled off with `EnableHttpServer = false` if only file export is desired.
 - **Upgrading from 1.2.x:** delete any `theravenscall.html` you placed in `BepInEx/config/TheRavensCall/` or next to the DLL. A copy from before 1.3.0 still overrides the bundled page, cannot read the 1.3.0 `/api/state` shape, and makes the server log one warning per run naming the file.
 
@@ -280,6 +282,7 @@ Configuration is located at `BepInEx/config/com.raveniron.theravenscall.cfg`:
 | **Combat** | `AcceptClientReports` | `true` | Accepts telemetry RPC reports from *WhereTheCrowFlies* client mods. |
 | **Combat** | `LogCombatReports` | `false` | Enables verbose console logging for incoming combat reports. |
 | **Events** | `EnablePlayerDeath` ... `EnableTitleEarned` | `true` | Independently toggles narration/Chronicle for each event type. |
+| **Events** | `EnableRaid` | `true` | Records raid start and end in the Chronicle and the dashboard feed (`raid_start`/`raid_end`). Not posted to Discord. The raid banner and `raid_active` in the API work either way — this only gates the narration. |
 | **Format** | `ShowDayNumber` / `ShowOnlineCount` | `true` | Appends `[Day N]` and `(N online)` to announcements. |
 | **Format** | `MessagePrefix` | `⚔ ` | Custom prefix added to all broadcast messages. |
 | **Log** | `EnableChronicleLog` | `true` | Writes daily JSONL Chronicle logs. |
@@ -289,8 +292,9 @@ Configuration is located at `BepInEx/config/com.raveniron.theravenscall.cfg`:
 | **Companion**| `EnableHttpServer` | `true` | Runs the web dashboard and local HTTP API. |
 | **Companion**| `HttpServerPort` | `2112` | Port for web dashboard and API access. |
 | **Companion**| `HttpBindAllInterfaces` | `false` | Also listen on every interface. Off by default since 1.2.4; the API has no login. |
-| **Companion**| `HttpApiToken` | `""` | If set, `/api/state`, `/api/gamedata` and `/api/pins` require `?token=` or `X-Api-Token`. |
+| **Companion**| `HttpApiToken` | `""` | If set, `/api/state`, `/api/gamedata`, `/api/activity` and `/api/pins` require `?token=` or `X-Api-Token`. |
 | **Companion**| `StatsPushIntervalSeconds` | `10` | Frequency (seconds) for updating `BarrkBOT_data1.json` / `BarrkBOT_data2.json`. |
+| **Companion**| `EventFeedCapacity` | `200` | Number of recent events kept in memory and served by `/api/activity`, newest first (0 to 1000). Saved to `event_feed.json` so the feed survives a restart. `0` turns the feed off; the endpoint still answers, with an empty `events` array. |
 
 ---
 
@@ -300,6 +304,11 @@ Configuration is located at `BepInEx/config/com.raveniron.theravenscall.cfg`:
 BepInEx/config/TheRavensCall/
 ├── BarrkBOT_data1.json         ← Aggregate player export for Discord bots
 ├── BarrkBOT_data2.json         ← Static game data export (items, recipes, buildables)
+├── event_feed.json             ← Since 1.4.0: recent events backing /api/activity, so the
+│                                   dashboard feed survives a restart
+├── season_baseline.json        ← Since 1.4.0: each player's counters at season start, so
+│                                   season standings can be reported as deltas; present only
+│                                   while a season is active
 ├── players/                    ← Persistent JSON record per player
 ├── Chronicle/
 │   └── TheRavensCall_Chronicle_2026-08-17.log

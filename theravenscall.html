@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="theravenscall-api" content="1.3">
+<meta name="theravenscall-api" content="1.4">
 <title>The Raven's Call</title>
 <style>
   :root {
@@ -338,6 +338,7 @@
     margin: 0 5px 5px 0;
   }
   .tag.gold { color: var(--gold); border-color: var(--gold-dim); }
+  .tag.green { color: var(--green); border-color: var(--green-dim); }
 
   /* ===== Skill bars ===== */
   .skill-row { margin-bottom: 10px; }
@@ -459,6 +460,56 @@
   footer details summary:hover { color: var(--gold); }
   footer details > div { margin-top: 8px; }
 
+  /* ===== Activity feed / season (tier 2) ===== */
+  .season-name { font-weight: 700; color: var(--text-bright); font-size: 15px; margin-right: 8px; }
+
+  .chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .chip {
+    background: var(--bg3);
+    border: 1px solid var(--border-bright);
+    border-radius: 999px;
+    color: var(--text-dim);
+    padding: 4px 12px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .chip:hover { color: var(--text); border-color: var(--gold-dim); }
+  .chip.active { color: var(--gold); border-color: var(--gold-dim); background: rgba(255,176,32,0.08); }
+
+  .feed-list { display: flex; flex-direction: column; gap: 2px; }
+  .feed-row {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 6px 4px;
+    font-size: 12.5px;
+    border-bottom: 1px solid var(--border);
+  }
+  .feed-row:last-child { border-bottom: none; }
+  .feed-time { color: var(--text-dim); font-size: 11px; white-space: nowrap; }
+  .feed-msg { color: var(--text); flex: 1 1 200px; }
+  .feed-who { color: var(--text-dim); font-size: 11.5px; }
+
+  .evt-badge {
+    display: inline-block;
+    border-radius: 5px;
+    padding: 2px 7px;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border: 1px solid var(--border-bright);
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+  .evt-badge.g-combat { color: var(--ember); border-color: var(--ember-dim); }
+  .evt-badge.g-players { color: var(--blue); border-color: var(--blue-dim); }
+  .evt-badge.g-world { color: var(--text-dim); border-color: var(--border-bright); }
+  .evt-badge.g-season { color: var(--gold); border-color: var(--gold-dim); }
+
+  @keyframes feed-highlight { 0% { background: rgba(255,176,32,0.18); } 100% { background: transparent; } }
+  .feed-row-new { animation: feed-highlight 3s ease-out; }
+
   @media (max-width: 400px) {
     .header-row { padding: 0 12px; }
     .logo { font-size: 16px; }
@@ -490,7 +541,13 @@
   <div id="errBanner"></div>
 </header>
 
-<main id="app"></main>
+<main>
+  <div id="worldPanels" hidden>
+    <div id="seasonPanel"></div>
+    <div id="feedPanel"></div>
+  </div>
+  <div id="app"></div>
+</main>
 
 <footer>
   <details>
@@ -587,7 +644,14 @@
     view: 'roster',           // roster | detail
     selectedPlayer: null,
     tab: 'combat',
-    boardSort: { key: 'kills', dir: 'desc' } // the world-overview "All time" board; not persisted
+    boardSort: { key: 'kills', dir: 'desc' }, // the world-overview "All time" board; not persisted
+    seasonSort: { key: 'kills', dir: 'desc' }, // tier 2: the season standings board's own sort key/mechanics, same shape as boardSort
+    activityData: null,        // tier 2: parsed /api/activity payload
+    lastActivityCompare: null, // tier 2: last /api/activity response text with generated_at stripped
+    activitySupported: null,   // tier 2: null = unknown, true, false (false = confirmed 404, a pre-1.4.0 server)
+    activityAuth: true,        // tier 2: false after a 401 from /api/activity, cleared by the next 200
+    feedFilter: 'all',         // tier 2: selected feed chip group — all | combat | players | world | season
+    feedHighlightSince: null   // tier 2: previous poll's newest events[0].timestamp_utc, for the "new row" highlight
   };
 
   function safeGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -740,6 +804,123 @@
     return limit ? rows.slice(0, limit) : rows;
   }
 
+  // ─────────────────── activity (tier 2) pure helpers ───────────────────
+  // Each takes plain data (the raw events[] array, the raw season.standings[]
+  // array, or a players map) so it can be exercised directly against
+  // docs/fixtures/api-activity.json, with no DOM and no state.
+
+  var EVENT_TYPE_GROUP = {
+    player_death: 'combat', boss_kill: 'combat', raid_start: 'combat', raid_end: 'combat',
+    kill_milestone: 'combat', death_milestone: 'combat',
+    player_join: 'players', player_leave: 'players', title_earned: 'players',
+    biome_discovery: 'players', gear_tier: 'players',
+    world_event: 'world', lore: 'world', startup: 'world', shutdown: 'world',
+    season_start: 'season', season_end: 'season'
+  };
+  var FEED_GROUPS = [
+    { key: 'all', label: 'All' },
+    { key: 'combat', label: 'Combat' },
+    { key: 'players', label: 'Players' },
+    { key: 'world', label: 'World' },
+    { key: 'season', label: 'Season' }
+  ];
+  // Short badge text for the 17 event_type values §4.1 documents (gear_tier
+  // included for completeness even though §4.1's inherited quirk means it
+  // never actually fires in practice).
+  var EVENT_BADGE_LABEL = {
+    player_death: 'Death', boss_kill: 'Boss kill', raid_start: 'Raid start', raid_end: 'Raid end',
+    kill_milestone: 'Kill milestone', death_milestone: 'Death milestone',
+    player_join: 'Joined', player_leave: 'Left', title_earned: 'Title', biome_discovery: 'Biome',
+    gear_tier: 'Gear tier', world_event: 'World event', lore: 'Lore', startup: 'Startup', shutdown: 'Shutdown',
+    season_start: 'Season start', season_end: 'Season end'
+  };
+
+  function eventGroup(type) { return EVENT_TYPE_GROUP[type] || 'world'; }
+  function eventBadgeLabel(type) { return EVENT_BADGE_LABEL[type] || prettifyKey(type); }
+
+  // filter = 'all' | 'combat' | 'players' | 'world' | 'season'. events is
+  // assumed already newest-first (the server's contract, §2); this only
+  // filters, never re-sorts, so order is preserved.
+  function filterFeedEvents(events, filter) {
+    if (!filter || filter === 'all') return events || [];
+    return (events || []).filter(function (e) { return eventGroup(e.event_type) === filter; });
+  }
+
+  // Newest N rows after filtering — the feed panel's exact rule (§3.1).
+  function feedRows(events, filter, limit) {
+    var filtered = filterFeedEvents(events, filter);
+    return typeof limit === 'number' ? filtered.slice(0, limit) : filtered;
+  }
+
+  function isKnownPlayerName(name, players) {
+    return !!(players && Object.prototype.hasOwnProperty.call(players, name));
+  }
+
+  // True when ts is strictly newer than previousNewestTs. previousNewestTs
+  // is falsy on the very first poll (nothing to compare against yet), which
+  // correctly highlights nothing on first load.
+  function isNewFeedEvent(ts, previousNewestTs) {
+    if (!previousNewestTs) return false;
+    var t = Date.parse(ts), p = Date.parse(previousNewestTs);
+    if (isNaN(t) || isNaN(p)) return false;
+    return t > p;
+  }
+
+  // The feed's own player_death rows — a true cross-player chronological
+  // source, unlike each player's own death_history. Already newest-first.
+  // Feed events carry no biome/location (only timestamp_utc, event_type,
+  // player_name, message, detail — §2), so biome is always null here; the
+  // renderer shows that as '—', same as a per-player row with no biome.
+  function feedPlayerDeathRows(events, limit) {
+    var rows = (events || []).filter(function (e) { return e.event_type === 'player_death'; })
+      .map(function (e) { return { playerName: e.player_name, timestamp: e.timestamp_utc, killer: e.detail || 'Unknown', biome: null }; });
+    return typeof limit === 'number' ? rows.slice(0, limit) : rows;
+  }
+
+  // Normalizes /api/activity's season.standings[] (snake_case server field
+  // names) into the same {name, kills, deaths, bossKills, playtimeSeconds}
+  // shape boardRows() produces, so sortBoardRows() below can rank either
+  // board with no season-specific sort code (§3.1: "reusing the tier 1
+  // board's sort mechanics").
+  function seasonStandingsRows(standings) {
+    return (standings || []).map(function (r) {
+      return { name: r.name, kills: r.kills || 0, deaths: r.deaths || 0, bossKills: r.boss_kills || 0, playtimeSeconds: r.playtime_seconds || 0 };
+    });
+  }
+
+  // Per §3.1, rows whose four counters are all zero are hidden on the season
+  // panel (the all-time board has no such rule — every known player belongs
+  // there regardless of whether they've scored).
+  function nonZeroSeasonRows(rows) {
+    return (rows || []).filter(function (r) { return r.kills || r.deaths || r.bossKills || r.playtimeSeconds; });
+  }
+
+  // "counted since <date>" fires only when standings_since trails started_at
+  // by more than a minute (a mid-season baseline re-snapshot, §4.4). Pure:
+  // depends only on the two ISO strings, never on Date.now(), so it's fully
+  // deterministic for the self-test.
+  function standingsSinceNote(season) {
+    if (!season || !season.started_at || !season.standings_since) return null;
+    var started = Date.parse(season.started_at), since = Date.parse(season.standings_since);
+    if (isNaN(started) || isNaN(since) || since - started <= 60000) return null;
+    return 'counted since ' + fmtAbs(season.standings_since);
+  }
+
+  // now defaults to Date.now() but takes an override so this stays testable
+  // without mocking the clock.
+  function daysAgo(iso, now) {
+    if (!iso) return 0;
+    var then = Date.parse(iso);
+    if (isNaN(then)) return 0;
+    return Math.max(0, Math.floor(((now || Date.now()) - then) / 86400000));
+  }
+
+  // Presentation text for the inactive-season notice's second line. '' when
+  // there is nothing to report (a fresh install that has never run a season).
+  function seasonLastEndedLine(season) {
+    if (!season || !season.last_ended) return '';
+    return 'Last season: ' + season.last_ended + (season.last_ended_at ? ', ended ' + relativeTime(season.last_ended_at) : '') + '.';
+  }
   function gameDataItemByName(name) {
     if (!state.gameData || !state.gameData.items) return null;
     var lname = String(name).toLowerCase();
@@ -834,6 +1015,49 @@
     });
   }
 
+  // A sibling of apiFetch/pollState — /api/state's own poll, compare and
+  // error handling above are untouched. Four outcomes (§3.1):
+  //   404 -> activitySupported = false, stop polling the route, panels stay hidden
+  //   401 -> activityAuth = false, panels show the one-line token notice
+  //   200 -> stripGeneratedAt compare against lastActivityCompare, re-render only on change
+  //   anything else (timeout, network, 5xx) -> keep last known good, retry next poll
+  function pollActivity() {
+    if (state.activitySupported === false) return; // confirmed 404 once already; a 1.3.0 server never grows the route mid-session
+    apiFetch('/api/activity').then(function (text) {
+      var wasUnauthorized = state.activityAuth === false;
+      state.activitySupported = true;
+      state.activityAuth = true;
+      var compare = stripGeneratedAt(text);
+      if (compare !== state.lastActivityCompare) {
+        state.lastActivityCompare = compare;
+        var prevEvents = state.activityData && state.activityData.events;
+        var prevNewest = (prevEvents && prevEvents[0]) ? prevEvents[0].timestamp_utc : null;
+        try { state.activityData = JSON.parse(text); } catch (e) { return; }
+        state.feedHighlightSince = prevNewest;
+        renderActivity();
+      } else if (wasUnauthorized) {
+        renderActivity();
+      }
+    }).catch(function (err) {
+      if (err && err.unauthorized) {
+        // The route demonstrably exists (it gave a definite 401, not a
+        // network failure), so the panels must show — just the one-line
+        // token notice, via the activityAuth check in renderActivity().
+        state.activitySupported = true;
+        state.activityAuth = false;
+        renderActivity();
+        return;
+      }
+      if (err && err.message === 'HTTP 404') {
+        state.activitySupported = false;
+        renderActivity();
+        return;
+      }
+      // Timeout, network error, or a non-404 HTTP error: leave activityData
+      // (and whatever the panels are already showing) exactly as it is;
+      // try again next poll.
+    });
+  }
   function loadGameData() {
     apiFetch('/api/gamedata').then(function (text) {
       try { state.gameData = JSON.parse(text); } catch (e) { /* optional, best-effort */ }
@@ -865,6 +1089,10 @@
       state.view = 'roster';
       app.innerHTML = renderRoster(state.stateData);
     }
+    // §3.1: render() hides #worldPanels while state.view === 'detail'
+    // (renderActivity() independently guards the same condition, so an
+    // /api/activity tick during the detail view can't re-show it either).
+    document.getElementById('worldPanels').hidden = !worldPanelsShouldShow();
 
     openDetails.forEach(function (key) {
       var d = app.querySelector('details[data-details-key="' + key + '"]');
@@ -965,8 +1193,13 @@
     return html;
   }
 
+  // §3.1: once the feed has at least one player_death row, it's the cross-
+  // player chronological source (feed rows carry no biome, so that column
+  // reads '—' from this source, same styling as an unknown biome today);
+  // otherwise the tier 1 per-player death_history merge, unchanged.
   function renderLatestDeathsCard(players) {
-    var rows = mergedDeathHistory(players, 10);
+    var fromFeed = state.activityData ? feedPlayerDeathRows(state.activityData.events, 10) : [];
+    var rows = fromFeed.length > 0 ? fromFeed : mergedDeathHistory(players, 10);
     var html = '<div class="card"><h3>Latest deaths</h3>';
     if (rows.length === 0) {
       html += '<div class="notice small">No deaths recorded yet.</div>';
@@ -995,6 +1228,114 @@
       '</div>';
   }
 
+  // ─────────────────────── activity panels (tier 2) ───────────────────────
+  // #worldPanels (seasonPanel + feedPanel) sits beside #app inside <main>,
+  // driven by its own poll (pollActivity) and its own render (renderActivity)
+  // — SCOPE-1.4.0.md §3.1, decision 7. Shown only once /api/activity has
+  // answered 200 or 401 (a confirmed 1.4.0+ server) and the roster/detail
+  // view isn't covering it; a 404 (pre-1.4.0 server) keeps it hidden.
+  function worldPanelsShouldShow() {
+    return state.view !== 'detail' && state.activitySupported === true;
+  }
+
+  // Extracted from #app's click handler (below) so a link inside
+  // #worldPanels — outside #app, so inert to that listener — opens the same
+  // detail view (§3.1, "Click delegation").
+  function selectPlayer(name) {
+    state.selectedPlayer = name;
+    state.view = 'detail';
+    state.tab = 'combat';
+    render();
+  }
+
+  function renderActivity() {
+    var panels = document.getElementById('worldPanels');
+    if (!worldPanelsShouldShow()) { panels.hidden = true; return; }
+    panels.hidden = false;
+
+    var seasonPanel = document.getElementById('seasonPanel');
+    var feedPanel = document.getElementById('feedPanel');
+    if (state.activityAuth === false) {
+      seasonPanel.innerHTML = '<div class="card"><div class="notice small">Needs the API token (Settings).</div></div>';
+      feedPanel.innerHTML = '';
+      return;
+    }
+    var data = state.activityData || { season: { active: false, name: '', standings: [] }, events: [] };
+    seasonPanel.innerHTML = renderSeasonPanel(data.season);
+    feedPanel.innerHTML = renderFeedPanel(data.events || []);
+  }
+
+  function renderSeasonPanel(season) {
+    season = season || { active: false, name: '', standings: [] };
+    var html = '<div class="card"><h3>This season</h3>';
+    if (season.active) {
+      html += '<div style="margin-bottom:4px">' +
+        '<span class="season-name">' + esc(season.name || 'Unnamed season') + '</span>' +
+        '<span class="tag green">ACTIVE</span></div>' +
+        '<div class="detail-sub" style="margin-bottom:12px">started ' + daysAgo(season.started_at) + ' days ago</div>';
+      var rows = sortBoardRows(nonZeroSeasonRows(seasonStandingsRows(season.standings)), state.seasonSort);
+      if (rows.length === 0) {
+        html += '<div class="notice small">No standings yet.</div>';
+      } else {
+        html += '<div class="table-wrap"><table><thead><tr><th>#</th>';
+        BOARD_COLUMNS.forEach(function (c) {
+          var active = state.seasonSort.key === c.key;
+          var arrow = active ? (state.seasonSort.dir === 'asc' ? ' ▲' : ' ▼') : '';
+          var ariaSort = active ? (state.seasonSort.dir === 'asc' ? 'ascending' : 'descending') : 'none';
+          html += '<th data-sort="' + c.key + '" tabindex="0" aria-sort="' + ariaSort + '"' + (c.key === 'name' ? '' : ' style="text-align:right"') + '>' + esc(c.label) + arrow + '</th>';
+        });
+        html += '</tr></thead><tbody>';
+        rows.forEach(function (r, i) {
+          html += '<tr><td class="num">' + (i + 1) + '</td>' +
+            '<td><span class="name-link" data-select="' + esc(r.name) + '">' + esc(r.name) + '</span></td>' +
+            '<td class="num">' + fmtNum(r.kills) + '</td>' +
+            '<td class="num">' + fmtNum(r.deaths) + '</td>' +
+            '<td class="num">' + fmtNum(r.bossKills) + '</td>' +
+            '<td class="num">' + humanizeSeconds(r.playtimeSeconds) + '</td>' +
+            '</tr>';
+        });
+        html += '</tbody></table></div>';
+      }
+      var note = standingsSinceNote(season);
+      if (note) html += '<div class="notice small" style="margin-top:8px">' + esc(note) + '</div>';
+    } else {
+      var lastEnded = seasonLastEndedLine(season);
+      html += '<div class="notice small">No season is running.' + (lastEnded ? ' ' + esc(lastEnded) : '') + '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function renderFeedPanel(events) {
+    var filter = state.feedFilter || 'all';
+    var rows = feedRows(events, filter, 30);
+    var players = (state.stateData && state.stateData.players) || {};
+    var html = '<div class="card"><h3>Recent activity</h3><div class="chip-row">';
+    FEED_GROUPS.forEach(function (g) {
+      html += '<button type="button" class="chip' + (filter === g.key ? ' active' : '') + '" data-feed-filter="' + g.key + '">' + esc(g.label) + '</button>';
+    });
+    html += '</div>';
+    if (rows.length === 0) {
+      html += '<div class="notice small">No events yet.</div>';
+    } else {
+      html += '<div class="feed-list">';
+      rows.forEach(function (e) {
+        var isNew = isNewFeedEvent(e.timestamp_utc, state.feedHighlightSince);
+        var who = isKnownPlayerName(e.player_name, players)
+          ? '<span class="name-link" data-select="' + esc(e.player_name) + '">' + esc(e.player_name) + '</span>'
+          : esc(e.player_name);
+        html += '<div class="feed-row' + (isNew ? ' feed-row-new' : '') + '">' +
+          '<span class="feed-time" title="' + esc(fmtAbs(e.timestamp_utc)) + '">' + esc(relativeTime(e.timestamp_utc)) + '</span>' +
+          '<span class="evt-badge g-' + eventGroup(e.event_type) + '">' + esc(eventBadgeLabel(e.event_type)) + '</span>' +
+          '<span class="feed-msg">' + esc(e.message) + '</span>' +
+          '<span class="feed-who">' + who + '</span>' +
+          '</div>';
+      });
+      html += '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
   function renderRoster(d) {
     var players = sortedPlayers(d.players);
     if (players.length === 0) return '<div class="empty-state">No players have ever joined this world yet.</div>';
@@ -1264,6 +1605,11 @@
     overlay.hidden = false;
   }
   function closeSettings() { document.getElementById('settingsOverlay').hidden = true; }
+  // (SCOPE-1.4.0.md §3.1 calls this "reconnect()" — this save-and-reconnect
+  // function is the one that plays that role in this codebase.) Resets the
+  // activity poll's feature-detect and auth flags too, or a base-URL change
+  // to a newer server would never retry /api/activity after an earlier 404
+  // or 401 on the old one.
   function saveSettings() {
     state.baseUrl = document.getElementById('baseUrlInput').value.trim();
     state.token = document.getElementById('tokenInput').value.trim();
@@ -1272,9 +1618,13 @@
     closeSettings();
     state.connStatus = 'connecting';
     state.settingsAutoOpened = false;
+    state.activitySupported = null;
+    state.activityAuth = true;
+    state.lastActivityCompare = null;
     render();
     pollState();
     loadGameData();
+    pollActivity();
   }
 
   // ───────────────────────── events (delegated, bound once) ─────────────────────────
@@ -1288,7 +1638,7 @@
   });
   document.getElementById('app').addEventListener('click', function (e) {
     var card = e.target.closest('[data-select]');
-    if (card) { state.selectedPlayer = card.getAttribute('data-select'); state.view = 'detail'; state.tab = 'combat'; render(); return; }
+    if (card) { selectPlayer(card.getAttribute('data-select')); return; }
     var sortTh = e.target.closest('[data-sort]');
     if (sortTh) {
       var key = sortTh.getAttribute('data-sort');
@@ -1317,6 +1667,36 @@
     }
   });
 
+  // Keyboard access for #worldPanels' own sortable header (the season
+  // standings board): mirrors the #app keydown handler above, since
+  // #worldPanels sits outside #app and is otherwise inert to it.
+  document.getElementById('worldPanels').addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    var th = e.target.closest('[data-sort]');
+    if (!th) return;
+    e.preventDefault();
+    th.click();
+  });
+  // Second click listener, on #worldPanels: a link/header/chip inside it is
+  // outside the #app listener above and would otherwise be inert (§3.1,
+  // "Click delegation"). Handles player links (season standings, the feed),
+  // the season standings' own sort headers (state.seasonSort, not
+  // state.boardSort — its own state key per §3.1), and the feed's filter
+  // chips.
+  document.getElementById('worldPanels').addEventListener('click', function (e) {
+    var link = e.target.closest('[data-select]');
+    if (link) { selectPlayer(link.getAttribute('data-select')); return; }
+    var sortTh = e.target.closest('[data-sort]');
+    if (sortTh) {
+      var key = sortTh.getAttribute('data-sort');
+      if (state.seasonSort.key === key) state.seasonSort.dir = (state.seasonSort.dir === 'asc' ? 'desc' : 'asc');
+      else state.seasonSort = { key: key, dir: (key === 'name' ? 'asc' : 'desc') };
+      renderActivity();
+      return;
+    }
+    var chip = e.target.closest('[data-feed-filter]');
+    if (chip) { state.feedFilter = chip.getAttribute('data-feed-filter'); renderActivity(); return; }
+  });
   function fallbackCopy(text) {
     try {
       var ta = document.createElement('textarea');
@@ -1336,7 +1716,9 @@
   render();
   pollState();
   loadGameData();
+  pollActivity();
   setInterval(pollState, POLL_MS);
+  setInterval(pollActivity, POLL_MS);
   setInterval(function () { if (state.stateData) renderHeader(); }, 1000);
 })();
 </script>

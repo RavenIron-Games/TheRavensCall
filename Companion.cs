@@ -44,6 +44,16 @@ namespace TheRavensCall
         // with that method.
         internal const string EmptyStateJson = "{\"generated_at\":\"\",\"world_name\":\"\",\"day\":0,\"online_count\":0,\"raid_active\":false,\"raid_type\":\"\",\"players\":{}}";
 
+        // /api/activity is served from this string, rebuilt on the main
+        // thread alongside _stateCache (see BuildActivityCache). Same
+        // discipline as _stateCache: the HTTP worker only ever hands out a
+        // string the main thread already finished building.
+        internal static volatile string _activityCache;
+        // Served until the first BuildActivityCache() call (or if it
+        // throws): the exact shape §2 documents, with no season and no
+        // events, so /api/activity has one shape for its whole lifetime.
+        internal const string EmptyActivityJson = "{\"generated_at\":\"\",\"season\":{\"active\":false,\"name\":\"\",\"started_at\":null,\"standings_since\":null,\"last_ended\":null,\"last_ended_at\":null,\"standings\":[]},\"events\":[]}";
+
         // HTTP server
         private HttpListener _listener;
         private Thread _serverThread;
@@ -111,7 +121,7 @@ namespace TheRavensCall
                 _serverThread.Start();
                 Log.LogInfo("HTTP server listening on http://localhost:" + port + (bindAll ? " and every interface" : " (localhost only; set HttpBindAllInterfaces=true to expose it)"));
                 if (bindAll) Log.LogInfo("Mobile devices: http://" + GetLocalIP() + ":" + port);
-                if (!string.IsNullOrEmpty(Plugin.HttpApiToken?.Value)) Log.LogInfo("HTTP API token required on /api/state, /api/gamedata and /api/pins.");
+                if (!string.IsNullOrEmpty(Plugin.HttpApiToken?.Value)) Log.LogInfo("HTTP API token required on /api/state, /api/gamedata, /api/pins and /api/activity.");
             }
             catch (Exception ex)
             {
@@ -202,6 +212,16 @@ namespace TheRavensCall
                 {
                     ctx.Response.ContentType = "application/json";
                     body = Encoding.UTF8.GetBytes(MapPinTracker.GetJson());
+                }
+                else if (path == "/api/activity")
+                {
+                    ctx.Response.ContentType = "application/json";
+                    // Same cached-string-or-fixed-envelope discipline as
+                    // /api/state — never a live walk from this worker thread.
+                    // Never 404 while the server is 1.4.0: EventFeedCapacity=0
+                    // still answers 200 with an empty events array (§2), which
+                    // is exactly what the empty envelope already carries.
+                    body = Encoding.UTF8.GetBytes(_activityCache ?? EmptyActivityJson);
                 }
                 else if (path == "/" || path == "/index" || path.EndsWith(".html"))
                 {
@@ -318,13 +338,31 @@ namespace TheRavensCall
             catch (Exception ex) { Log.LogError("state cache prime: " + ex.Message); }
         }
 
+        // Built alongside _stateCache: generated_at + the season object +
+        // the event feed, all from the same main-thread tick. Called from
+        // the poll tick (PollAllPlayers) and once more at boot, as the last
+        // call in Patch_ZNetAwake.Postfix, after SeasonSystem/EventFeed both
+        // exist — PrimeStateCache above runs two lines before
+        // SeasonSystem.Init, which would otherwise serve season.active=false
+        // on every mid-season restart until the first tick.
+        internal static void BuildActivityCache()
+        {
+            if (Instance == null || Plugin.EnableHttpServer == null || !Plugin.EnableHttpServer.Value) return;
+            try
+            {
+                string generatedAt = DateTime.UtcNow.ToString("o");
+                _activityCache = "{\"generated_at\":\"" + generatedAt + "\"," + SeasonSystem.SeasonJson() + ",\"events\":" + EventFeed.ToJsonArray() + "}";
+            }
+            catch (Exception ex) { Log.LogError("activity cache build: " + ex.Message); }
+        }
+
         // Gate the data routes behind HttpApiToken when one is configured.
         // /api/health and the dashboard page stay open (no player data).
         static bool ApiTokenOk(HttpListenerContext ctx, string path)
         {
             string token = Plugin.HttpApiToken?.Value;
             if (string.IsNullOrEmpty(token)) return true;
-            if (path != "/api/state" && path != "/api/gamedata" && path != "/api/pins") return true;
+            if (path != "/api/state" && path != "/api/gamedata" && path != "/api/pins" && path != "/api/activity") return true;
             string given = ctx.Request.QueryString["token"] ?? ctx.Request.Headers["X-Api-Token"];
             return !string.IsNullOrEmpty(given) && string.Equals(given, token, StringComparison.Ordinal);
         }
@@ -465,6 +503,11 @@ namespace TheRavensCall
                 string barrkBotJson = PlayerRegistry.BuildBarrkBotJson(worldName, day, online.Count);
                 PlayerRegistry.AtomicWrite(Path.Combine(OutputDir, "BarrkBOT_data1.json"), barrkBotJson);
 
+                // Outside the EnableHttpServer guard below, same as the
+                // BarrkBOT export above — the feed persists even with the
+                // HTTP server off. No-op unless dirty.
+                EventFeed.Save();
+
                 // /api/state is exactly this same string. It is built above
                 // unconditionally every tick regardless of whether anyone is
                 // watching (BarrkBOT_data1.json needs it either way), so
@@ -474,6 +517,8 @@ namespace TheRavensCall
                 if (Instance != null && Plugin.EnableHttpServer.Value)
                 {
                     _stateCache = barrkBotJson;
+                    // A fault inside can never disturb the assignment above.
+                    BuildActivityCache();
                 }
 
                 Log.LogInfo($"Poll tick — {online.Count} online, {PlayerRegistry.All.Count()} known player(s).");

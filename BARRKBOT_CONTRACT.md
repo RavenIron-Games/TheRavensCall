@@ -24,6 +24,11 @@ running on another machine that has no way to find out.
 read beats thirty-five. Keep it that way unless an aggregate stops being
 complete, in which case say so here.
 
+**Since 1.4.0, `GET /api/activity` (the dashboard's recent-events feed and season standings,
+`docs/API.md`) exists on the same HTTP server as `/api/state`. It is not part of this
+contract** — it is not written to disk, and its shape is not promised the way the paths
+above are.
+
 ## What went wrong on 20 Aug 2026, and why this file exists
 
 The exports were renamed — `barrkbot_players.json` → `BarrkBOT_data1.json`,
@@ -128,7 +133,10 @@ pre-rename name and this server is behind.
 ## Field names currently depended on
 
 Top level: `generated_at`, `world_name`, `day`, `online_count`, `raid_active`,
-`raid_type`, `players`.
+`raid_type`, `players`. **Since 1.4.0**, `raid_active`/`raid_type` track real raids start to
+end (a pre-existing bug meant they previously only flipped for a raid restored from a saved
+world, and never cleared); `raid_type` carries the raw vanilla event name (`army_eikthyr`,
+`foresttrolls`, ...), not a friendly label.
 
 Per player: `name`, `first_seen`, `last_seen`, `online`, `session_start`,
 `playtime_seconds_lifetime`, `kills_narrative`, `deaths_narrative`, `gear_tier`,
