@@ -6,6 +6,8 @@ admin tool. Source of truth for both originals is gone from this repo; only thei
 remain (`25d72c2b-...txt` = SkaldSaga, `46dff3c1-...txt` = SteveCompanionMod) alongside the merged
 project. Not a git repo — nothing here has commit history to inspect.
 
+**2026-09-21: 1.4.0 (`docs/SCOPE-1.4.0.md`) in progress** — the `/api/activity` feed/season endpoint, its two dashboard panels, and three bundled fixes (raid tracking, the Chronicle's season folder plus a file-handle leak, the season-start UTC drift); not yet built or tested against a live server.
+
 **v1.0.0's central claim was false.** It shipped believing combat was server-authoritative
 (`Character.OnDeath`/`Damage` "fire there for real combat resolution" — the old `Saga.cs:16`
 comment). A live day of play proved otherwise: 28 players, 0 kills/deaths/damage/fish recorded.

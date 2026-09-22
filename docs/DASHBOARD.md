@@ -4,7 +4,9 @@ Rebuilt from scratch for the 1.3.0 API contract (`/api/state` as an envelope
 with a `players` map, no more live-vitals fields that a dedicated server can
 never populate). One file, no build step, no network request except to the
 configured API host (this page's own origin by default, or the base-URL
-override — see below). Roughly 58 KB.
+override — see below). Roughly 76 KB as of 1.4.0 (tier 2 added the feed and
+season panels and `/api/activity`'s own poll; still no build step, no new
+dependency).
 
 ## What survived, what didn't
 
@@ -30,6 +32,12 @@ system font stack only, feedback goes to
   the gear sits on the same row as the logo (`order: 0`) and the world
   meta/separator/connection group wraps to its own row below (`order: 1`),
   instead of the gear itself wrapping onto a third row.
+- **Activity feed & season** (tier 2, new in 1.4.0): `#worldPanels`, a
+  `seasonPanel` and a `feedPanel`, sitting inside a `<main>` wrapper
+  alongside `#app` (not inside it — see below), so it renders above the
+  world overview and roster. Hidden until `/api/activity` first answers, and
+  hidden again whenever the detail view is open. Described in its own
+  section below.
 - **World overview** (landing view, above the roster): four cards, described
   below. Only rendered once at least one player is known — an empty world
   still shows the plain "No players have ever joined" state instead.
@@ -89,7 +97,112 @@ has — no server change, no new endpoint (that's tier 2's `/api/activity`).
   the ten newest rows. Columns are relative time (absolute time on hover,
   same as the Death tab), the player as a link, killer, and biome — no
   location column here (the per-player Death tab still has that). "No deaths
-  recorded yet" when the merge is empty.
+  recorded yet" when the merge is empty. **Tier 2 source switch:** once
+  `/api/activity`'s feed has at least one `player_death` row
+  (`feedPlayerDeathRows`), this card switches to that instead — a true
+  cross-player chronological source, since it comes from one ordered feed
+  rather than ten independently-truncated per-player lists. The feed's rows
+  carry no biome (only `timestamp_utc`, `event_type`, `player_name`,
+  `message`, `detail` — `/api/activity`'s events have no location data at
+  all), so the Biome column reads "—" from this source; killer comes from
+  the event's `detail` field. Falls back to the tier 1 merge above whenever
+  the feed has zero death rows (a fresh 1.4.0 upgrade before anyone has
+  died, or `EventFeedCapacity = 0`), so this card is never empty just
+  because the feed is.
+
+## Activity feed and season (tier 2, new in 1.4.0)
+
+`<main id="app">` became a `<main>` wrapper holding `<div id="worldPanels"
+hidden><div id="seasonPanel"></div><div id="feedPanel"></div></div>` beside
+`<div id="app"></div>`. `#app` kept its id, so the existing roster/detail
+swap (`render()`) is unchanged; `#worldPanels` is deliberately *outside* that
+swap, with its own poll (`pollActivity()`), its own render
+(`renderActivity()`) and its own trigger, the same pattern `renderHeader()`
+already used in tier 1. Reasons this matters:
+
+- `pollState()` skips `render()` whenever `/api/state` is byte-identical
+  (apart from `generated_at`) — panels living inside `#app` would refresh
+  only when the roster happened to change, and an `innerHTML` swap on every
+  roster tick would blow away the feed's scroll position and any open chip
+  selection even when nothing about the feed itself changed.
+- The two panels need to hide while the player detail view is open, and
+  reappear on Back — independent of whatever `#app` is currently showing.
+
+**Feature detection.** `#worldPanels` starts `hidden` in the markup and stays
+that way until `/api/activity` answers with a definite yes (200 or 401 — a
+401 still proves the route exists, just not to this client yet) or a
+definite no (404, a pre-1.4.0 server — `state.activitySupported` latches to
+`false` and `pollActivity()` stops calling the route at all for the rest of
+the page's life, so a pre-1.4.0 server produces exactly one failed request,
+not one every 10s). Any other failure (timeout, a non-404/401 HTTP error,
+network) is treated as transient: the panels keep showing the last known
+good data and the next poll tries again. `stripGeneratedAt` (the same
+regex `pollState` uses) skips a re-render when a 200 response is otherwise
+unchanged. `pollActivity()` polls independently of `pollState()` on its own
+`setInterval(pollActivity, POLL_MS)` (same 10s cadence) and never touches
+`connStatus`, `lastErrorMsg` or the once-only 401 settings auto-open — those
+stay `/api/state`'s alone. Saving Settings (`saveSettings()`) resets
+`activitySupported` to `null` and `activityAuth` to `true` and calls
+`pollActivity()` immediately, so pointing the base URL at a different (or
+newer) server re-probes the route instead of staying latched to the old
+server's verdict.
+
+**Feed panel.** The newest 30 rows of `/api/activity`'s `events[]` (already
+newest-first from the server) after filtering by chip group, each row:
+relative time (absolute on hover), an event-type badge, the escaped
+`message`, and the player as a link into the detail view — but only when
+`player_name` is a key in `state.stateData.players`; the two world-scoped
+values the server sends (`"world"`, `"SERVER"`) and any name the roster
+doesn't recognise render as plain text instead, since `render()` bounces an
+unknown `state.selectedPlayer` selection back to the roster. Filter chips
+group the 17 documented `event_type` values (`EVENT_TYPE_GROUP`) into four
+buckets — **Combat** (`player_death`, `boss_kill`, `raid_start`, `raid_end`,
+`kill_milestone`, `death_milestone`), **Players** (`player_join`,
+`player_leave`, `title_earned`, `biome_discovery`, `gear_tier`), **World**
+(`world_event`, `lore`, `startup`, `shutdown`), **Season** (`season_start`,
+`season_end`) — plus **All**; the page's own grouping, not part of the
+server contract. The selected chip lives in `state.feedFilter`, not the DOM,
+so it survives a re-render. A row whose `timestamp_utc` is strictly newer
+than the previous poll's newest event gets a brief highlight
+(`isNewFeedEvent`/`.feed-row-new`); nothing highlights on the very first
+load, since there's no "previous poll" yet. "No events yet" on an empty
+feed (a fresh install, or `EventFeedCapacity = 0`).
+
+**Season panel.** `season.active === true`: the season name, a green
+`ACTIVE` tag, "started N days ago" (`daysAgo`), and a standings table headed
+**This season** — deliberately not "All time", so the two boards never share
+a heading. Ranked by kills with deaths, boss kills and playtime as sortable
+columns, reusing tier 1's exact `sortBoardRows` and click-to-sort mechanics
+(`state.seasonSort` instead of `state.boardSort` — its own key, so sorting
+one board never disturbs the other) after normalizing the server's
+snake_case standings fields to the board's shape (`seasonStandingsRows`).
+Rows where kills, deaths, boss kills and playtime are all zero are hidden
+(`nonZeroSeasonRows`) — a player who's done nothing yet doesn't clutter a
+season that just started. A "counted since `<date>`" note appears only when
+`standings_since` trails `started_at` by more than a minute
+(`standingsSinceNote`), the mid-season-upgrade case (`SCOPE-1.4.0.md` §4.4).
+`season.active === false`: "No season is running" plus a last-ended line
+(`seasonLastEndedLine`) naming `season.last_ended` when the server remembers
+one, empty otherwise.
+
+**Click delegation.** The click handler that opens a player's detail view
+was bound only to `#app`, so a link inside `#worldPanels` — a different
+element — was inert to it. That body is now `selectPlayer(name)`, called
+from `#app`'s listener as before *and* from a second listener bound to
+`#worldPanels`, which also owns the season table's sort-header clicks
+(`state.seasonSort`) and the feed's filter-chip clicks (`state.feedFilter`).
+
+**CSS.** New rules only: the badge classes (`.evt-badge` plus one
+`.g-<group>` colour modifier per chip group), the chip row (`.chip-row`,
+`.chip`, `.chip.active`), the feed row list and its highlight keyframe, and
+`.tag.green` (the season's `ACTIVE` tag — `.tag.gold` already existed).
+Everything else reuses `.card`, `.notice`, `.table-wrap` and the `:root`
+tokens; no new `@media` rule and no new layout rule, since the panels sit
+inside the same `<main>` the roster already does.
+
+**Marker.** `<meta name="theravenscall-api" content="1.4">` — cosmetic;
+`ContainsApiMarker` only checks the substring is present, never the value
+(a follow-up per `SCOPE-1.4.0.md` §11.7).
 
 ## The token / settings flow
 
@@ -247,8 +360,8 @@ warning now.
 
 1. Copy `theravenscall.html` to a scratch folder as `index.html`.
 2. Copy `docs/fixtures/api-state-1.3.json` to `<folder>/api/state` (no
-   extension) and `docs/fixtures/api-gamedata.json` to
-   `<folder>/api/gamedata`.
+   extension), `docs/fixtures/api-gamedata.json` to `<folder>/api/gamedata`,
+   and `docs/fixtures/api-activity.json` to `<folder>/api/activity`.
 3. `python -m http.server 8765` (or `python3`) from that folder, or any
    static file server that serves extensionless files as-is.
 4. Open `http://localhost:8765`. The fixture has three players: **Ragnvald**
@@ -262,9 +375,27 @@ warning now.
    and **Sigrun** (online, has never run WhereTheCrowFlies — exercises the
    rule-2 notices on Combat/Progression/Crafting/Build, but still shows a
    populated this-session block on Combat since that doesn't need the crow).
+   `docs/fixtures/api-activity.json` uses the same three names: an active
+   "Ashen Dawn" season (Bjorn's standings row is all-zero, to exercise the
+   hide-zero-rows rule) and ~25 events spanning all four feed chip groups,
+   including a `startup`/`shutdown` pair (a simulated restart) and a
+   `raid_start`/`raid_end` pair.
 
-A real deployment needs no `api/` folder at all — `/api/state` and
-`/api/gamedata` are served live by the mod.
+Exercising the feed/season panels' degrade paths needs a request that
+returns something other than the static file above, which a plain
+`http.server` can't do per-path:
+
+- **404** (pre-1.4.0 server): skip step 2's `api/activity` copy entirely — a
+  missing file 404s on its own, and the panels should stay hidden with
+  exactly one failed request in the browser's network panel, never a retry.
+- **401** (token required, not supplied): needs a small custom handler that
+  returns HTTP 401 with `{"error":"token required"}` for `GET /api/activity`
+  and falls back to serving the static files above for everything else — the
+  panels should show only the one-line "Needs the API token (Settings)"
+  notice, nothing else.
+
+A real deployment needs no `api/` folder at all — `/api/state`,
+`/api/gamedata` and `/api/activity` are served live by the mod.
 
 ## Known gaps
 
@@ -280,3 +411,10 @@ A real deployment needs no `api/` folder at all — `/api/state` and
   session lengths) only advance when `/api/state` actually changes, because an
   unchanged payload skips the re-render. On an idle server with nobody online
   they can sit still between real events; the header's "updated" text still ticks.
+- **Tier 2:** the season standings sort (`state.seasonSort`) and the feed's
+  selected chip (`state.feedFilter`) are in-memory only, same as
+  `state.boardSort` above — both reset on a full page reload.
+- **Tier 2:** the "new row" feed highlight compares timestamps, not a
+  per-row id (`SCOPE-1.4.0.md` §10 rejects a sequence number) — two events
+  landing in the same second could in principle both miss the highlight;
+  accepted as the whole cost of that tradeoff.

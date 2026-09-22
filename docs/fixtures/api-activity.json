@@ -1,0 +1,43 @@
+{
+  "generated_at": "2026-09-21T18:32:10.0000000Z",
+  "season": {
+    "active": true,
+    "name": "Ashen Dawn",
+    "started_at": "2026-09-18T00:00:00Z",
+    "standings_since": "2026-09-18T00:00:00Z",
+    "last_ended": null,
+    "last_ended_at": null,
+    "standings": [
+      { "name": "Ragnvald", "kills": 142, "deaths": 6, "boss_kills": 3, "playtime_seconds": 41302 },
+      { "name": "Sigrun", "kills": 18, "deaths": 2, "boss_kills": 0, "playtime_seconds": 5400 },
+      { "name": "Bjorn", "kills": 0, "deaths": 0, "boss_kills": 0, "playtime_seconds": 0 }
+    ]
+  },
+  "events": [
+    { "timestamp_utc": "2026-09-21T18:31:58Z", "day": 143, "online_count": 3, "event_type": "boss_kill", "player_name": "Ragnvald", "message": "Ragnvald helped defeat Bonemass!", "detail": "Bonemass" },
+    { "timestamp_utc": "2026-09-21T18:20:11Z", "day": 143, "online_count": 3, "event_type": "player_death", "player_name": "Sigrun", "message": "Sigrun was slain by Draugr.", "detail": "Draugr" },
+    { "timestamp_utc": "2026-09-21T17:55:40Z", "day": 143, "online_count": 3, "event_type": "kill_milestone", "player_name": "Ragnvald", "message": "Ragnvald has slain 750 creatures!", "detail": "750" },
+    { "timestamp_utc": "2026-09-21T17:40:02Z", "day": 143, "online_count": 3, "event_type": "raid_end", "player_name": "SERVER", "message": "The raid has ended.", "detail": "army_eikthyr" },
+    { "timestamp_utc": "2026-09-21T17:22:15Z", "day": 143, "online_count": 3, "event_type": "raid_start", "player_name": "SERVER", "message": "A raid begins: Eikthyr's Forest!", "detail": "army_eikthyr" },
+    { "timestamp_utc": "2026-09-21T16:50:30Z", "day": 143, "online_count": 3, "event_type": "player_join", "player_name": "Bjorn", "message": "Bjorn has joined the server.", "detail": "" },
+    { "timestamp_utc": "2026-09-21T15:10:05Z", "day": 143, "online_count": 2, "event_type": "title_earned", "player_name": "Sigrun", "message": "Sigrun has earned the title Stag Slayer!", "detail": "Stag Slayer" },
+    { "timestamp_utc": "2026-09-21T14:02:47Z", "day": 143, "online_count": 2, "event_type": "lore", "player_name": "world", "message": "A page of lore has been broadcast: 'The Ashen Road'.", "detail": "" },
+    { "timestamp_utc": "2026-09-21T12:33:19Z", "day": 143, "online_count": 2, "event_type": "boss_kill", "player_name": "Sigrun", "message": "Sigrun helped defeat Eikthyr!", "detail": "Eikthyr" },
+    { "timestamp_utc": "2026-09-21T11:05:58Z", "day": 143, "online_count": 2, "event_type": "player_leave", "player_name": "Bjorn", "message": "Bjorn has left the server. (played 3h 12m)", "detail": "3h 12m" },
+    { "timestamp_utc": "2026-09-21T09:14:22Z", "day": 143, "online_count": 0, "event_type": "startup", "player_name": "SERVER", "message": "TheRavensCall 1.4.0 awakens (server-only).", "detail": "" },
+    { "timestamp_utc": "2026-09-20T23:58:01Z", "day": 142, "online_count": 2, "event_type": "shutdown", "player_name": "SERVER", "message": "Server shutting down.", "detail": "" },
+    { "timestamp_utc": "2026-09-20T20:44:10Z", "day": 142, "online_count": 3, "event_type": "death_milestone", "player_name": "Ragnvald", "message": "Ragnvald has died 10 times.", "detail": "10" },
+    { "timestamp_utc": "2026-09-20T19:12:55Z", "day": 142, "online_count": 3, "event_type": "player_death", "player_name": "Ragnvald", "message": "Ragnvald was slain by Fuling Berserker.", "detail": "Fuling Berserker" },
+    { "timestamp_utc": "2026-09-20T18:02:30Z", "day": 142, "online_count": 3, "event_type": "world_event", "player_name": "world", "message": "A meteor shower streaks across the sky.", "detail": "" },
+    { "timestamp_utc": "2026-09-20T16:45:00Z", "day": 142, "online_count": 2, "event_type": "biome_discovery", "player_name": "Sigrun", "message": "Sigrun has discovered the Swamp!", "detail": "Swamp" },
+    { "timestamp_utc": "2026-09-20T14:20:18Z", "day": 142, "online_count": 2, "event_type": "boss_kill", "player_name": "Ragnvald", "message": "Ragnvald helped defeat Eikthyr!", "detail": "Eikthyr" },
+    { "timestamp_utc": "2026-09-20T11:05:44Z", "day": 142, "online_count": 2, "event_type": "player_join", "player_name": "Sigrun", "message": "Sigrun has joined the server.", "detail": "" },
+    { "timestamp_utc": "2026-09-20T10:59:02Z", "day": 142, "online_count": 1, "event_type": "player_join", "player_name": "Ragnvald", "message": "Ragnvald has joined the server.", "detail": "" },
+    { "timestamp_utc": "2026-09-19T22:15:37Z", "day": 141, "online_count": 1, "event_type": "kill_milestone", "player_name": "Sigrun", "message": "Sigrun has slain 100 creatures!", "detail": "100" },
+    { "timestamp_utc": "2026-09-19T20:30:12Z", "day": 141, "online_count": 0, "event_type": "player_leave", "player_name": "Ragnvald", "message": "Ragnvald has left the server. (played 5h 40m)", "detail": "5h 40m" },
+    { "timestamp_utc": "2026-09-19T18:11:59Z", "day": 141, "online_count": 2, "event_type": "player_death", "player_name": "Bjorn", "message": "Bjorn was slain by Fall Damage.", "detail": "Fall Damage" },
+    { "timestamp_utc": "2026-09-19T09:40:21Z", "day": 141, "online_count": 2, "event_type": "lore", "player_name": "world", "message": "A page of lore has been broadcast: 'Embers of the North'.", "detail": "" },
+    { "timestamp_utc": "2026-09-18T22:05:00Z", "day": 140, "online_count": 2, "event_type": "title_earned", "player_name": "Ragnvald", "message": "Ragnvald has earned the title Bonebreaker!", "detail": "Bonebreaker" },
+    { "timestamp_utc": "2026-09-18T00:00:05Z", "day": 140, "online_count": 0, "event_type": "season_start", "player_name": "SERVER", "message": "A new season begins: Ashen Dawn!", "detail": "Ashen Dawn" }
+  ]
+}

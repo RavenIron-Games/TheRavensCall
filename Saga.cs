@@ -33,7 +33,7 @@ namespace TheRavensCall
     {
         public const string PluginGUID = "com.raveniron.theravenscall";
         public const string PluginName = "TheRavensCall";
-        public const string PluginVersion = "1.3.0";
+        public const string PluginVersion = "1.4.0";
 
         internal static ManualLogSource Log;
         internal static Plugin Instance;
@@ -49,6 +49,7 @@ namespace TheRavensCall
         public static ConfigEntry<bool> EnableDeathMilestone;
         public static ConfigEntry<bool> EnableGearTier;
         public static ConfigEntry<bool> EnableTitleEarned;
+        public static ConfigEntry<bool> EnableRaid;
         public static ConfigEntry<bool> ShowDayNumber;
         public static ConfigEntry<bool> ShowOnlineCount;
         public static ConfigEntry<string> MessagePrefix;
@@ -77,6 +78,7 @@ namespace TheRavensCall
         public static ConfigEntry<float> StatsPushIntervalSeconds;
         public static ConfigEntry<bool> HttpBindAllInterfaces;
         public static ConfigEntry<string> HttpApiToken;
+        public static ConfigEntry<int> EventFeedCapacity;
 
         // ── Combat (client-reported — see CombatReportReceiver) ──────────────
         public static ConfigEntry<bool> AcceptClientReports;
@@ -96,6 +98,7 @@ namespace TheRavensCall
             EnableDeathMilestone = Config.Bind("Events", "EnableDeathMilestone", true, "Log/announce death milestones");
             EnableGearTier = Config.Bind("Events", "EnableGearTier", true, "Log/announce new gear tier reached");
             EnableTitleEarned = Config.Bind("Events", "EnableTitleEarned", true, "Log/announce when a title is earned");
+            EnableRaid = Config.Bind("Events", "EnableRaid", true, "Record raid start and end in the Chronicle and the dashboard feed (raid_start / raid_end). Not posted to Discord. The raid banner and raid_active work either way.");
             ShowDayNumber = Config.Bind("Format", "ShowDayNumber", true, "Append day number to messages");
             ShowOnlineCount = Config.Bind("Format", "ShowOnlineCount", true, "Append online count to messages");
             MessagePrefix = Config.Bind("Format", "MessagePrefix", "⚔ ", "Prefix for all narrated messages (Discord + Chronicle)");
@@ -118,7 +121,8 @@ namespace TheRavensCall
             HttpServerPort = Config.Bind("Companion", "HttpServerPort", 2112, "Port for the HTTP dashboard/API (/api/state is exactly the BarrkBOT export, the same JSON written to BarrkBOT_data1.json)");
             StatsPushIntervalSeconds = Config.Bind("Companion", "StatsPushIntervalSeconds", 10f, "How often (seconds) to snapshot every online player's state, check for new biomes/gear tiers, and refresh the BarrkBOT export file");
             HttpBindAllInterfaces = Config.Bind("Companion", "HttpBindAllInterfaces", false, "Also listen on every network interface (http://+:port), not only localhost. Off by default since 1.2.4: the API hands every known player's stats, skills, titles and death coordinates to anyone who can reach the port, with no login. Turn on only behind a firewall or together with HttpApiToken");
-            HttpApiToken = Config.Bind("Companion", "HttpApiToken", "", "If set, /api/state, /api/gamedata and /api/pins require ?token=<this value> (or an X-Api-Token header). /api/health and the dashboard page stay open. Since 1.3.0 the bundled dashboard page has a settings panel (gear icon) to enter this token itself, stored in the browser and sent as X-Api-Token — a 401 opens that panel automatically. A pre-1.3.0 page still does not send a token");
+            HttpApiToken = Config.Bind("Companion", "HttpApiToken", "", "If set, /api/state, /api/gamedata, /api/pins and /api/activity require ?token=<this value> (or an X-Api-Token header). /api/health and the dashboard page stay open. Since 1.3.0 the bundled dashboard page has a settings panel (gear icon) to enter this token itself, stored in the browser and sent as X-Api-Token — a 401 opens that panel automatically. A pre-1.3.0 page still does not send a token");
+            EventFeedCapacity = Config.Bind("Companion", "EventFeedCapacity", 200, "Number of recent Chronicle lines kept in memory and served by /api/activity, newest first (0 to 1000). They are saved to event_feed.json so the feed survives a restart. 0 turns the feed off; the endpoint still answers, with an empty events array, so a 1.4.0 dashboard can tell \"turned off\" from \"older server\".");
 
             AcceptClientReports = Config.Bind("Combat", "AcceptClientReports", true, "Accept RavensCall_CombatReport_V1 RPC reports (kills/deaths/damage/fish) from players running the WhereTheCrowFlies client mod. Every report is verified against the connected-player list before anything is credited");
             LogCombatReports = Config.Bind("Combat", "LogCombatReports", false, "Log every accepted/dropped/rate-limited combat report. Verbose — enable during rollout/verification, then turn back off");
@@ -142,6 +146,7 @@ namespace TheRavensCall
                 if (LogServerStartStop.Value)
                     Chronicle.Write("SERVER", "shutdown", "Server shutting down.", null);
             }
+            EventFeed.Save();
             Chronicle.Close();
             _harmony.UnpatchSelf();
         }
@@ -325,11 +330,19 @@ namespace TheRavensCall
             try
             {
                 if (!ZNet.instance.IsServer()) return;
-                Chronicle.Init();
+                EventFeed.Init();
                 PlayerRegistry.LoadAll();
                 Companion.PrimeStateCache();
                 SessionTracker.Begin();
+                // SeasonSystem.Init() re-points the Chronicle at the active
+                // season's archive folder when a season is running (§4.6).
+                // Only call the bare Chronicle.Init() when no season is
+                // active — otherwise it eagerly opens (and creates) the
+                // default-folder log file first, which SeasonSystem.Init
+                // then abandons, leaving a stray 0-byte file behind on
+                // every mid-season restart.
                 SeasonSystem.Init();
+                if (string.IsNullOrEmpty(SeasonSystem.GetCurrentSeasonName())) Chronicle.Init();
                 LoreSystem.Init();
                 // Per-world-session registration (ZRoutedRpc.instance is new
                 // every time ZNet.Awake runs) — same lifecycle point every
@@ -339,6 +352,10 @@ namespace TheRavensCall
                 if (Plugin.LogServerStartStop.Value)
                     Chronicle.Write("SERVER", "startup", "TheRavensCall is listening.", null);
                 Plugin.Log.LogInfo("[TheRavensCall] Server systems initialized.");
+                // Boot prime for /api/activity — last, so it reflects
+                // SeasonSystem.Init's mid-season restore and EventFeed.Init's
+                // reloaded rows above rather than the empty envelope.
+                Companion.BuildActivityCache();
             }
             catch (Exception ex) { Plugin.Log.LogWarning($"[TheRavensCall] ZNet.Awake error: {ex.Message}"); }
         }
@@ -1465,14 +1482,36 @@ namespace TheRavensCall
         }
     }
 
-    [HarmonyPatch(typeof(RandEventSystem), nameof(RandEventSystem.SetRandomEventByName))]
+    // ── Re-targeted 2026-09-21 (SCOPE-1.4.0.md §4.5): the previous patch
+    // hooked SetRandomEventByName, which a natural raid never calls on a
+    // dedicated server — only RandEventSystem.Load (world load restoring a
+    // saved active event) reaches it there, so RaidActive/RaidType never
+    // flipped for a real raid and, once set by a world load, never cleared.
+    // StartRandomEvent, UpdateRandomEvent's standalone-interval branch,
+    // FixedUpdate's clear and ResetRandomEvent (the stopevent command) all
+    // funnel through the one private SetRandomEvent(RandomEvent, Vector3)
+    // instead — verified against the 1.0.12 decompile. Postfix on that.
+    [HarmonyPatch(typeof(RandEventSystem), "SetRandomEvent")]
     public static class Patch_Raid
     {
-        private static void Postfix(string name)
+        private static void Postfix(RandomEvent ev)
         {
             if (!Plugin.IsServer()) return;
-            WorldState.RaidActive = !string.IsNullOrEmpty(name);
-            WorldState.RaidType = name ?? "";
+
+            string now = ev?.m_name ?? "";
+            string before = WorldState.RaidType;
+            if (now == before) return;
+
+            // The BarrkBOT-facing flag/name flip unconditionally, independent
+            // of EnableRaid — only the Chronicle/feed narration below is gated.
+            WorldState.RaidActive = !string.IsNullOrEmpty(now);
+            WorldState.RaidType = now;
+
+            if (Plugin.EnableRaid == null || !Plugin.EnableRaid.Value) return;
+            if (!string.IsNullOrEmpty(now))
+                Plugin.Narrate($"A raid begins: {RaidNames.Get(now)}!", "raid_start", "world", now);
+            else
+                Plugin.Narrate("The raid has ended.", "raid_end", "world", before);
         }
     }
 
@@ -1922,6 +1961,31 @@ namespace TheRavensCall
         };
     }
 
+    // ── Vanilla raid/event name → display text for the raid_start/raid_end
+    // narration message only. WorldState.RaidType (the BarrkBOT-facing
+    // field) always carries the raw vanilla name unchanged (§5); this map
+    // is cosmetic, covers the standard biome raids, and falls back to the
+    // raw name for anything unmapped (a modded event, a new Valheim raid).
+    public static class RaidNames
+    {
+        private static readonly Dictionary<string, string> Display = new Dictionary<string, string>
+        {
+            { "army_eikthyr",  "Eikthyr's forces" },
+            { "army_theelder", "The Elder's forces" },
+            { "army_bonemass", "Bonemass's forces" },
+            { "army_moder",    "Moder's forces" },
+            { "army_goblin",   "The Fuling horde" },
+            { "foresttrolls",  "Forest trolls" },
+            { "skeletons",     "Skeletons" },
+            { "blobs",         "Blobs" },
+            { "wolves",        "Wolves" },
+            { "surtlings",     "Surtlings" },
+        };
+
+        public static string Get(string rawName) =>
+            !string.IsNullOrEmpty(rawName) && Display.TryGetValue(rawName, out string d) ? d : (rawName ?? "");
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     // DISCORD WEBHOOK — fire-and-forget, HttpWebRequest only (no HttpClient)
     // ═══════════════════════════════════════════════════════════════════════
@@ -2006,6 +2070,12 @@ namespace TheRavensCall
         {
             try
             {
+                // Close before reopening — StartSeason/EndSeason both re-point
+                // the Chronicle at a new directory by calling Init again, and
+                // the day-rotation branch inside Write used to do its own
+                // close for that one case only. Doing it here fixes all three
+                // call sites' leaked handle in one place (§4.6).
+                _writer?.Close();
                 _logDir = overrideDir ?? Path.Combine(BepInEx.Paths.ConfigPath, "TheRavensCall", "Chronicle");
                 Directory.CreateDirectory(_logDir);
                 string date = DateTime.UtcNow.ToString("yyyy-MM-dd");
@@ -2018,14 +2088,15 @@ namespace TheRavensCall
 
         public static void Write(string player, string eventType, string message, Dictionary<string, string> data)
         {
-            if (Plugin.EnableChronicleLog != null && !Plugin.EnableChronicleLog.Value) return;
+            // Restructured 2026-09-21 (§4.1): the line is built and handed to
+            // EventFeed unconditionally, on every narrated event; only the
+            // disk write — and the day-rotation it needs — stays behind the
+            // EnableChronicleLog gate, so the dashboard feed keeps working
+            // with the Chronicle log turned off.
             lock (_lock)
             {
                 try
                 {
-                    string today = DateTime.UtcNow.ToString("yyyy-MM-dd");
-                    if (_logPath != null && !_logPath.Contains(today)) { _writer?.Close(); Init(_logDir); }
-
                     string ts = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
                     string day = data != null && data.ContainsKey("day") ? data["day"] : "0";
                     string online = data != null && data.ContainsKey("online") ? data["online"] : "0";
@@ -2041,6 +2112,13 @@ namespace TheRavensCall
                         "\"message\":\"" + EscapeJson(message ?? "") + "\"," +
                         "\"detail\":\"" + EscapeJson(detail) + "\"" +
                         "}";
+
+                    EventFeed.Append(jsonLine);
+
+                    if (Plugin.EnableChronicleLog != null && !Plugin.EnableChronicleLog.Value) return;
+
+                    string today = DateTime.UtcNow.ToString("yyyy-MM-dd");
+                    if (_logPath != null && !_logPath.Contains(today)) Init(_logDir);
                     _writer?.WriteLine(jsonLine);
                 }
                 catch (Exception ex) { Plugin.Log.LogWarning($"[TheRavensCall] Chronicle write failed: {ex.Message}"); }
@@ -2059,10 +2137,145 @@ namespace TheRavensCall
 
         public static void Close() { lock (_lock) { try { _writer?.Close(); } catch { } } }
 
-        private static string EscapeJson(string s)
+        // §4.8: delegates to Companion.Esc, which additionally escapes \t and
+        // strips other control characters — a tab or stray control char in a
+        // lore.txt line used to produce a Chronicle line that was not valid
+        // JSON, which would break JSON.parse of the whole feed.
+        private static string EscapeJson(string s) => Companion.Esc(s);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // EVENT FEED — bounded, in-memory, newest-first buffer of Chronicle
+    // lines, served by /api/activity. INVARIANT: EventFeed never calls back
+    // into Chronicle or Plugin.Narrate/FireEvent, including from its own
+    // warning paths — it logs through Plugin.Log only. Chronicle.Write is
+    // EventFeed's one and only caller (via Append), so a call back the other
+    // way would be a cycle. Own lock, independent of Chronicle._lock — every
+    // caller today is main-thread only (Chronicle.Write, the poll tick, boot
+    // and shutdown), so it's uncontended in practice, but that's an
+    // invariant a future patch could easily break without a lock of its own.
+    // ═══════════════════════════════════════════════════════════════════════
+    public static class EventFeed
+    {
+        private const int MaxLineChars = 2048;
+        private static readonly object _lock = new object();
+        private static readonly List<string> _entries = new List<string>(); // newest first
+        private static bool _dirty = false;
+        private static bool _warnedOversizeLine = false;
+
+        private static string FeedPath => Path.Combine(BepInEx.Paths.ConfigPath, "TheRavensCall", "event_feed.json");
+
+        private static int Capacity()
         {
-            if (string.IsNullOrEmpty(s)) return "";
-            return s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r");
+            int cap = Plugin.EventFeedCapacity != null ? Plugin.EventFeedCapacity.Value : 200;
+            return Math.Max(0, Math.Min(1000, cap));
+        }
+
+        // Always called from Chronicle.Write, inside Chronicle._lock, for
+        // every one of the 17 narrated event types (§4.1). Capacity 0 is off.
+        public static void Append(string jsonLine)
+        {
+            try
+            {
+                if (Capacity() <= 0 || string.IsNullOrEmpty(jsonLine)) return;
+
+                if (jsonLine.Length > MaxLineChars)
+                {
+                    if (!_warnedOversizeLine)
+                    {
+                        _warnedOversizeLine = true;
+                        Plugin.Log.LogWarning($"[TheRavensCall] EventFeed: a Chronicle line exceeded {MaxLineChars} characters and was dropped from the feed (further oversize lines this run are silent).");
+                    }
+                    return;
+                }
+
+                lock (_lock)
+                {
+                    _entries.Insert(0, jsonLine);
+                    int cap = Capacity();
+                    while (_entries.Count > cap) _entries.RemoveAt(_entries.Count - 1);
+                    _dirty = true;
+                }
+            }
+            catch (Exception ex) { Plugin.Log.LogWarning($"[TheRavensCall] EventFeed.Append error: {ex.Message}"); }
+        }
+
+        public static string ToJsonArray()
+        {
+            lock (_lock) { return "[" + string.Join(",", _entries) + "]"; }
+        }
+
+        // Loads event_feed.json (if any) and merges it under whatever is
+        // already in _entries — a raid restored at world load can narrate,
+        // and therefore Append, before this runs (§4.5's boot ordering), and
+        // those rows are newer than anything on disk. Capacity 0 clears and
+        // deletes the file instead, so a later re-enable starts empty rather
+        // than resurrecting stale rows.
+        public static void Init()
+        {
+            try
+            {
+                if (Capacity() <= 0)
+                {
+                    lock (_lock) { _entries.Clear(); _dirty = false; }
+                    try { if (File.Exists(FeedPath)) File.Delete(FeedPath); }
+                    catch (Exception ex) { Plugin.Log.LogWarning($"[TheRavensCall] EventFeed: could not delete {FeedPath}: {ex.Message}"); }
+                    return;
+                }
+
+                if (!File.Exists(FeedPath)) return;
+                string raw = File.ReadAllText(FeedPath);
+                List<string> loaded = Companion.JsonGetArray(raw, "events");
+
+                var sane = new List<string>();
+                int dropped = 0;
+                foreach (var e in loaded)
+                {
+                    // The house heuristic (PlayerRegistry.cs's own load path):
+                    // JsonGetArray has no failure signal of its own, so each
+                    // element is sanity-checked before it's trusted.
+                    if (e != null && e.StartsWith("{\"timestamp_utc\":\"") && e.EndsWith("}"))
+                        sane.Add(e);
+                    else
+                        dropped++;
+                }
+                if (dropped > 0)
+                    Plugin.Log.LogWarning($"[TheRavensCall] EventFeed: dropped {dropped} malformed row(s) from event_feed.json.");
+
+                lock (_lock)
+                {
+                    _entries.AddRange(sane);
+                    int cap = Capacity();
+                    while (_entries.Count > cap) _entries.RemoveAt(_entries.Count - 1);
+                }
+            }
+            catch (Exception ex) { Plugin.Log.LogWarning($"[TheRavensCall] EventFeed.Init error: {ex.Message}"); }
+        }
+
+        // Called from the poll tick (outside the EnableHttpServer guard, so
+        // the feed persists even with the HTTP server off) and once more
+        // from Plugin.OnDestroy before Chronicle.Close(). No-op when clean
+        // or when the feed is off.
+        public static void Save()
+        {
+            try
+            {
+                if (Capacity() <= 0) return;
+                string json;
+                lock (_lock)
+                {
+                    if (!_dirty) return;
+                    json = "{\"saved_at\":\"" + DateTime.UtcNow.ToString("o") + "\",\"events\":" + ToJsonArray() + "}";
+                }
+                Directory.CreateDirectory(Path.Combine(BepInEx.Paths.ConfigPath, "TheRavensCall"));
+                PlayerRegistry.AtomicWrite(FeedPath, json);
+                // Clear only after the write succeeds — if AtomicWrite throws
+                // (full disk, an AV/backup handle on the .tmp, a permission
+                // error), _dirty must stay set so the next poll tick's Save()
+                // retries instead of silently dropping this batch of events.
+                lock (_lock) { _dirty = false; }
+            }
+            catch (Exception ex) { Plugin.Log.LogWarning($"[TheRavensCall] EventFeed.Save error: {ex.Message}"); }
         }
     }
 
@@ -2208,8 +2421,28 @@ namespace TheRavensCall
     {
         private static string _currentSeason = null;
         private static DateTime _seasonStart = DateTime.MinValue;
+        // Remembered across a restart (§4.4): SaveMeta only used to emit these
+        // on the ending call, so the very next StartSeason erased them and a
+        // restart never read them back.
+        private static string _lastEnded = null;
+        private static string _lastEndedAt = null;
+        // The season-start counters every standings row subtracts from.
+        // Keyed by player name, OrdinalIgnoreCase like PlayerRegistry itself.
+        // Kept as an array-of-rows file, not a name-keyed map — see
+        // SnapshotBaseline for why.
+        private static Dictionary<string, Baseline> _baseline = new Dictionary<string, Baseline>(StringComparer.OrdinalIgnoreCase);
+        private static string _standingsSince = null;
 
         private static string MetaPath => Path.Combine(BepInEx.Paths.ConfigPath, "TheRavensCall", "seasons.json");
+        private static string BaselinePath => Path.Combine(BepInEx.Paths.ConfigPath, "TheRavensCall", "season_baseline.json");
+
+        private class Baseline
+        {
+            public int Kills;
+            public int Deaths;
+            public int BossKills;
+            public long PlaytimeSeconds;
+        }
 
         public static string GetCurrentSeasonName() => _currentSeason ?? "";
 
@@ -2222,11 +2455,151 @@ namespace TheRavensCall
                 var m = System.Text.RegularExpressions.Regex.Match(raw, "\"current_season\"\\s*:\\s*\"([^\"]+)\"");
                 if (m.Success) _currentSeason = m.Groups[1].Value;
                 var ms = System.Text.RegularExpressions.Regex.Match(raw, "\"season_start\"\\s*:\\s*\"([^\"]+)\"");
-                if (ms.Success) DateTime.TryParse(ms.Groups[1].Value, out _seasonStart);
+                // §4.4 fix: a bare TryParse read a "...Z" string back as local
+                // time, and SaveMeta/SeasonJson then re-stamped that local
+                // value with a "Z" — a two-hour drift on a UTC+2 host on every
+                // mid-season boot.
+                if (ms.Success) DateTime.TryParse(ms.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal, out _seasonStart);
+                var le = System.Text.RegularExpressions.Regex.Match(raw, "\"last_ended\"\\s*:\\s*\"([^\"]+)\"");
+                if (le.Success) _lastEnded = le.Groups[1].Value;
+                var lea = System.Text.RegularExpressions.Regex.Match(raw, "\"last_ended_at\"\\s*:\\s*\"([^\"]+)\"");
+                if (lea.Success) _lastEndedAt = lea.Groups[1].Value;
+
                 if (!string.IsNullOrEmpty(_currentSeason))
+                {
                     Plugin.Log.LogInfo("[TheRavensCall] Active season loaded: " + _currentSeason);
+
+                    if (!LoadBaseline())
+                    {
+                        // A 1.4.0 upgrade landing mid-season: no baseline file
+                        // exists yet. Snapshot now rather than report every
+                        // player's lifetime total as their season score.
+                        SnapshotBaseline(_currentSeason, DateTime.UtcNow);
+                        Plugin.Log.LogInfo("[TheRavensCall] season_baseline.json missing for active season " +
+                            _currentSeason + "; standings count from this restart (" + _standingsSince + ").");
+                    }
+
+                    // §4.6: re-point the Chronicle at the season's archive
+                    // folder, same path expression StartSeason uses — Init
+                    // otherwise leaves it in the default folder after a
+                    // mid-season restart.
+                    string archiveDir = Path.Combine(BepInEx.Paths.ConfigPath, "TheRavensCall", "Chronicle", "seasons", _currentSeason);
+                    Chronicle.Init(archiveDir);
+                }
             }
             catch (Exception ex) { Plugin.Log.LogWarning("[TheRavensCall] SeasonSystem.Init error: " + ex.Message); }
+        }
+
+        // Array of rows, not a name-keyed map: the existing map parser splits
+        // each pair on the first colon, which breaks a name like "Od:in", and
+        // ExtractJsonField takes the first "<key>":  anywhere in the document,
+        // so a player literally named "kills" would be matched before the
+        // real key (§4.4).
+        private static bool LoadBaseline()
+        {
+            try
+            {
+                if (!File.Exists(BaselinePath)) return false;
+                string raw = File.ReadAllText(BaselinePath);
+                string takenAt = Companion.JsonGetString(raw, "taken_at");
+                var rows = Companion.JsonGetArray(raw, "rows");
+
+                var map = new Dictionary<string, Baseline>(StringComparer.OrdinalIgnoreCase);
+                foreach (var row in rows)
+                {
+                    string name = Companion.JsonGetString(row, "name");
+                    if (string.IsNullOrEmpty(name)) continue;
+                    map[name] = new Baseline
+                    {
+                        Kills = Companion.JsonGetInt(row, "kills"),
+                        Deaths = Companion.JsonGetInt(row, "deaths"),
+                        BossKills = Companion.JsonGetInt(row, "boss_kills"),
+                        PlaytimeSeconds = Companion.JsonGetLong(row, "playtime_seconds"),
+                    };
+                }
+                _baseline = map;
+                _standingsSince = !string.IsNullOrEmpty(takenAt) ? takenAt : _seasonStart.ToString("yyyy-MM-ddTHH:mm:ssZ");
+                return true;
+            }
+            catch (Exception ex) { Plugin.Log.LogWarning("[TheRavensCall] SeasonSystem: season_baseline.json load failed: " + ex.Message); return false; }
+        }
+
+        private static void SnapshotBaseline(string seasonName, DateTime takenAt)
+        {
+            var map = new Dictionary<string, Baseline>(StringComparer.OrdinalIgnoreCase);
+            var rows = new List<string>();
+            foreach (var rec in PlayerRegistry.All)
+            {
+                var b = new Baseline
+                {
+                    Kills = rec.TotalKillsLifetime,
+                    Deaths = rec.TotalDeathsLifetime,
+                    BossKills = rec.BossKillsCredited,
+                    PlaytimeSeconds = rec.PlaytimeSecondsLifetime,
+                };
+                map[rec.Name] = b;
+                rows.Add("{\"name\":\"" + Companion.Esc(rec.Name) + "\",\"kills\":" + b.Kills + ",\"deaths\":" + b.Deaths +
+                    ",\"boss_kills\":" + b.BossKills + ",\"playtime_seconds\":" + b.PlaytimeSeconds + "}");
+            }
+
+            _baseline = map;
+            _standingsSince = takenAt.ToString("yyyy-MM-ddTHH:mm:ssZ");
+
+            string json = "{\"season\":\"" + EscJ(seasonName) + "\",\"taken_at\":\"" + _standingsSince + "\",\"rows\":[" + string.Join(",", rows) + "]}";
+            Directory.CreateDirectory(Path.Combine(BepInEx.Paths.ConfigPath, "TheRavensCall"));
+            PlayerRegistry.AtomicWrite(BaselinePath, json);
+        }
+
+        // The exact §2 "season" object as a "season":{...} fragment — the
+        // caller (Companion.BuildActivityCache) wraps it with generated_at
+        // and events. Deltas are Math.Max(0, current - baseline); a player
+        // absent from the baseline (joined after the season started) reads 0
+        // for every counter, which is correct.
+        internal static string SeasonJson()
+        {
+            try
+            {
+                bool active = !string.IsNullOrEmpty(_currentSeason);
+                string name = active ? _currentSeason : "";
+                string startedAt = active ? _seasonStart.ToString("yyyy-MM-ddTHH:mm:ssZ") : null;
+                string standingsSince = active ? (_standingsSince ?? startedAt) : null;
+
+                var rows = new List<string>();
+                if (active)
+                {
+                    foreach (var rec in PlayerRegistry.All)
+                    {
+                        _baseline.TryGetValue(rec.Name, out Baseline b);
+                        int kills = Math.Max(0, rec.TotalKillsLifetime - (b?.Kills ?? 0));
+                        int deaths = Math.Max(0, rec.TotalDeathsLifetime - (b?.Deaths ?? 0));
+                        int bossKills = Math.Max(0, rec.BossKillsCredited - (b?.BossKills ?? 0));
+                        long playtime = Math.Max(0L, rec.PlaytimeSecondsLifetime - (b?.PlaytimeSeconds ?? 0L));
+                        rows.Add("{\"name\":\"" + Companion.Esc(rec.Name) + "\",\"kills\":" + kills + ",\"deaths\":" + deaths +
+                            ",\"boss_kills\":" + bossKills + ",\"playtime_seconds\":" + playtime + "}");
+                    }
+                }
+
+                string startedAtJson = startedAt != null ? "\"" + startedAt + "\"" : "null";
+                string standingsSinceJson = standingsSince != null ? "\"" + standingsSince + "\"" : "null";
+                string lastEndedJson = !string.IsNullOrEmpty(_lastEnded) ? "\"" + EscJ(_lastEnded) + "\"" : "null";
+                string lastEndedAtJson = !string.IsNullOrEmpty(_lastEndedAt) ? "\"" + EscJ(_lastEndedAt) + "\"" : "null";
+
+                return "\"season\":{" +
+                    "\"active\":" + Companion.B(active) + "," +
+                    "\"name\":\"" + EscJ(name) + "\"," +
+                    "\"started_at\":" + startedAtJson + "," +
+                    "\"standings_since\":" + standingsSinceJson + "," +
+                    "\"last_ended\":" + lastEndedJson + "," +
+                    "\"last_ended_at\":" + lastEndedAtJson + "," +
+                    "\"standings\":[" + string.Join(",", rows) + "]" +
+                    "}";
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning("[TheRavensCall] SeasonSystem.SeasonJson error: " + ex.Message);
+                return "\"season\":{\"active\":false,\"name\":\"\",\"started_at\":null,\"standings_since\":null,\"last_ended\":null,\"last_ended_at\":null,\"standings\":[]}";
+            }
         }
 
         public static void StartSeason(string name)
@@ -2237,6 +2610,7 @@ namespace TheRavensCall
                 _seasonStart = DateTime.UtcNow;
                 string archiveDir = Path.Combine(BepInEx.Paths.ConfigPath, "TheRavensCall", "Chronicle", "seasons", name);
                 Chronicle.Init(archiveDir);
+                SnapshotBaseline(name, _seasonStart);
                 SaveMeta();
                 Plugin.Narrate($"A new season begins: {name}!", "season_start", "SERVER");
                 Plugin.Log.LogInfo("[TheRavensCall] Season started: " + name);
@@ -2255,6 +2629,10 @@ namespace TheRavensCall
                 _currentSeason = null;
                 Chronicle.Init();
                 SaveMeta(ended);
+                _baseline.Clear();
+                _standingsSince = null;
+                try { if (File.Exists(BaselinePath)) File.Delete(BaselinePath); }
+                catch (Exception ex) { Plugin.Log.LogWarning("[TheRavensCall] SeasonSystem: could not delete season_baseline.json: " + ex.Message); }
                 Plugin.Narrate($"The season of {ended} has ended.", "season_end", "SERVER");
                 Plugin.Log.LogInfo("[TheRavensCall] Season ended: " + ended);
             }
@@ -2287,13 +2665,16 @@ namespace TheRavensCall
             {
                 string dir = Path.Combine(BepInEx.Paths.ConfigPath, "TheRavensCall");
                 Directory.CreateDirectory(dir);
-                string nowStr = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
                 string startStr = _seasonStart.ToString("yyyy-MM-ddTHH:mm:ssZ");
+                // Remembered (§4.4): update on the ending call only, but
+                // re-emit the pair below on every SaveMeta write — including
+                // the next StartSeason — so a restart reads last_ended back.
+                if (justEnded != null) { _lastEnded = justEnded; _lastEndedAt = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"); }
                 string current = _currentSeason != null
                     ? "\"current_season\":\"" + EscJ(_currentSeason) + "\",\"season_start\":\"" + startStr + "\""
                     : "\"current_season\":\"\"";
-                string endedEntry = justEnded != null
-                    ? ",\"last_ended\":\"" + EscJ(justEnded) + "\",\"last_ended_at\":\"" + nowStr + "\""
+                string endedEntry = !string.IsNullOrEmpty(_lastEnded)
+                    ? ",\"last_ended\":\"" + EscJ(_lastEnded) + "\",\"last_ended_at\":\"" + EscJ(_lastEndedAt ?? "") + "\""
                     : "";
                 File.WriteAllText(MetaPath, "{" + current + endedEntry + "}");
             }
