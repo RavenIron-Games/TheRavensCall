@@ -2598,7 +2598,12 @@ namespace TheRavensCall
         {
             try
             {
-                if (!File.Exists(MetaPath)) return;
+                // No file, or an unreadable one (the catch below), means no
+                // season — including for a process that already ran a world
+                // session with one (1.4.2): the fields are process-wide
+                // statics, and a listen server hosting again after
+                // seasons.json was deleted must not keep the old season.
+                if (!File.Exists(MetaPath)) { ResetSeasonState(); return; }
                 string raw = File.ReadAllText(MetaPath);
                 // 1.4.1: the four strings are read back through an
                 // escape-aware reader. SaveMeta writes them through EscJ,
@@ -2609,6 +2614,11 @@ namespace TheRavensCall
                 // StartSeason trims what was typed, so the name shown and the
                 // folder used agree on the upgrade path too.
                 string cs = MetaString(raw, "current_season");
+                // MetaString reads "" for the legitimate no-season file and
+                // null only when the key is absent or its value is damaged
+                // (1.4.2): say so, rather than let a season vanish silently.
+                if (cs == null && raw.Contains("current_season"))
+                    Plugin.Log.LogWarning("[TheRavensCall] seasons.json holds a damaged current_season value; treating it as no active season.");
                 _currentSeason = string.IsNullOrEmpty(cs) ? null : TrimTrailingPeriodsAndWhitespace(cs);
                 if (string.IsNullOrEmpty(_currentSeason)) _currentSeason = null;
                 string ss = MetaString(raw, "season_start");
@@ -2654,7 +2664,19 @@ namespace TheRavensCall
                     Chronicle.Init(ArchiveDir(_currentSeason));
                 }
             }
-            catch (Exception ex) { Plugin.Log.LogWarning("[TheRavensCall] SeasonSystem.Init error: " + ex.Message); }
+            catch (Exception ex)
+            {
+                ResetSeasonState();
+                Plugin.Log.LogWarning("[TheRavensCall] SeasonSystem.Init error: " + ex.Message + " (treating it as no active season)");
+            }
+        }
+
+        private static void ResetSeasonState()
+        {
+            _currentSeason = null;
+            _seasonStart = DateTime.MinValue;
+            _baseline.Clear();
+            _standingsSince = null;
         }
 
         // Array of rows, not a name-keyed map: the existing map parser splits
@@ -2672,9 +2694,12 @@ namespace TheRavensCall
                 // baseline left behind by an earlier season — EndSeason's
                 // delete failed, or the server died before it ran — must not
                 // be subtracted from the new season's counters. Returning
-                // false drops Init into its snapshot-now branch.
+                // false drops Init into its snapshot-now branch. Compared
+                // trimmed, because a 1.4.0 baseline holds the name exactly as
+                // typed (e.g. "TestSeason.") while 1.4.1+ trims it at load.
                 string forSeason = Companion.JsonGetString(raw, "season");
-                if (!string.IsNullOrEmpty(forSeason) && !string.Equals(forSeason, _currentSeason, StringComparison.Ordinal))
+                if (!string.IsNullOrEmpty(forSeason) &&
+                    !string.Equals(TrimTrailingPeriodsAndWhitespace(forSeason), _currentSeason, StringComparison.Ordinal))
                 {
                     Plugin.Log.LogWarning("[TheRavensCall] season_baseline.json belongs to season " + forSeason +
                         ", not " + _currentSeason + "; taking a fresh baseline now.");
@@ -2865,7 +2890,10 @@ namespace TheRavensCall
                 string endedEntry = !string.IsNullOrEmpty(_lastEnded)
                     ? ",\"last_ended\":\"" + EscJ(_lastEnded) + "\",\"last_ended_at\":\"" + EscJ(_lastEndedAt ?? "") + "\""
                     : "";
-                File.WriteAllText(MetaPath, "{" + current + endedEntry + "}");
+                // Atomic (1.4.2): a torn seasons.json used to be the one way
+                // to lose a running season; the baseline next to it was
+                // already written this way.
+                PlayerRegistry.AtomicWrite(MetaPath, "{" + current + endedEntry + "}");
             }
             catch (Exception ex) { Plugin.Log.LogWarning("[TheRavensCall] SeasonSystem.SaveMeta error: " + ex.Message); }
         }
