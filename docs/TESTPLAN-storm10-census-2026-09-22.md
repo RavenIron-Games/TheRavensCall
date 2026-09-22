@@ -15,6 +15,8 @@ Two builds booted:
 |---|---|---|---|
 | branch at `15361d8` (the census as implemented) | `76dc6640bdecb95c6cac03a7163b3e42` | 243,200 | 08:08 |
 | branch at `a5232e2` (after the second review's fixes) | `e073321c20298de82789033ae8cb61f7` | 243,200 | 08:45, 08:51 (interval 0), 08:53 (token), 08:55 (defaults) |
+| branch at `0f2a788` (pre-publish respin: builder links follow the roster, Build tab card follows the census, no feed flash on Back) | `37e73d5dd794c8bcfb977790e442e6a8` | 244,736 | 09:28 |
+| branch at `cbbe5e8` (pass 2 of the pre-publish check; the shipped bytes) | `47bb2d3e4622e3883acf850652aa9f5b` | 246,272 | the release boot, see "Respins" |
 
 The page under test is the one embedded in each DLL (`<meta name="theravenscall-api"
 content="1.5">`), read at `http://localhost:2112/` in the desktop app's browser pane.
@@ -56,6 +58,19 @@ both restored before the last boot, which was left running.
   (first build), 18 ms with it outside (second build) — the walk itself is the small part.
 - `player_ids.json` after the run: Nomadtest, "Wubarrk Dev", TestNomad.
 - Storm10 left **up** on `e073321c` (pid 37216, boot 08:55) with the defaults restored.
+
+## Respins after the pre-publish check
+
+The two pre-publish passes (48 and 19 agents) found no must-fix in the census itself but
+five page defects in the fixes made after the second review, all in how the World panel
+and the feed follow the roster and the detail view. Fixed on `0f2a788` and `cbbe5e8` and
+checked without the live world, on two timing harnesses serving the fixture:
+
+| Case | Result |
+|---|---|
+| `/api/state` answers 503 for 12 s while `/api/census` answers at once | the builder cells render as plain text, then become links the moment the roster arrives (9 links: Ragnvald, Sigrun) — no wait for the next census payload |
+| `/api/census` answers the empty pre-first-run envelope for 20 s | with a detail view open on its Build tab, the card reads "First count runs a few seconds after boot." and flips to "Standing in the world: 350 pieces · 3 portals · 1 bed · 1 ward · 1 ship · 10 chests · 2 stations." on the next census poll, the detail view and its tab untouched |
+| the live page on `0f2a788` (Storm10, 09:28 boot) | builder links present from the first render, the Build tab card correct, zero `.feed-row-new` rows after Back, zero mod warnings |
 
 ## Not covered
 

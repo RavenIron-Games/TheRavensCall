@@ -24,7 +24,7 @@
 - Live on the Storm10 1.0.12 testbed on 2026-09-22 (`docs/TESTPLAN-storm10-census-2026-09-22.md`): every step of the scope's test plan passed, with real portals placed by the admin for the directory, the token gate and `CensusIntervalMinutes = 0` each on their own boot, the fixture harness for the cases the live world lacks (an unknown builder, an unpaired portal, a 1.4 server's 404), and a 375 px viewport; zero mod warnings across five boots. The chests row on that world reads 409 standing / 0 player-built — world-generated chests count in the total, which is what the docs now say.
 
 ### 🔧 Changed
-- The packaged `HexiumDist/plugins/TheRavensCall.dll` is **not** rebuilt as part of this change — it still contains 1.4.1's bytes (md5 `a1ed4838d0aff30148e64d0fa9e33616`, 210,432 bytes — the last packaged build; 1.4.2 was never packaged either). It needs a clean `dotnet build -c Release` from this source (and its md5 recorded here) before 1.5.0 is released.
+- `HexiumDist/plugins/TheRavensCall.dll` refreshed: a clean `dotnet build -c Release` of the 1.5.0 source (md5 `47bb2d3e4622e3883acf850652aa9f5b`, 246,272 bytes; two clean builds of the same commit are byte-identical), the first packaged build since 1.4.1 — it carries the 1.4.2 fixes below as well. The eight-step live test on the Storm10 1.0.12 dedicated server (`docs/TESTPLAN-storm10-census-2026-09-22.md`) ran on this same source two small page respins earlier; the respins (builder links following the roster, the Build tab card following the census, no replayed feed highlight on Back) were checked on the live page and on timing harnesses, and these exact bytes boot on Storm10 as the release build. Same deterministic-per-commit build as 1.4.0 below.
 
 ---
 
