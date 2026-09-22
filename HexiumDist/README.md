@@ -422,16 +422,25 @@ No. With `WebhookUrl` empty nothing is posted to Discord and everything else, th
 Delete any `theravenscall.html` you placed in `BepInEx/config/TheRavensCall/` or next to the DLL. The page has shipped inside the DLL since 1.3.0; an older loose copy still overrides it and cannot read the current API.
 
 **Does it run on a Linux server?**
-Yes. 1.6.0 has run on a Linux dedicated server on Valheim 1.0.15, including the push over HTTPS with certificate validation on.
+Yes. 1.6.0 has run on a Linux dedicated server on Valheim 1.0.15 (under WSL2), including the push over HTTPS with certificate validation on.
 
 **Which Valheim version does it need?**
-Valheim 1.0. The 1.6.0 builds have run on 1.0.15; 1.5.0 and earlier ran on 1.0.12. The older 0.22x builds are not supported: on them the `ravenscall` console command fails to register at load, and the world census throws on its first run.
+Valheim 1.0. The 1.6.0 build has run on 1.0.12 (a Windows dedicated server) and 1.0.15 (a Linux one). The older 0.22x builds are not supported: on them the `ravenscall` console command fails to register at load, and the world census throws on its first run.
 
 **Can I run it on a listen server hosted from the game?**
 It is built and tested for dedicated servers. It loads on a listen-server host, but that setup has not been tested.
 
 **How do I take a server off a hosted dashboard?**
 Send `DELETE /s/<id>/api` to the receiver with the write token in the `Authorization: Bearer` header; the stored copy is removed and the page reads "no data" again. Then remove the id from the receiver's registry and redeploy, so the tokens are dead too. Clearing `PushUrl` on the server stops new pushes at the next restart.
+
+**Why does the dashboard show no health, inventory or position for a player who is online right now?**
+Because a dedicated server never has them: it relays the world, while a player's health, inventory and position live on that player's own client. The dashboard shows each player's stored record instead: totals, titles, skills, milestones, the death history and everything WhereTheCrowFlies reported. The only positions it keeps are where players died.
+
+**Can I turn the web dashboard off and keep only the file exports?**
+Yes: `EnableHttpServer = false`. The BarrkBOT exports, the Chronicle, the Discord webhook and, since 1.6.0, the push all keep running without it.
+
+**Where does the mod keep its data, and what do I copy when I move or rebuild the server?**
+Everything lives under `BepInEx/config/TheRavensCall/` (the per-player records in `players/`, the Chronicle, `seasons.json`, `season_baseline.json`, `event_feed.json`, `player_ids.json`, `lore.txt`) plus the settings file `BepInEx/config/com.raveniron.theravenscall.cfg`. Copy that folder and that file. The two BarrkBOT files are rebuilt after a boot, and the dashboard page ships inside the DLL. See [Where Everything Lives](#-where-everything-lives).
 
 ---
 ## 💜 Support Raven Iron
