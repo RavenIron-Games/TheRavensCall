@@ -44,10 +44,12 @@ copy of this folder and it works the same way, unmodified.
    2026-09-22), set in Site configuration -> Domain management. This
    domain's nameservers are Netlify DNS, so adding the subdomain there
    creates its DNS record as well, and Netlify provisions the certificate
-   once it resolves. Netlify then **redirects the `*.netlify.app` name to
-   the primary domain**, so every server's `PushUrl` must name the custom
-   domain from that moment: a redirected `POST` does not arrive as a push.
-   Until it's set, the site's `*.netlify.app` URL works the same way.
+   once it resolves. The site's `*.netlify.app` name keeps working beside
+   the custom domain (Netlify's docs: the Netlify subdomain URLs always
+   work even with a custom domain set; only an apex and its `www` redirect
+   to each other), so a server's `PushUrl` may name either host. Prefer the
+   custom domain: a site rename changes the `*.netlify.app` name, the
+   custom domain stays.
 6. **Spend cap.** Site configuration -> Billing -> set a spend cap before
    the DNS record points anywhere. `/push` and `/s/*` are public and every
    rejected request (even a `401`) is still a billed invocation — see the
