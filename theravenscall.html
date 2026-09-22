@@ -965,8 +965,24 @@
 
   // A known name links into the detail view; an unknown builder (null name)
   // renders as plain text, never a link (§6).
+  // A builder cell: a name link when the roster knows that player (so the
+  // link opens a detail view that exists), plain text for a census-only
+  // name (one /api/state has never seen — e.g. a bed owner learned from the
+  // bed itself), "Unknown (id N)" for a creator id with no name yet, and
+  // "Not player-built" for world-generated objects, whose creator id is 0
+  // (review 2026-09-22).
   function builderCell(name, id) {
-    return name ? '<span class="name-link" data-select="' + esc(name) + '">' + esc(name) + '</span>' : 'Unknown (id ' + esc(id) + ')';
+    if (name) {
+      var known = !!(state.stateData && state.stateData.players && state.stateData.players[name]);
+      return known ? '<span class="name-link" data-select="' + esc(name) + '">' + esc(name) + '</span>' : esc(name);
+    }
+    return id ? 'Unknown (id ' + esc(id) + ')' : '<span class="detail-sub">Not player-built</span>';
+  }
+
+  // Positions are integers already (server-rounded) and read as a coordinate
+  // pair, never with thousands separators (review 2026-09-22).
+  function posText(o) {
+    return Math.round(o.x || 0) + ', ' + Math.round(o.z || 0);
   }
 
   // Normalizes /api/census's builders[] into rows sortBoardRows() can rank
@@ -1106,10 +1122,12 @@
       state.activityAuth = true;
       var compare = stripGeneratedAt(text);
       if (compare !== state.lastActivityCompare) {
+        var parsedActivity;
+        try { parsedActivity = JSON.parse(text); } catch (e) { return; } // parse before priming the gate (same rule as pollCensus)
         state.lastActivityCompare = compare;
         var prevEvents = state.activityData && state.activityData.events;
         var prevNewest = (prevEvents && prevEvents[0]) ? prevEvents[0].timestamp_utc : null;
-        try { state.activityData = JSON.parse(text); } catch (e) { return; }
+        state.activityData = parsedActivity;
         state.feedHighlightSince = prevNewest;
         renderActivity();
       } else if (wasUnauthorized) {
@@ -1150,8 +1168,12 @@
       state.censusAuth = true;
       var compare = stripGeneratedAt(text);
       if (compare !== state.lastCensusCompare) {
+        // Parse before priming the change gate: a malformed body must not
+        // latch the gate and silence every identical retry (review 2026-09-22).
+        var parsed;
+        try { parsed = JSON.parse(text); } catch (e) { return; }
         state.lastCensusCompare = compare;
-        try { state.censusData = JSON.parse(text); } catch (e) { return; }
+        state.censusData = parsed;
         renderCensus();
       } else if (wasUnauthorized) {
         renderCensus();
@@ -1376,7 +1398,12 @@
 
     var seasonPanel = document.getElementById('seasonPanel');
     var feedPanel = document.getElementById('feedPanel');
-    if (!activityPanelsShouldShow()) { seasonPanel.innerHTML = ''; feedPanel.innerHTML = ''; return; }
+    // Blank only when the route is unsupported (404). While the detail view
+    // is open the panels are merely hidden (render() flips #worldPanels'
+    // hidden), so keep rendering into them: Back then shows current content
+    // at once instead of empty panels until the next changed payload
+    // (review 2026-09-22).
+    if (state.activitySupported !== true) { seasonPanel.innerHTML = ''; feedPanel.innerHTML = ''; return; }
     if (state.activityAuth === false) {
       seasonPanel.innerHTML = '<div class="card"><div class="notice small">Needs the API token (Settings).</div></div>';
       feedPanel.innerHTML = '';
@@ -1394,7 +1421,7 @@
     document.getElementById('worldPanels').hidden = !worldPanelsShouldShow();
 
     var panel = document.getElementById('censusPanel');
-    if (!censusPanelShouldShow()) { panel.innerHTML = ''; return; }
+    if (state.censusSupported !== true) { panel.innerHTML = ''; return; } // same rule as renderActivity: hidden is not blank
     if (state.censusAuth === false) {
       panel.innerHTML = '<div class="card"><div class="notice small">Needs the API token (Settings).</div></div>';
       return;
@@ -1477,7 +1504,7 @@
           '<td>' + esc(p.kind) + '</td>' +
           '<td>' + builderCell(p.builder, p.builder_id) + '</td>' +
           '<td><span class="tag' + (p.connected ? ' green' : '') + '">' + (p.connected ? 'linked' : 'no pair') + '</span></td>' +
-          '<td class="num">' + fmtNum(p.x) + ', ' + fmtNum(p.z) + '</td></tr>';
+          '<td class="num">' + posText(p) + '</td></tr>';
       });
       html += '</tbody></table></div>';
       if (data.portals_truncated) html += '<div class="notice small">Showing the first 500 portals.</div>';
@@ -1494,7 +1521,7 @@
       beds.forEach(function (b) {
         html += '<tr><td>' + (b.owner ? esc(b.owner) : '<span class="detail-sub">Unclaimed</span>') + '</td>' +
           '<td>' + builderCell(b.builder, b.builder_id) + '</td>' +
-          '<td class="num">' + fmtNum(b.x) + ', ' + fmtNum(b.z) + '</td></tr>';
+          '<td class="num">' + posText(b) + '</td></tr>';
       });
       html += '</tbody></table></div>';
       if (data.beds_truncated) html += '<div class="notice small">Showing the first 500 beds.</div>';
@@ -1510,7 +1537,7 @@
       wards.forEach(function (w) {
         html += '<tr><td>' + builderCell(w.builder, w.builder_id) + '</td>' +
           '<td><span class="tag' + (w.enabled ? ' green' : '') + '">' + (w.enabled ? 'active' : 'inactive') + '</span></td>' +
-          '<td class="num">' + fmtNum(w.x) + ', ' + fmtNum(w.z) + '</td></tr>';
+          '<td class="num">' + posText(w) + '</td></tr>';
       });
       html += '</tbody></table></div>';
       if (data.wards_truncated) html += '<div class="notice small">Showing the first 500 wards.</div>';
@@ -1848,9 +1875,17 @@
     if (state.censusAuth === false) {
       return '<div class="card"><h3>World census</h3><div class="notice small">Needs the API token (Settings).</div></div>';
     }
-    var row = censusBuilderRowFor((state.censusData && state.censusData.builders) || [], p.name);
+    var census = state.censusData;
+    var row = censusBuilderRowFor((census && census.builders) || [], p.name);
     var line;
-    if (!row) {
+    if (census && census.enabled === false) {
+      // Same two guards renderCensusPanel applies, so the Build tab never
+      // reads "Nothing counted yet." about a census that is off or has not
+      // run (review 2026-09-22).
+      line = 'The census is off (<span class="mono">CensusIntervalMinutes = 0</span>).';
+    } else if (!census || !census.generated_at) {
+      line = 'First count runs a few seconds after boot.';
+    } else if (!row) {
       line = 'Nothing counted yet.';
     } else {
       var parts = [];

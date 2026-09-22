@@ -257,8 +257,12 @@ force a re-render.
 
 **Detail view.** The Build tab gains one line built from that player's row in
 `/api/census`'s `builders[]`: "Standing in the world: 412 pieces · 3 portals
-· 1 bed · 14 chests · 3 stations · 1 ship" — zero-count groups are omitted.
-A player with no row on the census reads "Nothing counted yet." When the
+· 1 bed · 2 wards · 1 ship · 14 chests · 3 stations" — the row's own order,
+zero-count groups omitted; `pieces` is every object that player has standing,
+so the group figures after it are parts of it, not additions to it. A player
+with no row on the census reads "Nothing counted yet."; when the census is
+off or has not run yet, the tab shows the same line the World panel does.
+When the
 vanilla `PortalsPlaced` stat is present on that player, it shows on the same
 tab as "Portals placed, ever: 14" — a different, larger number than the
 census's live portal count, since it includes portals since torn down; the

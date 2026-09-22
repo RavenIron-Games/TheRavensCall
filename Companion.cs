@@ -59,12 +59,6 @@ namespace TheRavensCall
         // CensusIntervalMinutes schedule — never a live walk from an HTTP
         // worker thread, same discipline as _stateCache/_activityCache.
         internal static volatile string _censusCache;
-        // Served until the first completed census (or if CensusIntervalMinutes
-        // is 0, replaced by WorldCensus with the same shape and enabled:false —
-        // /api/census never 404s while the HTTP server is up, the same
-        // contract /api/activity already keeps). Keep in step with
-        // WorldCensus's own envelope builder.
-        internal const string EmptyCensusJson = "{\"generated_at\":\"\",\"enabled\":true,\"interval_minutes\":5,\"scanned_objects\":0,\"duration_ms\":0,\"groups\":{\"portals\":{\"total\":0,\"player_built\":0},\"beds\":{\"total\":0,\"player_built\":0},\"wards\":{\"total\":0,\"player_built\":0},\"ships\":{\"total\":0,\"player_built\":0},\"carts\":{\"total\":0,\"player_built\":0},\"chests\":{\"total\":0,\"player_built\":0},\"stations\":{\"total\":0,\"player_built\":0}},\"builders\":[],\"unknown_builders\":0,\"portals\":[],\"beds\":[],\"wards\":[]}";
 
         // HTTP server
         private HttpListener _listener;
@@ -241,7 +235,9 @@ namespace TheRavensCall
                     // Same cached-string-or-fixed-envelope discipline as
                     // /api/activity — never a live walk from this worker
                     // thread, never 404 while the HTTP server is up (§5).
-                    body = Encoding.UTF8.GetBytes(_censusCache ?? EmptyCensusJson);
+                    // The fallback is WorldCensus's own empty envelope, built
+                    // from the configured interval (review 2026-09-22).
+                    body = Encoding.UTF8.GetBytes(_censusCache ?? WorldCensus.EmptyEnvelope());
                 }
                 else if (path == "/" || path == "/index" || path.EndsWith(".html"))
                 {

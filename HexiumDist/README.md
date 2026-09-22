@@ -85,7 +85,7 @@ Every death, every kill, every fallen god, every shoreline first walked — The 
 - **Every vanilla stat on your own in-game Stats screen** — kills, hits, deaths, jumps, cheats, world loads, PvP hits/kills, arrows shot, portals, distance traveled, and the rest of Valheim's ~205 built-in counters (105 before 1.0) — reported as an absolute snapshot, so it backfills whatever a player had already earned before installing the mod instead of starting from zero.
 - **Skill levels & progress**, for every skill a player has actually raised (Swords, Bows, Sneak, Jump, and the rest).
 - **Fish caught**, structures built/removed/repaired, items crafted/upgraded/repaired, resources harvested per type, food & potions consumed, bosses summoned, and guardian powers used.
-- **World census** — since 1.5.0, the server counts portals, beds, wards, ships, carts, chests and crafting stations standing in the world on a timer, who placed each one, and a per-player total of everything they have standing right now.
+- **World census** — since 1.5.0, the server counts portals, beds, wards, ships, carts, chests and crafting stations standing in the world on a timer, how many of them players placed and by whom, and a per-player total of everything they have standing right now.
 
 ## 📯 Where the News Goes
 

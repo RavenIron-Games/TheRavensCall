@@ -65,7 +65,7 @@ belongs to the first matching group:
 | `wards` | `PrivateArea` | |
 | `ships` | `Ship` | |
 | `carts` | `Vagon` | |
-| `chests` | `Container` **and** `Piece` | the `Piece` requirement keeps dungeon and treasure chests (no `Piece`) out |
+| `chests` | `Container` **and** `Piece` | placeable chests, vanilla or modded. World-generated chests (`TreasureChest_*` in locations and dungeons) carry `Piece` too and land in `total`; `player_built` is the player-placed figure (Storm10 2026-09-22: 370 total / 0 player-built) |
 | `stations` | `CraftingStation` | workbench, forge, stonecutter, artisan table, black forge, galdr table, and any modded station |
 
 Modded portals, beds and the rest count automatically, which is the point of classifying
@@ -73,7 +73,9 @@ by component. Keep each group's prefab display name: the localized `Piece.m_name
 `Companion.Loc` when the prefab has a `Piece`, else the prefab name.
 
 `pieces` (per builder) = every object whose `s_creator` equals that builder's ID, any
-prefab — the count of what that player has standing in the world.
+prefab — the count of what that player has standing in the world. The seven group
+columns on the same row are subsets of `pieces`, not additions to it: a builder with
+4 portals and nothing else reads `portals: 4, pieces: 4`.
 
 ## 3. Builder names
 
@@ -102,8 +104,10 @@ one Info line for the first run (`World census: N objects in M ms`) and a Warnin
 a run exceeds 250 ms; never log every run.
 
 Cache the JSON string in `Companion._censusCache` (volatile, like `_activityCache`), built
-on the main thread at the end of the census. Before the first run serve
-`EmptyCensusJson` — `enabled` true, empty groups, empty lists, `generated_at ""`. With
+on the main thread at the end of the census. Before the first run serve the empty
+envelope (`WorldCensus.EmptyEnvelope()`, built from the configured interval; set at
+`Init()` so a new world never serves the previous world's count) — `enabled` true, empty
+groups, empty lists, `generated_at ""`. With
 the interval at 0, serve `{"enabled":false,...}` with the same shape and 200 — **never
 404**, so the page can tell "off" from "a 1.4 server" the way `/api/activity` does.
 
@@ -176,8 +180,10 @@ shows one line, "The census is off (`CensusIntervalMinutes = 0`)."; the empty
 pre-first-run payload → "First count runs a few seconds after boot."
 
 Detail view, Build tab: one line built from that player's `builders` row — "Standing in
-the world: 412 pieces · 3 portals · 1 bed · 14 chests · 3 stations · 1 ship" (omit zero
-groups); when the player has no row, "Nothing counted yet." If the vanilla
+the world: 412 pieces · 3 portals · 1 bed · 2 wards · 1 ship · 14 chests · 3 stations"
+(the row's own order, zero groups omitted); when the player has no row, "Nothing counted
+yet."; when the census is off or has not run yet, the same two lines the World panel
+shows. If the vanilla
 `PortalsPlaced` stat is present, show it on the same tab as "Portals placed, ever: 14".
 
 Bump `<meta name="theravenscall-api" content="1.5">`; the server's marker check only tests

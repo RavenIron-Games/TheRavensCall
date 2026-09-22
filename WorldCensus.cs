@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using UnityEngine;
@@ -76,7 +77,12 @@ namespace TheRavensCall
                 else if (prefab.GetComponent<PrivateArea>() != null) group = GroupWards;
                 else if (prefab.GetComponent<Ship>() != null) group = GroupShips;
                 else if (prefab.GetComponent<Vagon>() != null) group = GroupCarts;
-                // Container AND Piece: keeps dungeon/treasure chests (no Piece) out (§2.1).
+                // Container AND Piece: placeable chests, vanilla or modded (§2.1).
+                // World-generated chests (the TreasureChest_* prefabs in
+                // locations and dungeons) carry Piece too, so they land in
+                // `total`; `player_built` (s_creator != 0) is the player-
+                // placed figure. Storm10 2026-09-22: 370 total / 0 player-
+                // built on a world nobody had placed a chest in yet.
                 else if (prefab.GetComponent<Container>() != null && prefab.GetComponent<Piece>() != null) group = GroupChests;
                 else if (prefab.GetComponent<CraftingStation>() != null) group = GroupStations;
                 if (group == null) continue;
@@ -112,6 +118,11 @@ namespace TheRavensCall
             _warnedBedsTruncated = false;
             _warnedWardsTruncated = false;
             _warnedSlowRun = false;
+            // A fresh world starts from the empty envelope (built from the
+            // configured interval, not a hardcoded one) — the previous
+            // world's count must not be served for up to a full interval
+            // (review 2026-09-22).
+            Companion._censusCache = EmptyEnvelope();
 
             try
             {
@@ -173,7 +184,7 @@ namespace TheRavensCall
                 foreach (var kv in _idToName)
                 {
                     if (!first) sb.Append(',');
-                    sb.Append("{\"id\":").Append(kv.Key).Append(",\"name\":\"").Append(Companion.Esc(kv.Value)).Append("\"}");
+                    sb.Append("{\"id\":").Append(N(kv.Key)).Append(",\"name\":\"").Append(Companion.Esc(kv.Value)).Append("\"}");
                     first = false;
                 }
                 sb.Append("]}");
@@ -263,9 +274,13 @@ namespace TheRavensCall
         {
             try
             {
-                var sw = Stopwatch.StartNew();
                 EnsurePrefabGroups();
                 if (_prefabGroups == null) return; // ZNetScene disappeared mid-tick; try again next time
+
+                // duration_ms is the walk itself: prefab classification (one-
+                // off, above) and the player_ids.json write (after sw.Stop())
+                // stay outside the clock (review 2026-09-22).
+                var sw = Stopwatch.StartNew();
 
                 var allZdos = Companion.GetAllZDOs();
                 if (allZdos.Count == 0 && ZDOMan.instance != null && !_warnedEmptyZdos)
@@ -357,8 +372,6 @@ namespace TheRavensCall
                 foreach (var b in beds) b.BuilderName = ResolveName(b.BuilderId);
                 foreach (var w in wards) if (w.BuilderName == null) w.BuilderName = ResolveName(w.BuilderId);
 
-                PersistIdsIfDirty();
-
                 int unknownBuilders = 0;
                 foreach (var row in builders.Values) if (row.Name == null) unknownBuilders++;
 
@@ -402,6 +415,7 @@ namespace TheRavensCall
 
                 sw.Stop();
                 long ms = sw.ElapsedMilliseconds;
+                PersistIdsIfDirty();
                 string generatedAt = DateTime.UtcNow.ToString("o");
 
                 string json = BuildJson(generatedAt, intervalMinutes, allZdos.Count, ms, totals, builderList, unknownBuilders,
@@ -441,7 +455,7 @@ namespace TheRavensCall
             {
                 if (i > 0) sb.Append(',');
                 var t = totals[GroupOrder[i]];
-                sb.Append('"').Append(GroupOrder[i]).Append("\":{\"total\":").Append(t[0]).Append(",\"player_built\":").Append(t[1]).Append('}');
+                sb.Append('"').Append(GroupOrder[i]).Append("\":{\"total\":").Append(N(t[0])).Append(",\"player_built\":").Append(N(t[1])).Append('}');
             }
             sb.Append('}');
             return sb.ToString();
@@ -462,9 +476,22 @@ namespace TheRavensCall
         // Pre-first-run (enabled:true) and CensusIntervalMinutes=0
         // (enabled:false) share this same empty-but-shaped envelope (§4) —
         // /api/census never 404s and never changes shape.
+        // What /api/census serves before Init() has run or before the first
+        // completed count: the configured interval, enabled:false when it is 0.
+        internal static string EmptyEnvelope()
+        {
+            int minutes = ClampedIntervalMinutes();
+            return BuildEmptyEnvelope(minutes > 0, minutes);
+        }
+
+        // Every integer in the JSON goes through this: StringBuilder.Append(int)
+        // and string concatenation format with the current culture, whose
+        // negative sign is not '-' everywhere (review 2026-09-22).
+        private static string N(long v) => v.ToString(CultureInfo.InvariantCulture);
+
         private static string BuildEmptyEnvelope(bool enabled, int intervalMinutes)
         {
-            return "{\"generated_at\":\"\",\"enabled\":" + Companion.B(enabled) + ",\"interval_minutes\":" + intervalMinutes +
+            return "{\"generated_at\":\"\",\"enabled\":" + Companion.B(enabled) + ",\"interval_minutes\":" + N(intervalMinutes) +
                    ",\"scanned_objects\":0,\"duration_ms\":0,\"groups\":" + EmptyGroupsJson() +
                    ",\"builders\":[],\"unknown_builders\":0,\"portals\":[],\"beds\":[],\"wards\":[]}";
         }
@@ -475,9 +502,9 @@ namespace TheRavensCall
         {
             var sb = new StringBuilder();
             sb.Append("{\"generated_at\":\"").Append(generatedAt).Append('"');
-            sb.Append(",\"enabled\":true,\"interval_minutes\":").Append(intervalMinutes);
-            sb.Append(",\"scanned_objects\":").Append(scannedObjects);
-            sb.Append(",\"duration_ms\":").Append(durationMs);
+            sb.Append(",\"enabled\":true,\"interval_minutes\":").Append(N(intervalMinutes));
+            sb.Append(",\"scanned_objects\":").Append(N(scannedObjects));
+            sb.Append(",\"duration_ms\":").Append(N(durationMs));
             sb.Append(",\"groups\":").Append(GroupsJson(totals));
 
             sb.Append(",\"builders\":[");
@@ -486,19 +513,19 @@ namespace TheRavensCall
                 if (i > 0) sb.Append(',');
                 var b = builders[i];
                 sb.Append("{\"name\":").Append(b.Name == null ? "null" : "\"" + Companion.Esc(b.Name) + "\"");
-                sb.Append(",\"id\":").Append(b.Id);
-                sb.Append(",\"portals\":").Append(b.Portals);
-                sb.Append(",\"beds\":").Append(b.Beds);
-                sb.Append(",\"wards\":").Append(b.Wards);
-                sb.Append(",\"ships\":").Append(b.Ships);
-                sb.Append(",\"carts\":").Append(b.Carts);
-                sb.Append(",\"chests\":").Append(b.Chests);
-                sb.Append(",\"stations\":").Append(b.Stations);
-                sb.Append(",\"pieces\":").Append(b.Pieces);
+                sb.Append(",\"id\":").Append(N(b.Id));
+                sb.Append(",\"portals\":").Append(N(b.Portals));
+                sb.Append(",\"beds\":").Append(N(b.Beds));
+                sb.Append(",\"wards\":").Append(N(b.Wards));
+                sb.Append(",\"ships\":").Append(N(b.Ships));
+                sb.Append(",\"carts\":").Append(N(b.Carts));
+                sb.Append(",\"chests\":").Append(N(b.Chests));
+                sb.Append(",\"stations\":").Append(N(b.Stations));
+                sb.Append(",\"pieces\":").Append(N(b.Pieces));
                 sb.Append('}');
             }
             sb.Append(']');
-            sb.Append(",\"unknown_builders\":").Append(unknownBuilders);
+            sb.Append(",\"unknown_builders\":").Append(N(unknownBuilders));
 
             sb.Append(",\"portals\":[");
             for (int i = 0; i < portals.Count; i++)
@@ -508,9 +535,9 @@ namespace TheRavensCall
                 sb.Append("{\"tag\":\"").Append(Companion.Esc(p.Tag)).Append('"');
                 sb.Append(",\"kind\":\"").Append(Companion.Esc(p.Kind)).Append('"');
                 sb.Append(",\"builder\":").Append(p.BuilderName == null ? "null" : "\"" + Companion.Esc(p.BuilderName) + "\"");
-                sb.Append(",\"builder_id\":").Append(p.BuilderId);
+                sb.Append(",\"builder_id\":").Append(N(p.BuilderId));
                 sb.Append(",\"connected\":").Append(Companion.B(p.Connected));
-                sb.Append(",\"x\":").Append(p.X).Append(",\"z\":").Append(p.Z);
+                sb.Append(",\"x\":").Append(N(p.X)).Append(",\"z\":").Append(N(p.Z));
                 sb.Append('}');
             }
             sb.Append(']');
@@ -523,8 +550,8 @@ namespace TheRavensCall
                 var b = beds[i];
                 sb.Append("{\"owner\":").Append(b.Owner == null ? "null" : "\"" + Companion.Esc(b.Owner) + "\"");
                 sb.Append(",\"builder\":").Append(b.BuilderName == null ? "null" : "\"" + Companion.Esc(b.BuilderName) + "\"");
-                sb.Append(",\"builder_id\":").Append(b.BuilderId);
-                sb.Append(",\"x\":").Append(b.X).Append(",\"z\":").Append(b.Z);
+                sb.Append(",\"builder_id\":").Append(N(b.BuilderId));
+                sb.Append(",\"x\":").Append(N(b.X)).Append(",\"z\":").Append(N(b.Z));
                 sb.Append('}');
             }
             sb.Append(']');
@@ -536,9 +563,9 @@ namespace TheRavensCall
                 if (i > 0) sb.Append(',');
                 var w = wards[i];
                 sb.Append("{\"builder\":").Append(w.BuilderName == null ? "null" : "\"" + Companion.Esc(w.BuilderName) + "\"");
-                sb.Append(",\"builder_id\":").Append(w.BuilderId);
+                sb.Append(",\"builder_id\":").Append(N(w.BuilderId));
                 sb.Append(",\"enabled\":").Append(Companion.B(w.Enabled));
-                sb.Append(",\"x\":").Append(w.X).Append(",\"z\":").Append(w.Z);
+                sb.Append(",\"x\":").Append(N(w.X)).Append(",\"z\":").Append(N(w.Z));
                 sb.Append('}');
             }
             sb.Append(']');
