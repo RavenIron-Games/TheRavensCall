@@ -19,7 +19,8 @@ small **receiver** on the owner's Netlify team keeps the latest copy and serves 
 Sizes and cadences below were measured on Storm10 (Valheim 1.0.12) on 2026-09-22 with the 1.5.0
 build; prices are from the Netlify pricing page read the same day, and the owner's plan is
 **Pro, 3,000 credits a month**. This revision takes the edits of the 2026-09-22 design review
-(five lenses, 69 findings, 66 verified, 25 must-change).
+(five lenses, 69 findings, 66 verified, 25 must-change) and of its second pass (three lenses,
+15 findings, 9 must-change verified).
 
 ## 1. What ships
 
@@ -94,10 +95,13 @@ Content-Type: application/json
   stores it, and treats a missing or invalid value as 600.
 - `read_token_sha256` is the hex sha256 of the server's own `HttpApiToken` — the hash, never
   the token, so the plaintext never leaves the game server or lands in an edge log. The
-  receiver enforces it on the hosted routes as the mod does locally. A hosted dashboard sits on
-  a public URL, so the push **refuses to run** unless `HttpApiToken` is at least 24 characters
-  (one warning at boot naming the fix), and the receiver answers `422` to a bundle whose field
-  is missing. Stricter than the mod's local default, on purpose.
+  receiver already holds that hash in its registry, beside the write token's (§4): reads have
+  to be authenticable before the server's first push and on routes that read no envelope. The
+  field is the consistency check that the admin registered the token the server is actually
+  running — a bundle whose field does not equal the registered hash is answered `409` and
+  nothing is stored; a missing field is `422`. A hosted dashboard sits on a public URL, so the
+  push **refuses to run** unless `HttpApiToken` is at least 24 characters (one warning at boot
+  naming the fix). Stricter than the mod's local default, on purpose.
 - `server_id` is config `PushServerId`. It has **no default**: it must equal the id registered
   in the receiver's `TRC_SERVERS`, and when it is empty or not `[a-z0-9-]{1,32}` the push is
   disabled at boot with one warning naming the fix, the same treatment as a non-HTTPS `PushUrl`
@@ -167,7 +171,7 @@ case a push is about 300 KB; a typical one is 20–200 KB.
   `ServicePointManager.SecurityProtocol`, and on that specific failure logs one warning naming
   the cause and the README's fix (`cert-sync --user` / `mozroots --import --sync`). It does
   **not** install a `ServerCertificateValidationCallback`: that property is process-global and
-  would disable certificate validation for the Discord webhook in the same process. §8 step 7
+  would disable certificate validation for the Discord webhook in the same process. §8 step 9
   is the release gate for this.
 - **Shutdown.** No final push is attempted: the sender is a background worker, a request in
   flight dies with the process, and `Plugin.OnDestroy` on a dedicated server is already a
@@ -188,26 +192,30 @@ ravenirongames.com, so an abusive month cannot take the main site down with it �
 file, and a README with the deploy steps (`netlify init`, the env var, the custom domain, the
 spend cap, the rate-limit rule).
 
-**Registry.** An env var `TRC_SERVERS` holding JSON `{"<server_id>": "<sha256 of that
-server's write token>"}`, set in the Netlify UI. It is read **id-first**: `POST /push` resolves
-the body's `server_id` and compares the bearer's sha256 to the one registered under that id; it
-never scans the registry for a matching hash. Ids are held to `[a-z0-9-]{1,32}` when the
-variable is read and an entry that fails is ignored with a log line, so a typo in the UI can
-never become a storage key; a registry in which two ids share a hash is rejected at load, so
-two servers accidentally configured with the same write token can never write to one id. Write
-tokens are never stored in the clear. `TRC_SERVERS` reaches the Functions at **deploy** time: a
+**Registry.** An env var `TRC_SERVERS` holding JSON `{"<server_id>": {"w": "<sha256 of that
+server's write token>", "r": "<sha256 of that server's HttpApiToken>"}}`, set in the Netlify
+UI. Both hashes are registered at deploy time, because reads have to be authenticable before
+the server's first push and on routes that read no envelope (`/api/health`, `/api/gamedata`).
+It is read **id-first**: `POST /push` resolves the body's `server_id` and compares the bearer's
+sha256 to `w` under that id; it never scans the registry for a matching hash. Ids are held to
+`[a-z0-9-]{1,32}` when the variable is read, and an entry whose id fails or whose `w` or `r` is
+not 64 hex characters is ignored with a log line, so a typo in the UI can never become a
+storage key; a registry in which two ids share a `w` is rejected at load, so two servers
+accidentally configured with the same write token can never write to one id. Tokens are never
+stored in the clear. `TRC_SERVERS` reaches the Functions at **deploy** time: a
 change in the UI does nothing until the site is redeployed, so adding a server — or revoking a
 leaked write token — is "edit the variable, then trigger a deploy", and the README says so. The
-variable shares the function's 4 KB environment block, about 45 entries, which bounds the
+variable shares the function's 4 KB environment block, about 20 entries at two hashes per id,
+which bounds the
 registry until §9's self-serve work replaces it; if revocation ever has to be immediate rather
 than one deploy away, the registry moves into Blobs under the key `registry`, seeded from
 `TRC_SERVERS` on the first deploy. No self-serve registration in 1.6.0 (§9).
 
 **Storage.** Netlify Blobs, store `trc`, keys `<server_id>/state`, `<server_id>/activity`,
 `<server_id>/census` and `<server_id>/meta`. Each envelope blob carries in its own Blobs
-metadata the body's sha256 (the `ETag`) and the read-token hash, written at push time, so a
-gated read is one strongly consistent `getWithMetadata` and an `If-None-Match` hit is a
-`getMetadata` with no body fetched. `<server_id>/meta` holds `received_at` (the receiver's own
+metadata the body's sha256 (the `ETag`), written at push time, so a gated read — the token
+having already been checked against the registry — is one strongly consistent
+`getWithMetadata`, and an `If-None-Match` hit is a `getMetadata` with no body fetched. `<server_id>/meta` holds `received_at` (the receiver's own
 clock), `pushed_at` (the server's claim, echoed only), `mod_version`, `heartbeat_seconds`,
 sizes, and the rate-limit counter. Latest copy only; envelopes are opaque bytes end to end.
 Blobs is eventually consistent by default (an update reaches every edge within 60 s, the docs
@@ -227,11 +235,11 @@ concatenation. The only string that ever becomes a storage key is a validated re
 | Route | Behaviour |
 |---|---|
 | `POST /push` | `401` missing or wrong bearer (same body for an unknown id); `409` the registered hash is not the bearer's; `413` body over 2 MB; `422` a field fails validation or `read_token_sha256` is missing; `429` more often than every **10 s** per server (below the mod's 15 s floor, so a correctly configured server is never throttled by tick jitter; the counter lives in `<server_id>/meta`, read and written strongly — a Function keeps nothing between invocations, so a module-level counter would limit one warm instance and let every cold or concurrent one through; the response carries `Retry-After`); else `200 {"ok":true,"stored":["state","census"]}` naming the envelopes that were non-null |
-| `GET /s/<id>/api/state`, `/activity`, `/census` | read token in the `X-Api-Token` header **only**, checked against the stored hash before anything else is looked up, else `401 {"error":"token required"}` — the same body for a wrong token and an unknown id, so nobody can enumerate servers; a request carrying a `token` query parameter is answered `400 {"error":"use the X-Api-Token header"}` and the parameter is never logged (a hosted URL has to stay safe to paste into a chat window; `?token=` stays supported on the mod's own `localhost:2112`, unchanged). Then the stored envelope, `Content-Type: application/json`, `ETag` = its sha256, `Cache-Control: private, no-cache`, `Vary: X-Api-Token`; `If-None-Match` matching → `304`. Before the first push carrying that envelope: **`200` with the same empty envelope the mod serves** plus `"no_data":true` — never `503`, because `apiFetch` throws on any non-2xx and the first thing the owner would see on a fresh server would be "Could not reach …" |
+| `GET /s/<id>/api/state`, `/activity`, `/census` | read token in the `X-Api-Token` header **only**, hashed and compared to the registry's `r` for `<id>` before anything is looked up in Blobs, else `401 {"error":"token required"}` — the same body for a wrong token and an unregistered id, so nobody can enumerate servers; a request carrying a `token` query parameter is answered `400 {"error":"use the X-Api-Token header"}` and the parameter is never logged (a hosted URL has to stay safe to paste into a chat window; `?token=` stays supported on the mod's own `localhost:2112`, unchanged). Then the stored envelope, `Content-Type: application/json`, `ETag` = its sha256, `Cache-Control: private, no-cache`, `Vary: X-Api-Token`; `If-None-Match` matching → `304`. Before the first push carrying that envelope: **`200` with an empty envelope of the right shape** plus `"no_data":true` — never `503`, because `apiFetch` throws on any non-2xx and the first thing the owner would see on a fresh server would be "Could not reach …". For the census the receiver cannot reproduce the mod's own empty envelope (it is built from the game server's `CensusIntervalMinutes`, which no push carries), so it sends `enabled:true`, `interval_minutes:0`, empty groups and lists, and the page tests `no_data` before the `enabled`/`generated_at` guards (§5) |
 | `GET /s/<id>/api/health` | read token required, exactly like the data routes (the page has it and fetches health with the state poll); `{"status":"ok","hosted":true,"pushed_at":"…","age_seconds":N,"stale_after_seconds":M}` — no `version`: which build an admin runs is the admin's business. `age_seconds` is measured from `received_at`, the receiver's own clock, never from `pushed_at`, so a skewed game-server clock or a forward-dated push from a stolen write token cannot make the dashboard say "just now" about a server that is down. `M` = 3 × the `heartbeat_seconds` of the last accepted push. The mod's own `/api/health` on `localhost:2112` stays open and unchanged: it is open because it is not reachable off the machine, and that reason does not travel to a public URL where the same route would be a liveness oracle |
 | `GET /s/<id>/api/gamedata` | token-gated like the others; `200 {"recipes":[],"items":[],"buildables":[]}` so no 404 lands in the network log |
 | `GET /s/<id>` | `301` to `/s/<id>/` (what a browser makes of a pasted address) |
-| `GET /s/<id>/` | the release's `theravenscall.html` served as a **static asset**: `netlify.toml` rewrites `/s/*` to `/theravenscall.html` with status 200, and the page derives its hosted base from its own location (§5). Netlify serves static assets from the CDN byte for byte and cannot template one per id, so nothing is injected; a page view is one CDN request and no compute |
+| `GET /s/<id>/` | the release's `theravenscall.html` served as a **static asset**. `netlify.toml` declares the receiver's routes as ordered `[[redirects]]` rules, most specific first, because Netlify evaluates them top to bottom, the first match wins, and a `*` splat matches across `/`: `/push` → `/.netlify/functions/push` (200); `/s/:id/api/*` → `/.netlify/functions/api` (200, `force = true`); `/s/:id` → `/s/:id/` (301); and only then the catch-all `/s/*` → `/theravenscall.html` (200) that serves the page. The functions are reached through these rules, not through a `config.path` declaration, so the order lives in one file; an unknown path under `/s/<id>/api/` is the function's own 404, anything outside `/push` and `/s/` falls through to the site's 404. The page derives its hosted base from its own location (§5). Netlify serves static assets from the CDN byte for byte and cannot template one per id, so nothing is injected; a page view is one CDN request and no compute |
 | `DELETE /s/<id>` | write token required; removes the four blobs and answers `200 {"deleted":true}` — how an admin unpublishes. Deleting a registry entry takes the dashboard offline on the next request; the stored copy stays until this runs |
 | `OPTIONS /s/<id>/api/*` | `204` with the CORS headers below |
 | anything else | `404` |
@@ -241,13 +249,20 @@ OPTIONS`, `Access-Control-Allow-Headers: X-Api-Token, If-None-Match` and
 `Access-Control-Expose-Headers: ETag` — the mod's own listener already sends the first three —
 so §5's Base URL override can point a page served anywhere at the receiver; the data is
 token-gated either way, so `*` grants a browser nothing `curl` does not have. `POST /push`
-needs no CORS. Every hosted response carries `X-Content-Type-Options: nosniff` and
-`Referrer-Policy: no-referrer`; the page is served with a `Content-Security-Policy` that permits
-exactly what the page loads (one inline script, its own origin, `data:` images; decided at
-implementation against the file) and `frame-ancestors 'none'`, so a future escaping slip in
-player-supplied text cannot exfiltrate the stored token. The hosted read routes are also
-throttled per id and per source address — 60 requests a minute, `429` beyond it — so a public
-URL is not a free guessing oracle for the read token.
+needs no CORS. A `304` carries the same CORS headers as a `200`, or the one case they exist
+for breaks. Every hosted response carries `X-Content-Type-Options: nosniff` and
+`Referrer-Policy: no-referrer`; the page is served with `Content-Security-Policy: default-src
+'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self' https:;
+img-src 'self'; frame-ancestors 'none'; base-uri 'none'` — the page is one inline script with
+inline `style` attributes and loads no images, and `connect-src https:` is what keeps §5's Base
+URL override working from a hosted page (a typed base receiving the token is the admin's own
+act) — so a future escaping slip in player-supplied text cannot load a foreign script or frame
+the page. Function routes set their headers in code and the static page gets its own
+`[[headers]]` block in `netlify.toml`; the two sets are not the same and the file says which is
+which. The hosted read routes have no counter of their own to throttle by — a Function keeps
+nothing between invocations, and a Blobs write per read would cost more than the read — so the
+guessing-rate limit on `/s/*` is a Netlify Firewall Traffic Rule per source address, set in the
+UI as a setup step, with what it enforces recorded at §8 step 8.
 
 **Cost.** The owner's plan is Netlify **Pro, 3,000 credits a month**, a team allowance shared
 with ravenirongames.com; the README's first step is to read the team's current monthly use in
@@ -256,7 +271,7 @@ pricing page (2026-09-22): web requests 2 credits per 10,000; compute 10 credits
 the default 1 GB; bandwidth (egress) 20 credits per GB; Functions and Blobs included; a
 production deploy 15 credits. Budget **250–400 ms per invocation** until measured:
 `consistency: "strong"` sends each read to the blob's origin region rather than the edge, and
-§8 step 6 replaces this estimate with the measured figure.
+§8 step 8 replaces this estimate with the measured figure.
 
 - *Per server*: at most 43,200 pushes a month (60 s while players are online) = 8.6 credits of
   requests + about 3.6 GB-hours at 300 ms = 36 credits of compute, so roughly **45 credits a
@@ -273,7 +288,9 @@ production deploy 15 credits. Budget **250–400 ms per invocation** until measu
   change by an order of magnitude.
 - *That is honest use only.* `/push` and the hosted routes are public and a request rejected
   with `401` is still a billed invocation: at the rates above, 10 requests a second from one
-  host is about 410 credits a day, a Pro month in a week. Before the DNS record points anywhere:
+  host is 864,000 requests a day — about 170 credits of requests and, at the 300 ms budgeted
+  above, about 720 of compute, roughly 900 credits a day, the Pro month in three or four days.
+  Before the DNS record points anywhere:
   set the spend cap in the Netlify UI; add a Firewall Traffic Rule rate limit (the pricing page
   lists "Firewall Traffic Rules & basic rate limiting" on every plan) on `/push` and `/s/*`; and
   record here what those rules actually enforce on this plan. The per-id 10 s limit and the
@@ -291,7 +308,7 @@ Workers Free allows 100,000 requests a day, and while Workers KV's 1,000 writes 
 one server's pushes, R2 or D1 carries it comfortably. The reason is co-location, not capacity:
 the domain, the site and the team are already on Netlify, so the receiver is one more site
 rather than a second platform to operate. Blobs' own per-operation limits are not on the credit
-table and are not documented as unlimited; §8 step 6 reads actual usage after 24 hours, and if
+table and are not documented as unlimited; §8 step 8 reads actual usage after 24 hours, and if
 Blobs operations turn out to be metered or capped, Workers + R2 is the fallback this paragraph
 keeps open.
 
@@ -320,16 +337,36 @@ keeps open.
 - **Visibility.** All four polls pause while `document.visibilityState === 'hidden'` and run
   once immediately on `visibilitychange` back to visible — the cost control in §4.
 - **Freshness.** Driven by the `/api/health` **body**, not by hosted mode: the page polls
-  `<base>/api/health` alongside the state poll and renders "server reported 2m ago" in the
-  header only when the body carries a numeric `age_seconds`, switching to "server silent since
-  <time>" once it exceeds a numeric `stale_after_seconds`, at which point the roster, feed and
-  World panel are greyed out as well, so a clean shutdown cannot leave a stale list of online
-  players looking live. A body without those fields — the mod's own `{"status":"ok",
-  "version":"…"}` — renders no extra line at all, exactly as 1.5.0 does; keying on hosted mode
-  would print "reported NaN ago" the moment the override points at a real mod.
-- **Waiting.** An envelope carrying `"no_data":true` renders as "Registered, waiting for <id> to
-  report" with the connection dot amber, in the header and in the feed and World panels, and is
-  replaced within one push interval.
+  `<base>/api/health` alongside the state poll. The body is reduced to two derived values the
+  moment it arrives — `state.serverReportedAt = Date.now() - age_seconds * 1000` and
+  `state.staleAfterSeconds` — and only when both `age_seconds` and `stale_after_seconds` are
+  numbers; a body without them (the mod's own `{"status":"ok","version":"…"}`) clears both and
+  renders no extra line at all, exactly as 1.5.0 does, where keying on hosted mode would print
+  "reported NaN ago" the moment the override points at a real mod. `renderHeader()`, which
+  already runs every second, recomputes the line from `state.serverReportedAt` — "server
+  reported 2m ago", then "server silent since <time>" (that value formatted with `fmtAbs`) once
+  the age exceeds `staleAfterSeconds` — so it stays honest between health polls and while a
+  health fetch is failing. `pushed_at` is never rendered: it is echoed for the record only, and
+  measuring age from the receiver's clock buys nothing if the page turns the server's own claim
+  back into a displayed time. The grey-out of the roster, feed and World panel is a CSS class
+  that `renderHeader()` toggles on `#app` and `#worldPanels`, never markup emitted by the
+  renderers: in the `304` steady state the sentinel path calls `renderHeader()` and nothing
+  else, and a silent server sends no new payload, so a grey-out that waited for a re-render
+  would never arrive in the one case it exists for. That is what keeps a clean shutdown from
+  leaving a stale list of online players looking live.
+- **Waiting.** `state.connStatus` gains a fourth value, `waiting`, and the stylesheet a fourth
+  rule, `.conn-dot.wait { background: var(--gold); box-shadow: 0 0 8px var(--gold); }` — the
+  palette has no amber today, `--gold` is it. `pollState` parses the body **before** it touches
+  `connStatus` (today it sets `lastUpdated`, `connStatus = 'ok'` and clears the error first): an
+  envelope carrying `"no_data":true` sets `connStatus = 'waiting'`, leaves `state.stateData`
+  null and returns, so `render()` keeps its not-yet-connected branch (with "Registered, waiting
+  for <id> to report" in place of "Connecting…") and `renderHeader()` writes no world/day/online
+  strip over a server that has never reported. `renderHeader()`'s dot class and its connection
+  text learn the new value, and the error banner and auto-open-Settings paths treat `waiting`
+  as neither ok nor error. `renderActivity()` and `renderCensus()` test `no_data` on their own
+  envelope before every other guard and write the same line into the season, feed and World
+  panels. The state is left the moment a body arrives without the flag, within one push
+  interval of the server's first push.
 - **Copy.** In hosted mode the Settings panel relabels the first field "Base URL override
   (hosted: <id>)", its placeholder becomes "(blank = this server's hosted API)", and the
   footer's connection help reads the hosted text — what the receiver is, that the API token is
@@ -350,10 +387,10 @@ keeps open.
   entropy rule anywhere in the mod today; `HttpApiToken = storm10` is fine on a localhost
   listener and a guessable public secret here. The README's setup step says to generate it
   randomly. Only its sha256 ever leaves the game server. A bare sha256 is only as strong as the
-  token behind it; the length rule and the 60-a-minute throttle on the hosted read routes (§4)
-  are what make it enough. The page keeps the token in `localStorage` as today, namespaced by id.
-- Receiver caps: 2 MB body, 10 s per server on `/push`, 60 a minute per id and address on reads,
-  ids `[a-z0-9-]{1,32}`; every value from a push validated before it is stored or echoed; the
+  token behind it; the length rule and the per-address firewall rate limit on `/s/*` (§4) are
+  what make it enough. The page keeps the token in `localStorage` as today, namespaced by id.
+- Receiver caps: 2 MB body, 10 s per server on `/push`, a per-address firewall rate limit on
+  `/s/*`, ids `[a-z0-9-]{1,32}`; every value from a push validated before it is stored or echoed; the
   only string that becomes a storage key is a validated registry id; envelopes are opaque bytes
   end to end.
 - **What hosting publishes.** A read-token holder sees everything the three pushed routes
@@ -378,10 +415,10 @@ keeps open.
 - `HexiumDist/CHANGELOG.md`: a `[1.6.0]` section on top with the "packaged DLL not rebuilt" note
   where 1.5.0's sat (replaced at the cut). `HexiumDist/README.md`: a "Hosted servers (Nitrado,
   G-Portal)" section — what hosting publishes, the setup in five steps (generate both tokens;
-  set `HttpApiToken`, `PushUrl`, `PushToken`, `PushServerId`; register the id and the write
-  token's hash in `TRC_SERVERS` and redeploy; open `https://dash.ravenirongames.com/s/<id>/`;
+  set `HttpApiToken`, `PushUrl`, `PushToken`, `PushServerId`; register the id with both
+  tokens' hashes in `TRC_SERVERS` and redeploy; open `https://dash.ravenirongames.com/s/<id>/`;
   how to unpublish), the `[Push]` rows in *Configuration*, and a line in *The Web Dashboard* on
-  what the hosted page shows that the local one does not; until §8 step 7 has run, the section
+  what the hosted page shows that the local one does not; until §8 step 9 has run, the section
   says "designed for, not yet run on" a rented Linux server. `docs/API.md`: the push contract
   and the hosted routes, and its title bumped from "the 1.4.0 contract". `docs/DASHBOARD.md`:
   hosted mode, the conditional fetches, the visibility gate, and a rewrite of the token/settings
@@ -419,9 +456,12 @@ keeps open.
    `413` and nothing stored; a burst inside the 10 s window → `429` with `Retry-After` from the
    second on, the first one's envelopes still readable; a bundle whose `server_id` is not the
    bearer's → `409` and nothing stored; ids `../trc`, `a%2fb`, a 33-character id and an empty
-   string → `422`, never a blob key written; a missing `read_token_sha256` → `422`; a read with
-   no token, a wrong token, an unknown id and the right token → `401`, `401`, `401`, `200`; a
-   read with `?token=` → `400`; `/s/<id>/api/health` without a token → `401`. Confirm the store
+   string → `422`, never a blob key written; a missing `read_token_sha256` → `422`, one that is
+   not the registered `r` → `409` and nothing stored; a read with no token, a wrong token, an
+   unregistered id and the right token → `401`, `401`, `401`, `200`; a read with `?token=` →
+   `400`; `/s/<id>/api/health` without a token → `401`, and with the right token before any push
+   → `200` with `age_seconds` absent; `/s/<id>/api/state` before any push → `200` with
+   `"no_data":true`. Confirm the store
    afterwards holds exactly `<id>/state|activity|census|meta` and nothing else, and that
    `DELETE /s/<id>` removes them.
 7. **Hosted page**: open `http://localhost:8888/s/storm10/` **before** the first push →
