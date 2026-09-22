@@ -9,13 +9,14 @@
 
 ## 🟢 [1.4.2] — The Raven Minds the Edges
 
-*The four follow-ups the 1.4.1 pre-publish review left open, all in the season and Chronicle bookkeeping, none reachable in normal play on a dedicated server. No config, API or dashboard changes.*
+*The four follow-ups the 1.4.1 pre-publish review left open, plus the hardening this branch's own review added — all in the season and Chronicle bookkeeping, none of it reachable in normal play on a dedicated server. No config, API or dashboard changes.*
 
 ### 🩹 Fixed
 - **A stale `season_baseline.json` is no longer trusted.** If a season ended but its baseline file survived (the delete failed, or the server died before `season end` ran) and a new season was then started by hand in `seasons.json`, the old season's start-of-season counters were subtracted from every player's lifetime totals and reported as the new season's standings. The file names the season it was taken for; a mismatch now logs a warning and takes a fresh baseline.
 - **A damaged `seasons.json` reads as "no season", with a warning,** instead of a fragment of the file becoming the season name and a folder under `Chronicle\seasons\`: a file cut off mid-value (a torn write; 1.4.1's reader returned whatever it had read, where 1.4.0's regex already refused it) and a value whose closing quote was dropped by hand (the next key's opening quote used to pass for the value's end, on every version). `seasons.json` is now also written atomically, the way `season_baseline.json` already was, so a crash mid-write no longer leaves a torn file behind.
 - **Chronicle day rotation checks the log file's own name for the date**, not the whole path. A season folder named with a date in it (or a server installed under a dated directory) used to suppress the rollover for that day, so that day's rows went into the previous day's file.
-- **A listen server that hosts twice in one process now re-points the Chronicle to the default folder when no season is active**, instead of keeping the previous world session's season writer. Not reachable on a dedicated server, where the world is loaded once per process.
+- **A listen server that hosts twice in one process now re-points the Chronicle to the default folder when no season is active**, instead of keeping the previous world session's season writer. A `seasons.json` that has gone missing is treated as no season, and no season history, for the same reason, rather than leaving the previous session's season in memory. Not reachable on a dedicated server, where the world is loaded once per process.
+- **A `season_baseline.json` written by 1.4.0 or 1.4.1 for a season whose name ends in a period is still accepted** after this update: the name it carries is compared trimmed, the way 1.4.1 already trims the running season's name at load. Without that, the first 1.4.2 boot would have taken a fresh baseline and reset the running season's standings.
 
 ### 🔧 Changed
 - The packaged `HexiumDist/plugins/TheRavensCall.dll` is **not** rebuilt as part of this change — it still contains 1.4.1's bytes. It needs a clean `dotnet build -c Release` from this source (and its md5 recorded here) before 1.4.2 is released.

@@ -2,8 +2,8 @@
 
 The four items the 1.4.1 pre-publish review left open (see `HexiumDist/CHANGELOG.md`
 [1.4.2] and `HANDOFF.md`), plus what the pre-PR review of this branch added (the baseline
-name compared trimmed, season state reset when `seasons.json` is missing or unreadable, an
-atomic `seasons.json` write, a warning for a damaged value). Checked on the `StormTest`
+name compared trimmed, season state reset when `seasons.json` is missing, an atomic
+`seasons.json` write, a warning for a damaged value). Checked on the `StormTest`
 folder (`C:\Users\donfr\ValheimServers\StormTest`, Valheim **0.221.12**, launched on port
 2496 with its own save dir; Storm10 stayed closed).
 
@@ -21,7 +21,7 @@ same torn-file and stale-baseline boots before the review, with the same outcome
 | Pre-1.4.2 baseline still accepted | boot with season `S2` active and a `season_baseline.json` naming `S2.` (the untrimmed spelling a 1.4.0 or 1.4.1 file can carry) with rows of 999 | PASS | `Active season loaded: S2`, no baseline warning, no snapshot-now line, the file left as it was, `/api/activity` `standings_since 2026-09-22T11:00:00Z` = the file's `taken_at`, the Chronicle in `Chronicle\seasons\S2\` |
 | Stale baseline rejected | boot with season `S2` active and a `season_baseline.json` naming `S1` (rows of 999) | PASS | `season_baseline.json belongs to season S1, not S2; taking a fresh baseline now.` (warning), then `no usable season_baseline.json for active season S2; standings count from this restart (2026-09-22T13:53:54Z).`, the file rewritten as `{"season":"S2","taken_at":"2026-09-22T13:53:54Z","rows":[]}`, `/api/activity` `standings_since` = that boot and `standings []` (no 999s), the Chronicle in `Chronicle\seasons\S2\`, the shutdown row written there on the graceful stop |
 | Day rotation keys on the file name | review only | — | `Chronicle.Write` now tests `Path.GetFileName(_logPath)` for today's date; a midnight rollover inside a season folder named with a date was not waited for |
-| Boot guard also re-points with no season active | review only | — | listen-server double-host case, with `seasons.json` edited to no season or deleted (the season state now resets on a missing or unreadable file); `ZNet.Awake` runs once per process on a dedicated server, so it cannot be reached here |
+| Boot guard also re-points with no season active | review only | — | listen-server double-host case, with `seasons.json` edited to no season or deleted (the season state, last-ended pair included, now resets on a missing file; a file that exists but cannot be read keeps the loaded season); `ZNet.Awake` runs once per process on a dedicated server, so it cannot be reached here |
 | `seasons.json` written atomically | review only | — | `SaveMeta` goes through `PlayerRegistry.AtomicWrite`, the same path `season_baseline.json` already used |
 
 StormTest was left as found: the staged plugin folder, the generated

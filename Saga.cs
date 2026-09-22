@@ -2598,11 +2598,12 @@ namespace TheRavensCall
         {
             try
             {
-                // No file, or an unreadable one (the catch below), means no
-                // season — including for a process that already ran a world
-                // session with one (1.4.2): the fields are process-wide
-                // statics, and a listen server hosting again after
-                // seasons.json was deleted must not keep the old season.
+                // No file means no season — including for a process that
+                // already ran a world session with one (1.4.2): the fields
+                // are process-wide statics, and a listen server hosting
+                // again after seasons.json was deleted must not keep the old
+                // season. (A file that exists but cannot be read is a
+                // different case: the catch below keeps what is loaded.)
                 if (!File.Exists(MetaPath)) { ResetSeasonState(); return; }
                 string raw = File.ReadAllText(MetaPath);
                 // 1.4.1: the four strings are read back through an
@@ -2666,17 +2667,24 @@ namespace TheRavensCall
             }
             catch (Exception ex)
             {
-                ResetSeasonState();
-                Plugin.Log.LogWarning("[TheRavensCall] SeasonSystem.Init error: " + ex.Message + " (treating it as no active season)");
+                // A read that failed is not a file that says "no season":
+                // keep whatever is loaded unless the file is truly gone.
+                bool missing = !File.Exists(MetaPath);
+                if (missing) ResetSeasonState();
+                Plugin.Log.LogWarning("[TheRavensCall] SeasonSystem.Init error: " + ex.Message +
+                    (missing ? " (treating it as no active season)" : " (keeping the season already loaded)"));
             }
         }
 
+        // "No file, no season, no history": every process-wide season static.
         private static void ResetSeasonState()
         {
             _currentSeason = null;
             _seasonStart = DateTime.MinValue;
             _baseline.Clear();
             _standingsSince = null;
+            _lastEnded = null;
+            _lastEndedAt = null;
         }
 
         // Array of rows, not a name-keyed map: the existing map parser splits
