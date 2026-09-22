@@ -62,10 +62,27 @@ stamps are UTC. Every start was a PowerShell `Start-Process`, every stop a grace
 
 Step 9 (a tab in `lore.txt`). Steps 10, 11, 18 and 20 ran on StormTest only.
 
+## 1.4.1 fix check (same evening, after PR #9 merged)
+
+Build md5 `426bd85f0201662958df140e83b0fa24`, 209,408 bytes, staged over the 1.4.0 DLL.
+With nobody able to type the console command, the defect path was reproduced through the
+upgrade case instead: `seasons.json` hand-set to `current_season "TestSeason."` with a
+`season_start`, no baseline file, then a boot.
+
+| Check | Result | Evidence |
+|---|---|---|
+| Sanitizer, direct | PASS | reflection on the built DLL: `TestSeason.` → `TestSeason`, `CON` → `_CON`, `a<b>c:d` → `a_b_c_d`, `...` and blanks → `season`, 80 chars → 64, 63 chars + `.` → 63, an apostrophe kept |
+| Boot with the broken name | PASS | `Active season loaded: TestSeason.`, the baseline-missing line with `standings count from this restart`, `Chronicle: …\Chronicle\seasons\TestSeason\TheRavensCall_Chronicle_2026-09-22.log`, 0 warnings; the file holds the `startup` row; `season_baseline.json` written; `/api/activity` `active=true`, `name "TestSeason."`, `standings_since` = the boot |
+| Page on the embedded 1.4.1 copy | PASS | marker `1.4`, "started today", "No standings yet.", the counted-since note; the Combat chip reads "Nothing in Combat yet." while Players/World/Season list rows |
+| Graceful stop | PASS | `session_summary` and `shutdown` rows in the season folder file, the feed on disk with `shutdown` on top, the default-folder file untouched |
+| Restore | PASS | `seasons.json` back to no season / `last_ended TestSeason2`, baseline deleted, server booted again and left up; `Chronicle\seasons\TestSeason\` kept as evidence |
+
 ## Storm10 as left
 
-Server up (started 20:23:32 local, the sixth cycle) with the 1.4.0 DLL, `EventFeedCapacity
-= 200`, `EnableRaid = true`, `HttpApiToken` empty, the page override deleted. The config
-folder keeps the run's artefacts: `event_feed.json`, `seasons.json` (no season running,
-last ended TestSeason2), `Chronicle\seasons\TestSeason2\` and an empty
-`Chronicle\seasons\TestSeason.\` folder from the defect.
+Server up (started 20:39:52 local, the eighth cycle of the evening) on the **1.4.1** DLL
+(`426bd85f…`), `EventFeedCapacity = 200`, `EnableRaid = true`, `HttpApiToken` empty, the
+page override deleted, no season running. The config folder keeps the evening's artefacts:
+`event_feed.json`, `seasons.json` (last ended TestSeason2), `seasons.json.pre141` (the
+backup taken for the fix check), `Chronicle\seasons\TestSeason2\`, the 1.4.1 check's
+`Chronicle\seasons\TestSeason\` and the empty `Chronicle\seasons\TestSeason.\` folder from
+the 1.4.0 defect.

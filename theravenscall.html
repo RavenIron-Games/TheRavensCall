@@ -915,6 +915,14 @@
     return Math.max(0, Math.floor(((now || Date.now()) - then) / 86400000));
   }
 
+  // "started today" / "started yesterday" / "started N days ago" — 1.4.1,
+  // the Storm10 run read "started 0 days ago" on a fresh season.
+  function startedText(days) {
+    if (days <= 0) return 'started today';
+    if (days === 1) return 'started yesterday';
+    return 'started ' + days + ' days ago';
+  }
+
   // Presentation text for the inactive-season notice's second line. '' when
   // there is nothing to report (a fresh install that has never run a season).
   function seasonLastEndedLine(season) {
@@ -1272,7 +1280,7 @@
       html += '<div style="margin-bottom:4px">' +
         '<span class="season-name">' + esc(season.name || 'Unnamed season') + '</span>' +
         '<span class="tag green">ACTIVE</span></div>' +
-        '<div class="detail-sub" style="margin-bottom:12px">started ' + daysAgo(season.started_at) + ' days ago</div>';
+        '<div class="detail-sub" style="margin-bottom:12px">' + startedText(daysAgo(season.started_at)) + '</div>';
       var rows = sortBoardRows(nonZeroSeasonRows(seasonStandingsRows(season.standings)), state.seasonSort);
       if (rows.length === 0) {
         html += '<div class="notice small">No standings yet.</div>';
@@ -1316,7 +1324,14 @@
     });
     html += '</div>';
     if (rows.length === 0) {
-      html += '<div class="notice small">No events yet.</div>';
+      // 1.4.1: name the chip when the feed has events but none in this group,
+      // so a filtered-empty panel doesn't read like an empty server.
+      var group = null;
+      FEED_GROUPS.forEach(function (g) { if (g.key === filter) group = g; });
+      var anyEvents = !!(events && events.length);
+      html += '<div class="notice small">' +
+        ((filter !== 'all' && anyEvents && group) ? 'Nothing in ' + esc(group.label) + ' yet.' : 'No events yet.') +
+        '</div>';
     } else {
       html += '<div class="feed-list">';
       rows.forEach(function (e) {

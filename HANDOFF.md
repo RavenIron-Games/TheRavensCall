@@ -1,6 +1,6 @@
 # TheRavensCall — handoff (2026-08-19 update, originally 2026-08-17)
 
-**Status: v1.4.0, cut 2026-09-21 (`docs/SCOPE-1.4.0.md`; server side run live on StormTest, see docs/TESTPLAN-stormtest-2026-09-21.md; the client-side steps of that plan still to run on Storm10). v1.3.0 was cut 2026-09-15 and run live on the Storm10 1.0.12 testbed (docs/TESTPLAN-storm10-2026-09-15.md).** RavenIron release —
+**Status: v1.4.1, cut 2026-09-21 (PR #9 plus two dashboard wording fixes and a season-folder length clamp). v1.4.0 was cut the same day (`docs/SCOPE-1.4.0.md`; server side run live on StormTest, docs/TESTPLAN-stormtest-2026-09-21.md; client side run live on the Storm10 1.0.12 testbed with WhereTheCrowFlies 1.1.3, docs/TESTPLAN-storm10-2026-09-21.md, which found the season-folder defect 1.4.1 fixes). v1.3.0 was cut 2026-09-15 and run live on Storm10 (docs/TESTPLAN-storm10-2026-09-15.md).** RavenIron release —
 a merge of two client-side Valheim mods (`SkaldSaga`, `SteveCompanionMod`) into one server-only
 admin tool. Source of truth for both originals is gone from this repo; only their `.txt` dumps
 remain (`25d72c2b-...txt` = SkaldSaga, `46dff3c1-...txt` = SteveCompanionMod) alongside the merged

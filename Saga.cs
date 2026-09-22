@@ -2509,6 +2509,8 @@ namespace TheRavensCall
         // (e.g. "..." or all-invalid chars). Used for the *folder* only —
         // the season's own display name is kept as typed (just trimmed),
         // see TrimTrailingPeriodsAndWhitespace.
+        private const int MaxFolderNameLength = 64;
+
         private static string SanitizeFolderName(string name)
         {
             if (string.IsNullOrEmpty(name)) return "season";
@@ -2517,6 +2519,10 @@ namespace TheRavensCall
             for (int i = 0; i < chars.Length; i++)
                 if (Array.IndexOf(invalid, chars[i]) >= 0) chars[i] = '_';
             string s = TrimTrailingPeriodsAndWhitespace(new string(chars));
+            // 1.4.1: keep the folder well inside MAX_PATH — the season log's
+            // full path adds ~90 chars below the BepInEx config folder.
+            if (s.Length > MaxFolderNameLength)
+                s = TrimTrailingPeriodsAndWhitespace(s.Substring(0, MaxFolderNameLength));
             if (string.IsNullOrEmpty(s)) return "season";
             return ReservedFolderNames.Contains(s) ? "_" + s : s;
         }
