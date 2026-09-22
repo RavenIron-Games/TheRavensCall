@@ -2846,7 +2846,7 @@ namespace TheRavensCall
         }
 
         // Returns false, with nothing changed on disk, when a season is already
-        // running: until 1.6.0 a second `season start` replaced the active season
+        // running: through 1.6.0 a second `season start` replaced the active season
         // in place — no summary, no season_end line, last_ended never set, only
         // the Chronicle folder and the baseline switched to the new name. The
         // console handler turns the false into a message naming the running
@@ -2875,7 +2875,16 @@ namespace TheRavensCall
                 _currentSeason = display;
                 _seasonStart = DateTime.UtcNow;
                 Chronicle.Init(ArchiveDir(_currentSeason));
-                SnapshotBaseline(_currentSeason, _seasonStart);
+                // Guarded the same way Init guards its mid-season snapshot: a
+                // baseline write that throws must not leave a half-started
+                // season behind, because the 1.6.1 guard above then refuses
+                // every retry of `season start`.
+                try { SnapshotBaseline(_currentSeason, _seasonStart); }
+                catch (Exception bex)
+                {
+                    Plugin.Log.LogWarning("[TheRavensCall] SeasonSystem: season_baseline.json could not be written: " +
+                        bex.Message + " (standings count from this restart in memory; the next boot retries).");
+                }
                 SaveMeta();
                 Plugin.Narrate($"A new season begins: {_currentSeason}!", "season_start", "SERVER");
                 Plugin.Log.LogInfo("[TheRavensCall] Season started: " + _currentSeason);
