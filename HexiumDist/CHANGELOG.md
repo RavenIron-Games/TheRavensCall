@@ -7,6 +7,19 @@
 
 ---
 
+## 🟢 [1.4.1] — The Raven Keeps Writing
+
+*Two logging failures found live on the Storm10 1.0.12 testbed on 2026-09-21: a season name with a trailing period silently killed Chronicle disk logging for the rest of the season, and the shutdown line/session summary never wrote on a dedicated server at all, on any version back to 1.0. Both fixed. No config, API or dashboard changes.*
+
+### 🩹 Fixed
+- **Starting a season with a name ending in a period (e.g. `TestSeason.`) silently stopped Chronicle disk logging for the rest of that season.** Windows drops a trailing period from a folder name, so the log file failed to open in the folder that was actually created, and because the previous log had already been closed by that point, nothing more reached disk afterward (the dashboard's recent-events feed kept working — it doesn't depend on the file). Season names are now cleaned up before the folder is built (invalid filename characters and trailing periods/spaces stripped, with a safe fallback if that leaves nothing), and a bad re-point can no longer go silent at all — the previous log file stays open and in use until the new one is confirmed to have opened. A restart mid-season resolves the same cleaned-up folder as the original `season start`.
+- **The "Server shutting down." Chronicle line and the end-of-session summary (top killer, most deaths, bosses/biomes/titles for the session) never wrote on a dedicated server**, on any version back to 1.0. The server's own networking is already shut down by the time the plugin's own shutdown code runs, and the check that was supposed to confirm "this is a server" always failed at that late point as a result. The server now remembers that it's a server from startup and uses that instead, so both write correctly on shutdown.
+
+### 🔧 Changed
+- The packaged `HexiumDist/plugins/TheRavensCall.dll` is **not** rebuilt as part of this change — it still contains 1.4.0's bytes. It needs a clean `dotnet build -c Release` from this source (and its md5 recorded here) before 1.4.1 is released.
+
+---
+
 ## 🟢 [1.4.0] — The Raven Remembers
 
 *The dashboard's front door now says what's actually happening: a recent-events feed and live season standings, both from a new `/api/activity` endpoint. Getting there meant fixing three pre-existing bugs the feature depends on — raids never registered on a dedicated server, a mid-season restart lost the Chronicle to the wrong folder and leaked a file handle, and the season start time could drift by the host's UTC offset. `/api/state` and the BarrkBOT export are untouched.*

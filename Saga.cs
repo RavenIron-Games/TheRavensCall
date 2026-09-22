@@ -33,10 +33,18 @@ namespace TheRavensCall
     {
         public const string PluginGUID = "com.raveniron.theravenscall";
         public const string PluginName = "TheRavensCall";
-        public const string PluginVersion = "1.4.0";
+        public const string PluginVersion = "1.4.1";
 
         internal static ManualLogSource Log;
         internal static Plugin Instance;
+        // Set once, in Patch_ZNetAwake.Postfix, the moment ZNet confirms this
+        // process is the dedicated server. On a dedicated server ZNet.instance
+        // is already torn down ("Net scene destroyed" precedes it in the log)
+        // by the time OnDestroy runs, so the live ZNet.instance.IsServer()
+        // check there always read false and skipped shutdown logging/saves —
+        // pre-existing since 1.0 (0.221.12 + Storm10 1.0.12 testbeds, review
+        // 2026-09-21). OnDestroy reads this remembered flag instead.
+        internal static bool WasServer = false;
         private readonly Harmony _harmony = new Harmony(PluginGUID);
 
         // ── Config ────────────────────────────────────────────────────────────
@@ -139,7 +147,13 @@ namespace TheRavensCall
 
         private void OnDestroy()
         {
-            if (ZNet.instance != null && ZNet.instance.IsServer())
+            // ZNet.instance is already null here on a dedicated server (it's
+            // torn down before OnDestroy runs), so this reads the flag
+            // Patch_ZNetAwake.Postfix remembered instead of asking ZNet again
+            // — see WasServer's own comment. WriteSessionSummary/SaveAll/
+            // Chronicle.Write below touch none of ZNet/EnvMan, so nothing
+            // here needs its own null guard beyond that.
+            if (WasServer)
             {
                 SessionTracker.WriteSessionSummary();
                 PlayerRegistry.SaveAll();
@@ -330,6 +344,7 @@ namespace TheRavensCall
             try
             {
                 if (!ZNet.instance.IsServer()) return;
+                Plugin.WasServer = true;
                 EventFeed.Init();
                 PlayerRegistry.LoadAll();
                 Companion.PrimeStateCache();
@@ -2070,17 +2085,43 @@ namespace TheRavensCall
         {
             try
             {
-                // Close before reopening — StartSeason/EndSeason both re-point
-                // the Chronicle at a new directory by calling Init again, and
-                // the day-rotation branch inside Write used to do its own
-                // close for that one case only. Doing it here fixes all three
-                // call sites' leaked handle in one place (§4.6).
-                _writer?.Close();
-                _logDir = overrideDir ?? Path.Combine(BepInEx.Paths.ConfigPath, "TheRavensCall", "Chronicle");
-                Directory.CreateDirectory(_logDir);
+                // Open the new writer FIRST, close/replace the old one only
+                // once it succeeds — StartSeason/EndSeason/SeasonSystem.Init
+                // all re-point the Chronicle at a new directory by calling
+                // Init again, and a bad re-point (e.g. a season name that
+                // collapses to an invalid path component) used to close the
+                // previous writer before the new one was known to open,
+                // leaving _writer null and silently losing every Chronicle
+                // line for the rest of the process (Storm10 "TestSeason."
+                // review 2026-09-21). On failure below, _writer/_logDir/
+                // _logPath are left exactly as they were, so the previous
+                // writer keeps logging.
+                string newDir = overrideDir ?? Path.Combine(BepInEx.Paths.ConfigPath, "TheRavensCall", "Chronicle");
+                Directory.CreateDirectory(newDir);
                 string date = DateTime.UtcNow.ToString("yyyy-MM-dd");
-                _logPath = Path.Combine(_logDir, $"TheRavensCall_Chronicle_{date}.log");
-                _writer = new System.IO.StreamWriter(_logPath, append: true) { AutoFlush = true };
+                string newPath = Path.Combine(newDir, $"TheRavensCall_Chronicle_{date}.log");
+
+                // Re-pointing at the file the current writer already has open
+                // fails outright (it holds the handle with FileShare.Read), so
+                // a redundant Init(sameDir) — e.g. starting the same season
+                // name twice, or restarting with the same season still active
+                // — would log the very "Chronicle init failed" warning this
+                // fix was meant to eliminate, even though nothing is wrong
+                // (review 2026-09-21). Same path + already open == nothing to do.
+                if (_writer != null && string.Equals(newPath, _logPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    _logDir = newDir;
+                    return;
+                }
+
+                var newWriter = new System.IO.StreamWriter(newPath, append: true) { AutoFlush = true };
+
+                var oldWriter = _writer;
+                _writer = newWriter;
+                _logDir = newDir;
+                _logPath = newPath;
+                try { oldWriter?.Close(); } catch { }
+
                 Plugin.Log.LogInfo($"[TheRavensCall] Chronicle: {_logPath}");
             }
             catch (Exception ex) { Plugin.Log.LogWarning($"[TheRavensCall] Chronicle init failed: {ex.Message}"); }
@@ -2402,7 +2443,9 @@ namespace TheRavensCall
                 {
                     string sName = args.Length >= 4 ? args[3] : "Season_" + DateTime.UtcNow.ToString("yyyyMMdd");
                     SeasonSystem.StartSeason(sName);
-                    args.Context?.AddString("[TheRavensCall] Season started: " + sName);
+                    // Echo back what was actually stored (StartSeason trims
+                    // trailing periods/whitespace), not the raw typed arg.
+                    args.Context?.AddString("[TheRavensCall] Season started: " + SeasonSystem.GetCurrentSeasonName());
                 }
                 else if (args.Length >= 3 && args[2] == "end")
                 {
@@ -2435,6 +2478,54 @@ namespace TheRavensCall
 
         private static string MetaPath => Path.Combine(BepInEx.Paths.ConfigPath, "TheRavensCall", "seasons.json");
         private static string BaselinePath => Path.Combine(BepInEx.Paths.ConfigPath, "TheRavensCall", "season_baseline.json");
+
+        // Windows silently drops a trailing period or space from a path
+        // component — StartSeason("TestSeason.") let Directory.CreateDirectory
+        // make "TestSeason." happily, but the StreamWriter opened against it
+        // then failed, because the OS resolved the path to "TestSeason"
+        // without ever telling CreateDirectory that (Storm10 review
+        // 2026-09-21). Trim the same way up front so what's displayed
+        // matches what Windows would have done to it anyway — a display
+        // name can never legitimately end with a period/space there, so a
+        // trailing one only ever reads as a typo.
+        private static string TrimTrailingPeriodsAndWhitespace(string name) =>
+            string.IsNullOrEmpty(name) ? name : name.TrimEnd(' ', '\t', '\r', '\n', '.');
+
+        // Windows reserved device names cannot be a path component at all —
+        // same list PlayerRegistry.ReservedFileNames guards for player files
+        // (review 2026-09-15), reused here because a season named NUL hit
+        // the identical DirectoryNotFoundException on Directory.CreateDirectory
+        // (review 2026-09-21).
+        private static readonly HashSet<string> ReservedFolderNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "CON", "PRN", "AUX", "NUL",
+            "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+            "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+        };
+
+        // Same approach as PlayerRegistry.SanitizeForFile (invalid filename
+        // chars -> '_', reserved device names -> '_' + name), plus the trim
+        // above, plus a fallback for a name that sanitizes away to nothing
+        // (e.g. "..." or all-invalid chars). Used for the *folder* only —
+        // the season's own display name is kept as typed (just trimmed),
+        // see TrimTrailingPeriodsAndWhitespace.
+        private static string SanitizeFolderName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return "season";
+            char[] chars = name.ToCharArray();
+            char[] invalid = Path.GetInvalidFileNameChars();
+            for (int i = 0; i < chars.Length; i++)
+                if (Array.IndexOf(invalid, chars[i]) >= 0) chars[i] = '_';
+            string s = TrimTrailingPeriodsAndWhitespace(new string(chars));
+            if (string.IsNullOrEmpty(s)) return "season";
+            return ReservedFolderNames.Contains(s) ? "_" + s : s;
+        }
+
+        // Single source of truth for the archive path — used by StartSeason
+        // and by Init's mid-season re-point, so a restart resolves the same
+        // folder a live StartSeason would have (Storm10 review 2026-09-21).
+        private static string ArchiveDir(string seasonName) =>
+            Path.Combine(BepInEx.Paths.ConfigPath, "TheRavensCall", "Chronicle", "seasons", SanitizeFolderName(seasonName));
 
         private class Baseline
         {
@@ -2481,11 +2572,10 @@ namespace TheRavensCall
                     }
 
                     // §4.6: re-point the Chronicle at the season's archive
-                    // folder, same path expression StartSeason uses — Init
-                    // otherwise leaves it in the default folder after a
+                    // folder, same sanitized path ArchiveDir/StartSeason use —
+                    // Init otherwise leaves it in the default folder after a
                     // mid-season restart.
-                    string archiveDir = Path.Combine(BepInEx.Paths.ConfigPath, "TheRavensCall", "Chronicle", "seasons", _currentSeason);
-                    Chronicle.Init(archiveDir);
+                    Chronicle.Init(ArchiveDir(_currentSeason));
                 }
             }
             catch (Exception ex) { Plugin.Log.LogWarning("[TheRavensCall] SeasonSystem.Init error: " + ex.Message); }
@@ -2606,14 +2696,25 @@ namespace TheRavensCall
         {
             try
             {
-                _currentSeason = name;
+                // Trim trailing periods/whitespace off the display name too
+                // (see TrimTrailingPeriodsAndWhitespace above) — it can never
+                // survive as typed on Windows anyway, so keep what's shown
+                // and what's stored from drifting apart. A name made up of
+                // nothing but periods/whitespace (".", "...") trims to "",
+                // and "" means "no season" everywhere else in this class
+                // (SeasonJson's active flag, EndSeason's guard) — fall back
+                // to the same "season" fallback the folder already gets, so
+                // the two always agree and the season stays endable
+                // (review 2026-09-21).
+                string display = TrimTrailingPeriodsAndWhitespace(name);
+                if (string.IsNullOrEmpty(display)) display = SanitizeFolderName(name);
+                _currentSeason = display;
                 _seasonStart = DateTime.UtcNow;
-                string archiveDir = Path.Combine(BepInEx.Paths.ConfigPath, "TheRavensCall", "Chronicle", "seasons", name);
-                Chronicle.Init(archiveDir);
-                SnapshotBaseline(name, _seasonStart);
+                Chronicle.Init(ArchiveDir(_currentSeason));
+                SnapshotBaseline(_currentSeason, _seasonStart);
                 SaveMeta();
-                Plugin.Narrate($"A new season begins: {name}!", "season_start", "SERVER");
-                Plugin.Log.LogInfo("[TheRavensCall] Season started: " + name);
+                Plugin.Narrate($"A new season begins: {_currentSeason}!", "season_start", "SERVER");
+                Plugin.Log.LogInfo("[TheRavensCall] Season started: " + _currentSeason);
             }
             catch (Exception ex) { Plugin.Log.LogWarning("[TheRavensCall] SeasonSystem.StartSeason error: " + ex.Message); }
         }
