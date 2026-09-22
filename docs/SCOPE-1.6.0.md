@@ -96,7 +96,10 @@ editing that variable. Write tokens are never stored in the clear.
 **Storage.** Netlify Blobs, store `trc`, keys `<server_id>/state`, `<server_id>/activity`,
 `<server_id>/census` and `<server_id>/meta` (`pushed_at`, `mod_version`, sha256 of the read
 token, sizes). Latest copy only; envelopes are stored and served as opaque bytes, never parsed
-or re-serialized on the receiver.
+or re-serialized on the receiver. Blobs is eventually consistent by default (an update reaches
+every edge within 60 s, the Netlify docs say), which would hand the page a minute-old copy on
+a 60 s push cadence, so the hosted routes read with `consistency: "strong"`; the docs cap an
+object at 5 GB and its metadata at 2 KB, neither anywhere near a 300 KB envelope.
 
 **Routes.**
 
@@ -117,7 +120,8 @@ Functions included; Personal $9 a month for 1,000 credits, Pro $20 for 3,000 and
 server: pushes at most 1,440 a day while players are online; viewing at the page's own cadence
 (state and activity every 10 s, census every 60 s) is 13 requests a minute, so an hour of
 viewing a day is about 780. Call it 2,200 requests a day, 67,000 a month: **14 credits**.
-Compute at about 100 ms per invocation: 1.9 GB-hours, **19 credits**. Bandwidth is egress only:
+Compute at about 100 ms per invocation at the default 1 GB memory (Netlify bills Functions
+as GB-hours, 10 credits each): 1.9 GB-hours, **19 credits**. Bandwidth is egress only:
 with `304`s the page downloads a body only when something changed, a few credits; worst case
 with no `304`s (a 180 KB state every 10 s for an hour a day) is about 2 GB a month, **40
 credits**. So **35–75 credits a month per server**, which the Free plan's 300 covers for two to
