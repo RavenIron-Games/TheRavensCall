@@ -33,7 +33,7 @@ namespace TheRavensCall
     {
         public const string PluginGUID = "com.raveniron.theravenscall";
         public const string PluginName = "TheRavensCall";
-        public const string PluginVersion = "1.4.1";
+        public const string PluginVersion = "1.4.2";
 
         internal static ManualLogSource Log;
         internal static Plugin Instance;
@@ -355,12 +355,18 @@ namespace TheRavensCall
                 // writer open — calling it first would eagerly open (and
                 // create) the default-folder log file, which SeasonSystem.Init
                 // then abandons, leaving a stray 0-byte file behind on every
-                // mid-season restart. Keyed on the writer rather than the
-                // season name (1.4.1): a season whose re-point failed, or a
-                // throw inside SeasonSystem.Init before the re-point, must
-                // still end up with the default Chronicle, not with none.
+                // mid-season restart. Keyed on the writer as well as the
+                // season name (1.4.1/1.4.2): a season whose re-point failed,
+                // or a throw inside SeasonSystem.Init before the re-point,
+                // must still end up with the default Chronicle, not with
+                // none — and with no season active the default folder must
+                // be re-pointed to even when a writer is still open from an
+                // earlier world session of the same process (a listen server
+                // hosting twice after seasons.json was cleared out of band).
+                // Chronicle.Init is a no-op on an unchanged path, so this
+                // never creates the stray 0-byte default file.
                 SeasonSystem.Init();
-                if (Chronicle.CurrentLogPath == null) Chronicle.Init();
+                if (string.IsNullOrEmpty(SeasonSystem.GetCurrentSeasonName()) || Chronicle.CurrentLogPath == null) Chronicle.Init();
                 LoreSystem.Init();
                 // Per-world-session registration (ZRoutedRpc.instance is new
                 // every time ZNet.Awake runs) — same lifecycle point every
@@ -2162,7 +2168,10 @@ namespace TheRavensCall
                     if (Plugin.EnableChronicleLog != null && !Plugin.EnableChronicleLog.Value) return;
 
                     string today = DateTime.UtcNow.ToString("yyyy-MM-dd");
-                    if (_logPath != null && !_logPath.Contains(today)) Init(_logDir);
+                    // Only the file name carries the log's date (1.4.2): a
+                    // season folder or an install path holding today's date
+                    // used to suppress the rollover for that whole day.
+                    if (_logPath != null && !Path.GetFileName(_logPath).Contains(today)) Init(_logDir);
                     _writer?.WriteLine(jsonLine);
                 }
                 catch (Exception ex) { Plugin.Log.LogWarning($"[TheRavensCall] Chronicle write failed: {ex.Message}"); }
@@ -2554,14 +2563,24 @@ namespace TheRavensCall
             int i = m.Index + m.Length;
             var sb = new System.Text.StringBuilder();
             bool esc = false;
+            bool closed = false;
             while (i < json.Length)
             {
                 char c = json[i++];
                 if (esc) { sb.Append(c); esc = false; }
                 else if (c == '\\') esc = true;
-                else if (c == '"') break;
+                else if (c == '"') { closed = true; break; }
                 else sb.Append(c);
             }
+            // Fail closed (1.4.2): a value with no closing quote (a torn
+            // write) reads as absent, and so does one whose closing quote is
+            // followed by anything but a separator — a quote dropped by hand
+            // makes the next key's opening quote look like the value's end,
+            // e.g. "current_season":"Winter War, "season_start":... — so
+            // Init sees "no season" instead of a fragment as a season name.
+            if (!closed) return null;
+            while (i < json.Length && char.IsWhiteSpace(json[i])) i++;
+            if (i < json.Length && json[i] != ',' && json[i] != '}') return null;
             return sb.ToString();
         }
 
@@ -2618,7 +2637,7 @@ namespace TheRavensCall
                         try
                         {
                             SnapshotBaseline(_currentSeason, DateTime.UtcNow);
-                            Plugin.Log.LogInfo("[TheRavensCall] season_baseline.json missing for active season " +
+                            Plugin.Log.LogInfo("[TheRavensCall] no usable season_baseline.json for active season " +
                                 _currentSeason + "; standings count from this restart (" + _standingsSince + ").");
                         }
                         catch (Exception ex)
@@ -2649,6 +2668,18 @@ namespace TheRavensCall
             {
                 if (!File.Exists(BaselinePath)) return false;
                 string raw = File.ReadAllText(BaselinePath);
+                // The file names the season it was taken for (1.4.2): a
+                // baseline left behind by an earlier season — EndSeason's
+                // delete failed, or the server died before it ran — must not
+                // be subtracted from the new season's counters. Returning
+                // false drops Init into its snapshot-now branch.
+                string forSeason = Companion.JsonGetString(raw, "season");
+                if (!string.IsNullOrEmpty(forSeason) && !string.Equals(forSeason, _currentSeason, StringComparison.Ordinal))
+                {
+                    Plugin.Log.LogWarning("[TheRavensCall] season_baseline.json belongs to season " + forSeason +
+                        ", not " + _currentSeason + "; taking a fresh baseline now.");
+                    return false;
+                }
                 string takenAt = Companion.JsonGetString(raw, "taken_at");
                 var rows = Companion.JsonGetArray(raw, "rows");
 

@@ -7,6 +7,21 @@
 
 ---
 
+## 🟢 [1.4.2] — The Raven Minds the Edges
+
+*The four follow-ups the 1.4.1 pre-publish review left open, all in the season and Chronicle bookkeeping, none reachable in normal play on a dedicated server. No config, API or dashboard changes.*
+
+### 🩹 Fixed
+- **A stale `season_baseline.json` is no longer trusted.** If a season ended but its baseline file survived (the delete failed, or the server died before `season end` ran) and a new season was then started by hand in `seasons.json`, the old season's start-of-season counters were subtracted from every player's lifetime totals and reported as the new season's standings. The file names the season it was taken for; a mismatch now logs a warning and takes a fresh baseline.
+- **A damaged `seasons.json` reads as "no season"** instead of a fragment of the file becoming the season name and a folder under `Chronicle\seasons\`: a file cut off mid-value (a torn write; 1.4.1's reader returned whatever it had read, where 1.4.0's regex already refused it) and a value whose closing quote was dropped by hand (the next key's opening quote used to pass for the value's end, on every version).
+- **Chronicle day rotation checks the log file's own name for the date**, not the whole path. A season folder named with a date in it (or a server installed under a dated directory) used to suppress the rollover for that day, so that day's rows went into the previous day's file.
+- **A listen server that hosts twice in one process now re-points the Chronicle to the default folder when no season is active**, instead of keeping the previous world session's season writer. Not reachable on a dedicated server, where the world is loaded once per process.
+
+### 🔧 Changed
+- The packaged `HexiumDist/plugins/TheRavensCall.dll` is **not** rebuilt as part of this change — it still contains 1.4.1's bytes. It needs a clean `dotnet build -c Release` from this source (and its md5 recorded here) before 1.4.2 is released.
+
+---
+
 ## 🟢 [1.4.1] — The Raven Keeps Writing
 
 *Two logging failures found live on the Storm10 1.0.12 testbed on 2026-09-21 (`docs/TESTPLAN-storm10-2026-09-21.md`): a season name with a trailing period silently killed Chronicle disk logging for the rest of the season, and the shutdown line/session summary only wrote when the engine happened to tear the plugin down before its own networking. Both fixed, plus two dashboard wording fixes. No config or API changes.*
