@@ -40,7 +40,7 @@ copy of this folder and it works the same way, unmodified.
    Every time you edit `TRC_SERVERS` (add a server, rotate or revoke a
    token), redeploy again. This is also how a leaked write token gets
    revoked: edit the variable, redeploy.
-5. **Custom domain.** Placeholder in the scope: `dash.ravenirongames.com` —
+5. **Custom domain.** Placeholder in the scope: `trc.ravenirongames.com` —
    the owner's decision, set in Site configuration -> Domain management.
    Until it's set, the site's `*.netlify.app` URL works the same way.
 6. **Spend cap.** Site configuration -> Billing -> set a spend cap before

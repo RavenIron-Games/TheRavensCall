@@ -260,7 +260,7 @@ The receiver described here is the owner's own and isn't open to other servers i
 1. **Generate both tokens** — `openssl rand -hex 24`, run twice: once for `HttpApiToken` (if you don't already have one at least 24 characters long) and once for `PushToken`.
 2. **Set `HttpApiToken` (24+ characters), `PushUrl`, `PushToken` and `PushServerId`** under `[Companion]`/`[Push]` in `com.raveniron.theravenscall.cfg`.
 3. **Register the id** with both tokens' sha256 hashes in the receiver's `TRC_SERVERS` environment variable, then redeploy the receiver — a change in the Netlify UI does nothing until the site is redeployed.
-4. **Open `https://dash.ravenirongames.com/s/<id>/`** (that hostname is the owner's placeholder — use whatever address the receiver is actually deployed to).
+4. **Open `https://trc.ravenirongames.com/s/<id>/`** (that is Raven Iron Games' receiver — use whatever address the receiver you push to is deployed at).
 5. **To unpublish**, send `DELETE /s/<id>/api` with the write token in the `Authorization: Bearer` header. It removes the stored envelopes and answers `{"deleted":true}`; how an admin takes a server back offline. Deleting the id from the registry takes the dashboard offline on the next request too, but the stored copy stays until the `DELETE` runs.
 
 ### Cadence
@@ -336,7 +336,7 @@ Configuration is located at `BepInEx/config/com.raveniron.theravenscall.cfg`:
 | **Companion**| `StatsPushIntervalSeconds` | `10` | Frequency (seconds) for updating `BarrkBOT_data1.json` / `BarrkBOT_data2.json`. |
 | **Companion**| `EventFeedCapacity` | `200` | Number of recent events kept in memory and served by `/api/activity`, newest first (0 to 1000). Saved to `event_feed.json` so the feed survives a restart. `0` turns the feed off; the endpoint still answers, with an empty `events` array. |
 | **Census** | `CensusIntervalMinutes` | `5` | How often (minutes) the server counts portals, beds, wards, ships, carts, chests and crafting stations standing in the world and rebuilds `/api/census`. `0` turns the census off; the endpoint still answers, with `enabled: false`. |
-| **Push** | `PushUrl` | `""` | Since 1.6.0. The hosted receiver's base URL to push to (e.g. `https://dash.ravenirongames.com`). Empty (the default) disables the push entirely — the server behaves exactly like 1.5.0. See [Hosted Servers](#-hosted-servers-nitrado-g-portal). |
+| **Push** | `PushUrl` | `""` | Since 1.6.0. The hosted receiver's base URL to push to (e.g. `https://trc.ravenirongames.com`). Empty (the default) disables the push entirely — the server behaves exactly like 1.5.0. See [Hosted Servers](#-hosted-servers-nitrado-g-portal). |
 | **Push** | `PushToken` | `""` | Since 1.6.0. Bearer token sent with every push, checked against the receiver's registry. |
 | **Push** | `PushServerId` | `""` | Since 1.6.0. This server's id in the receiver's registry. No default — required to push, and must match `[a-z0-9-]{1,32}` and the id registered in `TRC_SERVERS`. |
 | **Push** | `PushIntervalSeconds` | `60` | Since 1.6.0. How often (seconds) to push, clamped 15..3600. The effective cadence rounds up to the next multiple of `StatsPushIntervalSeconds`. |

@@ -203,7 +203,7 @@ case a push is about 300 KB; a typical one is 20–200 KB.
 
 **Where.** A Netlify site **of its own** in the owner's team — not the site serving
 ravenirongames.com, so an abusive month cannot take the main site down with it — at
-`dash.ravenirongames.com` (placeholder), built from `hosting/netlify/` in this repo:
+`trc.ravenirongames.com` (the owner's hostname, decided 2026-09-22; `dash.ravenirongames.com` was the placeholder until then), built from `hosting/netlify/` in this repo:
 `netlify.toml`, `netlify/functions/push.mts`, `netlify/functions/api.mts`, the dashboard page and the landing page as static
 file, and a README with the deploy steps (`netlify init`, the env var, the custom domain, the
 spend cap, the rate-limit rule).
@@ -442,7 +442,7 @@ keeps open.
   where 1.5.0's sat (replaced at the cut). `HexiumDist/README.md`: a "Hosted servers (Nitrado,
   G-Portal)" section — what hosting publishes, the setup in five steps (generate both tokens;
   set `HttpApiToken`, `PushUrl`, `PushToken`, `PushServerId`; register the id with both
-  tokens' hashes in `TRC_SERVERS` and redeploy; open `https://dash.ravenirongames.com/s/<id>/`;
+  tokens' hashes in `TRC_SERVERS` and redeploy; open `https://trc.ravenirongames.com/s/<id>/`;
   how to unpublish), the `[Push]` rows in *Configuration*, and a line in *The Web Dashboard* on
   what the hosted page shows that the local one does not; until §8 step 9 has run, the section
   says "run on a Linux dedicated server (Valheim 1.0.15, under WSL2), not yet on a rented
@@ -501,7 +501,7 @@ keeps open.
    one burst on return; stop Storm10 → "server silent since …" and the greyed panels once
    `stale_after_seconds` passes; `/s/storm10` without the slash → the same page, same id; a second id's
    page → its own token field, the first id's token untouched.
-8. **Real site**: deploy to `dash.ravenirongames.com`, repeat 2 and 7 against it, measure the
+8. **Real site**: deploy to `trc.ravenirongames.com`, repeat 2 and 7 against it, measure the
    Function duration and after 24 hours read the credit usage in the Netlify UI into the
    changelog, and confirm the spend cap and the rate-limit rule are in place.
 9. **Linux — the release gate, not optional** (the WSL2 dedicated server at `/opt/valheim`,
@@ -523,7 +523,7 @@ keeps open.
   "not yet". Opening it later is **not** a receiver change only: every hosted dashboard shares
   one origin and therefore one `localStorage`, so any tenant's stored token is readable by
   script on any other tenant's page. Hosting another admin's server means giving each server
-  its own origin (`<id>.dash.ravenirongames.com`) plus the page and receiver changes that
+  its own origin (`<id>.trc.ravenirongames.com`) plus the page and receiver changes that
   follow; that cost belongs to whoever takes the decision.
 - A second admin deploying their **own private copy** of `hosting/netlify/` is a different
   thing and stays possible by construction: nothing in it hardcodes the owner's domain, ids or
@@ -539,7 +539,7 @@ keeps open.
 ## 10. Open for the owner
 
 - The release name.
-- The hostname (`dash.ravenirongames.com` is the placeholder).
+- ~~The hostname~~ — settled 2026-09-22: `trc.ravenirongames.com` (the placeholder had been `dash.ravenirongames.com`); adding it to the site is the owner's step.
 - ~~Renting a Nitrado test server for step 9~~ — settled 2026-09-22: no rented server; the
   WSL2 Linux dedicated server is the step 9 box (`docs/TESTPLAN-linux-wsl2-2026-09-22.md`).
 - Whether the conditional-fetch rewrite (§5) ships in 1.6.0 or 1.6.1: it touches `apiFetch`,
