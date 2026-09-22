@@ -167,7 +167,11 @@ server contract. The selected chip lives in `state.feedFilter`, not the DOM,
 so it survives a re-render. A row whose `timestamp_utc` is strictly newer
 than the previous poll's newest event gets a brief highlight
 (`isNewFeedEvent`/`.feed-row-new`); nothing highlights on the very first
-load, since there's no "previous poll" yet. "No events yet" on an empty
+load, since there's no "previous poll" yet, and nothing is flagged while a
+detail view is open (the panels are hidden, and a CSS animation in a hidden
+subtree would replay on Back; rows already flagged lose the class when the
+panels hide), so an event that arrives during a detail visit is never
+highlighted. "No events yet" on an empty
 feed (a fresh install, or `EventFeedCapacity = 0`); since 1.4.1, "Nothing in <chip> yet."
 instead when the feed has rows but the selected chip has none.
 
@@ -241,8 +245,15 @@ who placed them, and directories of portals, beds and wards.
 10 s `POLL_MS` tick (`setInterval(pollActivity, POLL_MS)`); a full census is
 far more expensive than the activity envelope, so it gets its own, slower
 timer. A change gate compares the payload with `generated_at` stripped, the
-same pattern `pollActivity` already uses, so an unchanged census doesn't
-force a re-render.
+same pattern `pollActivity` uses; since `duration_ms` differs on every run,
+in practice each completed count redraws the World panel (a few KB of HTML)
+and the footer's "T ago" follows the latest run. Two more triggers: `pollState()`
+rebuilds the World panel and the feed when the set of roster names changes
+(`state.lastRosterKey`), because a builder cell and a feed row link only a
+name the roster knows; and every census outcome goes through
+`afterCensusChange()`, which also rebuilds an open detail view, but only when
+what its Build tab census card reads (the builders rows, the enabled and
+first-run guards, the token/404 state) has changed.
 
 **Outcomes:**
 

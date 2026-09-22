@@ -658,6 +658,7 @@
     feedFilter: 'all',         // tier 2: selected feed chip group — all | combat | players | world | season
     feedHighlightSince: null,  // tier 2: previous poll's newest events[0].timestamp_utc, for the "new row" highlight
     lastRosterKey: null,       // sorted roster names at the last render, so a roster change can rebuild the census panel's builder links
+    lastCensusCardKey: null,   // what the open detail view's Build tab census card last rendered from (afterCensusChange)
     censusSort: { key: 'pieces', dir: 'desc' }, // 1.5.0: the World panel's Builders table sort, same mechanics as boardSort/seasonSort
     censusData: null,          // 1.5.0: parsed /api/census payload
     lastCensusCompare: null,   // 1.5.0: last /api/census response text with generated_at stripped
@@ -1097,6 +1098,7 @@
         if (rosterKey !== state.lastRosterKey) {
           state.lastRosterKey = rosterKey;
           if (state.censusData) renderCensus();
+          if (state.activityData) renderActivity(); // the feed links names the same way (renderFeedPanel)
         }
       } else {
         renderHeader();
@@ -1179,7 +1181,16 @@
   // came from (pre-publish review 2026-09-22).
   function afterCensusChange() {
     renderCensus();
-    if (state.view === 'detail' && state.stateData) render();
+    if (state.view !== 'detail' || !state.stateData) return;
+    // duration_ms differs on every run, so the change gate opens once per
+    // CensusIntervalMinutes even when nothing was built; rebuild the open
+    // detail view only when what its census card reads has changed
+    // (pre-publish review 2026-09-22).
+    var c = state.censusData;
+    var key = JSON.stringify([state.censusSupported, state.censusAuth, c ? c.enabled : null, !!(c && c.generated_at), c ? c.builders : null]);
+    if (key === state.lastCensusCardKey) return;
+    state.lastCensusCardKey = key;
+    render();
   }
 
   function pollCensus() {
@@ -1251,7 +1262,16 @@
     // §3.1: render() hides #worldPanels while state.view === 'detail'
     // (renderActivity() independently guards the same condition, so an
     // /api/activity tick during the detail view can't re-show it either).
-    document.getElementById('worldPanels').hidden = !worldPanelsShouldShow();
+    var worldPanels = document.getElementById('worldPanels');
+    worldPanels.hidden = !worldPanelsShouldShow();
+    if (worldPanels.hidden) {
+      // A CSS animation in a display:none subtree restarts when display
+      // returns, so rows still carrying the "new row" class would flash
+      // again on Back: drop the class while the panels are hidden
+      // (pre-publish review 2026-09-22).
+      var flagged = worldPanels.querySelectorAll('.feed-row-new');
+      for (var f = 0; f < flagged.length; f++) flagged[f].classList.remove('feed-row-new');
+    }
 
     openDetails.forEach(function (key) {
       var d = app.querySelector('details[data-details-key="' + key + '"]');
