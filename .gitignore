@@ -13,3 +13,6 @@ icon_hd.png
 
 # built distribution archives (attached to GitHub Releases instead)
 HexiumDist/*.zip
+
+# Local Netlify folder
+.netlify

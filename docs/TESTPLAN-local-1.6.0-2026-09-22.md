@@ -1,0 +1,55 @@
+# TheRavensCall 1.6.0 — local test plan run, 2026-09-22
+
+The push design's own test plan is `docs/SCOPE-1.6.0.md` §8. This is the run of everything in it
+that can be done without a deployed receiver: the local receiver (`netlify dev`), Storm10 on
+Windows, and the WSL2 Linux dedicated server. Steps 8 (the real site) and 9's https push to it
+wait on the owner's deploy; everything else below **passed**, on the branch's final build unless a
+row says otherwise. Two defects were found live and fixed before the review rounds
+(the `/s/<id>` 301 rule looping, and "server reported 2m ago ago"); the review rounds themselves
+(6 lenses, 36 findings, 16 must-fix + 18 should-fix, all applied and re-verified) are in the
+commit history of `feat/push-1.6.0-impl`.
+
+## Setup
+
+| Item | Value |
+|---|---|
+| Builds | first cut md5 `5a996fcc` (271,360 bytes) → after the must-fixes `726b8012` → **final `1799895d` (274,944 bytes)**, all `dotnet build -c Release` with 0 warnings, 0 errors |
+| Receiver | `hosting/netlify/` under Netlify CLI 27.8.1 (`netlify dev --offline`, `http://localhost:8888`, sandboxed Blobs), `TRC_SERVERS` holding two ids, `storm10` and `second`, each with the sha256 of a throwaway 48-character write token and read token generated for this run |
+| Windows server | Storm10, Valheim 1.0.15 (network version 40), `C:\Users\donfr\ValheimServers\Storm10`, its own world; `[Push]` pointed at `http://localhost:8888`, `HttpApiToken` set to the 48-character read token; config restored from backup at the end |
+| Linux server | WSL2 Ubuntu 26.04.1, Valheim l-1.0.15 at `/opt/valheim` on a copy of the Storm10 world (`docs/TESTPLAN-linux-wsl2-2026-09-22.md`), pushing as `second` to `http://localhost:8888` inside WSL, where a 20-line Python TCP forwarder relays loopback 8888 to the Windows host's receiver (the mod refuses any non-loopback http URL, so a direct WSL → Windows address cannot be configured — see step 5) |
+| Page | the built-in browser against `http://localhost:8888/s/storm10/`, `/s/second/`, `/s/storm10` and `http://localhost:2112/`; the read tokens were placed in `localStorage` under the page's own keys, never typed into a field |
+| Times | local (UTC−7); the receiver's `pushed_at`/`generated_at` values are UTC |
+
+## Results, by §8 step
+
+| # | Result | Evidence |
+|---|---|---|
+| 1 | PASS | `dotnet build -c Release --no-incremental`: Build succeeded, 0 Warning(s), 0 Error(s) (final build `1799895d`); the inline script passes `node --check`; `npm run typecheck` (tsc, strict) 0 errors |
+| 2 | PASS | boot 12:17:17 → `Push enabled: server_id='storm10', url=http://localhost:8888, interval=60s, heartbeat=600s.` (the one log line) → first `POST /push` accepted at 12:17:47, 18 s after `Server systems initialized`, carrying all three; `/s/storm10/api/state`, `/activity`, `/census` on the receiver equal `localhost:2112`'s bodies byte for byte once `generated_at`, `duration_ms` and `scanned_objects` are blanked on both sides (12,309 / 6,119 / 1,765 bytes) |
+| 3 | PASS (10-minute window) | nobody online, no events: exactly two pushes in ten minutes, 12:17:47 and the heartbeat at 12:27:48 (600 s later, on the tick), nothing between them although the poll tick rebuilt `state` every 10 s and the census ran twice (`census` therefore null across two consecutive runs). The 30-minute window, the day turn and a player joining were not run (no client this session) |
+| 4 | PASS | `EnableHttpServer = false` with `PushUrl` set (boot 12:28:07, `interval=20s, heartbeat=60s`): `localhost:2112` refuses connections, the push lands (12:28:42), and `http://localhost:8888/s/storm10/` shows the roster (2 cards), season, feed (30 rows) and the World panel |
+| 5 | PASS | **Receiver down** (a listener that accepts and drops, so attempts are timestamped): one warning `Push failed: Unable to read data from the transport connection: An existing connection was forcibly closed by the remote host.`, attempts at 12:35:44, 12:36:44 (+60 s), 12:38:44 (+120 s) and 12:42:42 (+240 s, receiver back by then) → `Push to the receiver recovered after 3 failed attempt(s).`, the recovery bundle re-sent state, activity and census. **Failure forces all three** (final build, `heartbeat=600s` so no heartbeat could mask it, a lore broadcast every minute as the only change): `Push failed: ConnectFailure …` at 13:15, the receiver's four blobs deleted at 13:16:38 while the mod was in backoff, the retry at 13:17:25 restored `state`, `activity` **and** `census` — the census's own `generated_at` (20:14:24Z) predates the outage, so it was re-sent unchanged. **Wrong `PushToken`** → receiver `401`, one warning `Push rejected: PushToken rejected — check [Push] PushToken and PushServerId against the receiver's registry` (13:04:18). **`HttpApiToken` not the registered hash** → `409`, `Push rejected: the receiver has a different HttpApiToken hash registered for 'storm10' — re-register read_token_sha256 and redeploy` (13:05:15). **Non-loopback http `PushUrl`** (`http://172.24.112.1:8888`, the Linux boot at 12:47) → `Push disabled: [Push] PushUrl 'http://172.24.112.1:8888' must be an https URL (http is accepted only to a loopback host, for local testing against netlify dev) — fix the URL and restart.`, nothing sent. **`HttpApiToken` of 10 characters** → `Push disabled: a hosted dashboard needs [Companion] HttpApiToken to be at least 24 characters — set a longer random token and restart.`, zero requests in 30 s (13:05:45). **`PushIntervalSeconds = 15`** → boot line `interval=20s`; a change-triggered push 20 s after the previous one (12:32:52 → 12:33:12). **`429`**: a null push from the harness 5 s before the mod's heartbeat tick made the mod's push land inside the 10 s window → receiver `429`, no warning, no backoff, the retry 20 s later (12:34:12 → 12:34:32) `200`. Not run: the hourly re-log (needs an hour of failure) and the 15-minute retry after a refusal |
+| 6 | PASS 38/38 | `scratchpad/harness/step6.py` against the final receiver: 3 MB → `413`; wrong/missing bearer and an id registered to another token → `401` with one body; `../trc`, `a%2fb`, a 33-character id, `""` → `422` naming `server_id`; missing `read_token_sha256` → `422`, wrong → `409`; `heartbeat_seconds: 5` and a bad `mod_version` → `422`; reads with no/wrong token or an unregistered id → `401 {"error":"token required"}`, `?token=` → `400 {"error":"use the X-Api-Token header"}`; health before any push → `200` without `age_seconds`; state/census before any push → `200` with `no_data: true`, no `ETag`, `Cache-Control: no-store`; a valid push → `200 {"ok":true,"stored":["state","census"]}`, the state read back byte-equal with a quoted sha256 `ETag`, `Vary: X-Api-Token`, `private, no-cache`; `If-None-Match` → `304` carrying `Access-Control-Allow-Origin: *` and `Expose-Headers: ETag`; a second push inside 10 s → `429`, `Retry-After: 9`, the first push still readable; the second id refuses the first id's token; `/s/storm10` and `/s/storm10/` → the page with the CSP and nosniff headers; `OPTIONS` → `204`; unknown API path and a path outside `/push` and `/s/` → `404`; `DELETE` with the read token → `401`, with the write token → `200 {"deleted":true}` and the reads back to `no_data` |
+| 7 | PASS | `/s/second/` before its first push: amber dot, header "waiting for server…", `Registered, waiting for second to report` in the main area, the season, feed and World panels; the Linux server's first push replaced it within one interval (roster, season, feed, World panel, `server reported 43s ago`). `/s/storm10/`: the same roster, season, feed and World panel as `localhost:2112`; with no token saved, Settings auto-opens with the 401 notice, the hosted label `Base URL override (hosted: storm10)` and placeholder `(blank = this server's hosted API)`, the panels read "Needs the API token (Settings)"; with the token, `304` for state/activity/census on every poll after the first (`health` stays `200`), green dot, `updated just now`. **Visibility**: with the browser pane hidden the polls stopped (`document.visibilityState === 'hidden'`, only the unguarded gamedata fetch ran) and one burst followed on return. **Stale**: the Linux server stopped at 12:49:58 → at 12:52:46 the line read `server silent since 9/22/2026, 12:49:08 PM` and `#app` and `#worldPanels` carried `stale-dim`. `/s/storm10` without the slash → the same page, hosted id `storm10` (revision 6, no redirect). A second id's page has its own token field and storage key (`trc_token:second`); `trc_token:storm10` untouched. Hosted footer copy present; the mod's own page at `localhost:2112` keeps the old label, placeholder and footer, shows no freshness line and no `NaN`. Not checked: the detail view's fish names |
+| 8 | NOT RUN | the deploy to the owner's Netlify team, the domain, the spend cap, the Firewall rule, the measured Function duration and the 24-hour credit read are the owner's steps |
+| 9 | PARTIAL | the 1.6.0 build boots on Linux 1.0.15 (census 262,520 objects in 19–23 ms, zero warnings), refuses the non-loopback URL, and with a loopback URL pushes over plaintext http through the forwarder to the local receiver as `second` (`Push enabled: server_id='second' … interval=20s, heartbeat=60s`, first push 12:48:41 + 27 s, again on the final build at 12:54:49); its page went from waiting to data and to stale. The **https** push to the deployed receiver is what the gate asks for and waits on step 8 |
+| 10 | PASS | Storm10 restarted on its original config (`PushUrl` empty, `HttpApiToken` empty, `EnableHttpServer = true`) with the final DLL staged: no `Push` line of any kind in the boot, `/api/health` → `{"status":"ok","version":"1.6.0"}`, `/api/state` open again; the page at `localhost:2112` unchanged from 1.5.0's behaviour (no extra header line, no `NaN`) |
+
+## Harness notes
+
+- Storm10 was started with `Start-Process` and stopped with `taskkill` without `/F` each cycle
+  (seven restarts; every boot with zero plugin warnings or errors apart from the intended push
+  lines). Its config is back to the pre-run file; the final 1.6.0 build stays staged in its plugin
+  folder and behaves as 1.5.0 there.
+- The dummy listener's log is shared with the hosted page's own polls (four connections every
+  10 s, five when the census poll joins); the mod's attempts are the fifth connection at :44.
+- When the Windows-side receiver was killed while the WSL forwarder was still bound to
+  127.0.0.1:8888 inside WSL, WSL's localhost forwarding took the freed Windows port, so the
+  restarted receiver could not bind and the forwarder looped to itself — a harness accident
+  (one `Push failed: Timeout` on both servers, both recovered once the forwarder was killed), not
+  a mod defect.
+- `netlify dev` created `hosting/netlify/.netlify/` (a local database for its sandbox); it is
+  gitignored, as is `node_modules/`.
+- Scripts: `scratchpad/harness/` (`make_tokens.py`, `patch_storm10_cfg.py`, `storm10.ps1`,
+  `step6.py`, `watch_push.py`, `push_null.py`, `push429b.py`, `dummy8888.py`, `tcp_proxy.py`,
+  `patch_linux_cfg.py`) and `scratchpad/wsl-linux-push.sh`, all session-local.

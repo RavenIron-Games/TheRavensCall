@@ -7,6 +7,30 @@
 
 ---
 
+## 🟢 [1.6.0] — (release name TBD by the owner)
+
+*Owner's ask, 2026-09-22: "ok so say the server is on nitrado," then "ok scope the push design as 1.6.0." On a rented game server (Nitrado, G-Portal and the like) the admin gets the game's ports, a web panel and FTP — no shell, no way to open the dashboard's port — so `http://localhost:2112` is unreachable from anywhere. 1.6.0 pushes the mod's data out over HTTPS instead: a small receiver on the owner's Netlify team keeps the latest copy, and the same dashboard page reads from it. With `PushUrl` empty (the default) nothing changes: 1.6.0 on a home server behaves exactly like 1.5.0.*
+
+### Added
+- **A new `[Push]` config section**: `PushUrl` (default `""`), `PushToken` (default `""`), `PushServerId` (default `""`, required to push, `[a-z0-9-]{1,32}`), `PushIntervalSeconds` (default `60`, clamped 15..3600) and `PushHeartbeatMinutes` (default `10`, clamped 1..1440). See `docs/API.md` and the README's Configuration table for the full rules.
+- **The push**: on its own schedule the mod POSTs its three envelopes — the same strings `/api/state`, `/api/activity` and `/api/census` serve — to `PushUrl`, outbound only, the same path the Discord webhook already uses. An envelope travels as `null` when unchanged since the last accepted push (a byte comparison with the volatile fields blanked); a heartbeat carries all three regardless, so a receiver that lost them recovers and "last reported" keeps meaning "the server is alive." Bearer-token authenticated, `HttpApiToken` required at 24+ characters before the push runs at all, exponential backoff on failure (60 s, 2, 4, 8, then 15 minutes flat), with the receiver's four configuration refusals each named in the log when they happen (re-logged only when the text changes or an hour has passed) and retried every 15 minutes, and a transport failure's warning re-logged at most once an hour with the consecutive-failure count. See `docs/API.md` for the exact request and refusal text.
+- **The receiver** (`hosting/netlify/`): a Netlify site of its own — not the site serving ravenirongames.com — that stores the latest envelopes per server (Blobs, an id-first `TRC_SERVERS` registry) and serves them back at `/s/<id>/api/state`, `/activity`, `/census`, `/health` and `/gamedata`, behind the server's own read token, plus the dashboard page itself as a static file. See `hosting/netlify/README.md` for the deploy steps.
+- **The dashboard page learns a hosted mode**: it derives its API base from its own `/s/<id>/` path, keeps a per-route `ETag` and sends `If-None-Match`, treats a `304` response as "unchanged" with no re-render, pauses all four polls while its tab is hidden and refetches once on return, and shows how long ago the game server last reported ("server reported Ns ago" / "server silent since …", with the roster, feed and World panel greyed out once it's gone quiet), driven by `/api/health`'s body rather than by hosted mode itself. A server that's registered but hasn't pushed yet shows "Registered, waiting for `<id>` to report" with an amber connection dot until its first push lands.
+
+### Known difference
+- `/api/gamedata` (386 KB, written once per boot) is not pushed, so on the hosted page fish and resource names fall back to prettified tokens ("Fish1" rather than "Perch") instead of their real names. That's the one visible difference from `localhost:2112`; pushing it is the 1.7.0 follow-up.
+
+### Security
+- **What hosting publishes.** A read-token holder sees everything the three pushed routes serve: every known player's stats, skills, titles and death coordinates; the event feed and season standings; and the census, which lists every portal, bed and ward in the loaded world with its rounded x/z — in effect where the bases are. Until 1.6.0 all of that stayed on a machine the admin controls; hosting moves the latest copy to a third party's storage behind one shared token. Leaving `PushUrl` empty keeps a server local exactly as before.
+
+### Tested
+- The Linux boot of 1.5.0 passed on WSL2 Valheim 1.0.15 (`docs/TESTPLAN-linux-wsl2-2026-09-22.md`): the mod boots, serves, and counts a copy of Storm10's world to the object, and `HttpWebRequest` completes https requests with certificate validation on. 1.6.0's own push test plan (§8 of `docs/SCOPE-1.6.0.md`) ran locally the same day (`docs/TESTPLAN-local-1.6.0-2026-09-22.md`): steps 1–7 and 10 pass against a local receiver — Storm10 on Windows and the WSL2 Linux server (Valheim 1.0.15) both push; the change gate, the heartbeat, the backoff and recovery, the four named refusals, `429` handling and the hosted page's waiting, `304`, visibility and stale states all behave as scoped. Still pending: step 8 (the deployed receiver) and step 9's https push to it from the Linux box — until then, not run on a rented host.
+
+### 🔧 Changed
+- `HexiumDist/plugins/TheRavensCall.dll` not rebuilt yet — refreshed at the cut.
+
+---
+
 ## 🟢 [1.5.0] — The Raven Counts the Halls
 
 *Owner's ask, 2026-09-22: "can we add some data? like how many portals placed by player and in world," then "add the rest of them then, beds ships carts, the lot." A world census now runs on the server on a timer and feeds a new World panel on the dashboard. `/api/state` and the BarrkBOT export are untouched — the census is a new route only.*

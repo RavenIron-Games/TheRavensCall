@@ -290,17 +290,107 @@ Names, tags and positions on this panel are escaped through `esc()` at every
 render, the same as everywhere else on the page. At the 375px breakpoint its
 tables scroll inside their own card, the same as the "All time" board.
 
+## Hosted mode (1.6.0)
+
+The page derives its base from its own location:
+`location.pathname.match(/^\/s\/([a-z0-9-]{1,32})(?:\/|$)/)` gives the hosted id (both `/s/<id>` and `/s/<id>/`) and the base
+`/s/<id>`; when the path does not match, today's (non-hosted) behaviour applies unchanged. The
+Settings Base URL override still wins when set, so the page can also be opened from anywhere and
+pointed at a receiver or at a mod on the admin's own machine; when hosted and an override is
+set, the Settings panel shows one line naming the receiver it is bypassing.
+
+**Per-id settings.** In hosted mode the saved token and Base URL are namespaced by the hosted id
+(`trc_token:<id>`, `trc_base_url:<id>`) instead of the fixed keys used everywhere else — today's
+keys are fixed and every hosted dashboard shares one origin, so without this, opening `/s/b/`
+would overwrite the token saved for `/s/a/`. On a page that is not hosted both keys behave
+exactly as today.
+
+## Conditional fetches (1.6.0)
+
+`apiFetch` keeps a per-route `ETag` map, sends `If-None-Match` when it holds one for that route,
+and passes `cache: 'no-store'` so the browser's own revalidation can't shadow the header. A `304`
+response is turned into an "unchanged" sentinel **before** the existing `!res.ok` throw (`304`
+is not `res.ok`; otherwise every unchanged poll would paint "Could not reach …" and the red dot
+over a current dashboard). The sentinel takes the path an unchanged body already takes today: no
+parse, no re-render, but `pollState` still sets `lastUpdated`, `connStatus = 'ok'`, clears the
+error and calls `renderHeader()` — except the sentinel leaves `connStatus` as it found it when
+that value is `waiting`. `pollActivity`/`pollCensus` still take their `wasUnauthorized`
+re-render branch, so a fixed token clears the notice even on a `304` poll. The `ETag` map is
+cleared wherever `saveSettings()` clears the other compare gates, so a settings save is always
+answered with a full body. Against the mod's own listener on `localhost:2112` nothing changes —
+it sends no `ETag`, so `If-None-Match` never matches there.
+
+## Visibility (1.6.0)
+
+All four polls (state, activity, census, health) pause while
+`document.visibilityState === 'hidden'` and run once immediately on `visibilitychange` back to
+visible — the cost control that keeps a tab left open on a second monitor from billing the
+hosted receiver around the clock.
+
+## Freshness (1.6.0)
+
+Driven by the `/api/health` **body**, not by hosted mode: the page polls `<base>/api/health`
+alongside the state poll. The body is reduced to two derived values the moment it arrives —
+`state.serverReportedAt = Date.now() - age_seconds * 1000` and `state.staleAfterSeconds` — and
+only when both `age_seconds` and `stale_after_seconds` are numbers; a body without them (the
+mod's own `{"status":"ok","version":"…"}`) clears both and renders no extra line at all, exactly
+as 1.5.0 does — keying on hosted mode instead would print "reported NaN ago" the moment the
+override points at a real mod. `renderHeader()`, which already runs every second, recomputes the
+line from `state.serverReportedAt` — "server reported 2m ago", then "server silent since
+`<time>`" (that value formatted with `fmtAbs`) once the age exceeds `staleAfterSeconds` — so it
+stays honest between health polls and while a health fetch is failing. **`pushed_at` is never
+rendered:** it is echoed by the receiver for the record only, and measuring age from the
+receiver's own clock (`received_at`) buys nothing if the page turns the server's own claim back
+into a displayed time. The grey-out of the roster, feed and World panel is a CSS class that
+`renderHeader()` toggles on `#app` and `#worldPanels`, never markup emitted by the renderers: in
+the `304` steady state the sentinel path calls `renderHeader()` and nothing else, and a silent
+server sends no new payload, so a grey-out that waited for a re-render would never arrive in the
+one case it exists for.
+
+## Waiting (1.6.0)
+
+`state.connStatus` gains a fourth value, `waiting`, and the stylesheet a fourth rule, `.conn-dot.wait
+{ background: var(--gold); box-shadow: 0 0 8px var(--gold); }`. `pollState` parses the body
+**before** it touches `connStatus` (today it sets `lastUpdated`, `connStatus = 'ok'` and clears
+the error first): an envelope carrying `"no_data":true` sets `connStatus = 'waiting'`, leaves
+`state.stateData` null, calls `render()` and returns — `render()` is the only thing that paints
+the not-yet-connected branch (with "Registered, waiting for `<id>` to report" in place of
+"Connecting…") and it calls `renderHeader()` on its first line, so the amber dot and the new
+connection text arrive with it, while `renderHeader()` still writes no world/day/online strip
+over a server that has never reported. The once-a-second header tick (`if (state.stateData)
+renderHeader()`) is unchanged and is a no-op while waiting: the waiting line carries no relative
+time. The error banner and auto-open-Settings paths treat `waiting` as neither ok nor error.
+`renderActivity()` and `renderCensus()` test `no_data` on their own envelope before every other
+guard and write the same line into the season, feed and World panels. The state is left the
+moment a body arrives without the flag, within one push interval of the server's first push.
+
+**Known difference.** Fish and resource names on the detail view fall back to prettified tokens
+on the hosted page — `/api/gamedata` is not pushed (`docs/API.md`).
+
 ## The token / settings flow
 
-Gear icon opens a panel with two fields, both persisted in
-`localStorage` (`trc_base_url`, `trc_token`) and never sent anywhere except
-as the `X-Api-Token` request header on whatever host the base-URL override
-names (blank = this page's own origin):
+Gear icon opens a panel with two fields, persisted in `localStorage` under `trc_base_url`/
+`trc_token` (or, in hosted mode, the per-id keys above), and never sent anywhere except as the
+`X-Api-Token` request header on whatever host the Base URL override names. **Since 1.6.0, a
+blank Base URL means the hosted API when the page is hosted, otherwise this page's own origin**
+— on a page that is not hosted this is unchanged from before.
 
-- **Base URL override** — only needed when the file is opened directly
-  (`file://...`) instead of served by the mod; blank means "this page's own
-  origin".
-- **API token** — matches the server's `HttpApiToken` config value, if set.
+- **Base URL override** — on a non-hosted page, only needed when the file is opened directly
+  (`file://...`) instead of served by the mod; blank means "this page's own origin". **In hosted
+  mode** the field's label becomes "Base URL override (hosted: `<id>`)", its placeholder becomes
+  "(blank = this server's hosted API)", and — when a value is set anyway — one line names the
+  receiver it is bypassing. From a hosted `https://` page the override must itself be an `https://`
+  address: the page's CSP (`connect-src 'self' https:`) and the browser's own mixed-content
+  blocking both rule out an `http://localhost:2112` target, so a hosted dashboard cannot reach an
+  admin's own machine this way — open the mod's own page at `localhost:2112` for that instead.
+- **API token** — matches the server's `HttpApiToken` config value, if set. Still the same value
+  in hosted mode; the receiver has no separate reader account.
+
+**Hosted connection-help copy.** In hosted mode the footer's "Connection help" text switches to
+the hosted wording — what the receiver is, that the API token is still the server's
+`HttpApiToken`, that the game server pushes rather than listens — instead of the non-hosted
+`localhost:2112` / `HttpBindAllInterfaces` text, which would be the opposite of what a hosted
+admin needs.
 
 A 401 response from `/api/state` opens the settings panel automatically with
 a one-line explanation, exactly per the contract — but only the *first*
@@ -309,7 +399,8 @@ next successful poll or a save, and `openSettings()` itself only seeds the
 two inputs from stored state when the panel is going from closed to open. A
 server that stays unreachable used to reopen the panel (and blow away a
 half-typed token) on every failed 10 s poll; now it opens once and leaves
-whatever's in the fields alone. Saving re-polls immediately.
+whatever's in the fields alone. Saving re-polls immediately (and, since
+1.6.0, clears the `ETag` map above so the re-poll gets a full body).
 
 ## Polling
 
@@ -326,7 +417,13 @@ data-details-key="...">` disclosures (currently just the "N more counters"
 one on Combat) are open before replacing `#app`'s innerHTML, and reopens the
 matching ones afterward — so an open disclosure survives a genuine data
 change, not just a quiet tick. `/api/gamedata` is fetched once at load,
-best-effort — the page is fully usable without it.
+best-effort — the page is fully usable without it. **Since 1.6.0**, a fifth
+poll, `/api/health`, runs alongside the state poll on the same 10 s cadence
+and feeds the freshness line above; and all four network polls (state,
+activity, census, health) pause while the tab is hidden and fire once
+immediately when it becomes visible again (see Visibility above) — the cost
+control that keeps a backgrounded tab from billing the hosted receiver
+around the clock.
 
 On any fetch failure (timeout, network error, non-401 HTTP error), the last
 known good data stays on screen, the connection dot turns red, and an inline

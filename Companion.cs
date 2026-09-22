@@ -338,7 +338,11 @@ namespace TheRavensCall
         // sees the historical roster instead of an empty envelope.
         internal static void PrimeStateCache()
         {
-            if (Instance == null || Plugin.EnableHttpServer == null || !Plugin.EnableHttpServer.Value) return;
+            // 1.6.0: also primed when only the push is on (§1, SCOPE-1.6.0.md)
+            // — a rented server with the listener off still needs a warm
+            // cache the first PushClient.MaybeSend() can send.
+            if (Instance == null || Plugin.EnableHttpServer == null ||
+                !(Plugin.EnableHttpServer.Value || PushClient.Enabled)) return;
             try
             {
                 string worldName = ZNet.instance != null ? ZNet.instance.GetWorldName() : "Unknown";
@@ -363,7 +367,10 @@ namespace TheRavensCall
         // on every mid-season restart until the first tick.
         internal static void BuildActivityCache()
         {
-            if (Instance == null || Plugin.EnableHttpServer == null || !Plugin.EnableHttpServer.Value) return;
+            // 1.6.0: same widened guard as PrimeStateCache above — the push
+            // needs this cache built even with the local listener off.
+            if (Instance == null || Plugin.EnableHttpServer == null ||
+                !(Plugin.EnableHttpServer.Value || PushClient.Enabled)) return;
             try
             {
                 string generatedAt = DateTime.UtcNow.ToString("o");
@@ -530,7 +537,14 @@ namespace TheRavensCall
                 // there is no separate cost to also caching it here for the
                 // HTTP worker — the old "only rebuild if requested" gate
                 // saved nothing and has been dropped (1.3.0).
-                if (Instance != null && Plugin.EnableHttpServer.Value)
+                //
+                // 1.6.0: this block also runs with the local listener off
+                // when PushClient.Enabled — a rented server (Nitrado,
+                // G-Portal) has no reachable port for StartHttpServer to
+                // bind, but the push still needs these caches built every
+                // tick (SCOPE-1.6.0.md §1). StartHttpServer itself stays
+                // behind Plugin.EnableHttpServer alone.
+                if (Instance != null && (Plugin.EnableHttpServer.Value || PushClient.Enabled))
                 {
                     _stateCache = barrkBotJson;
                     // A fault inside can never disturb the assignment above.
@@ -539,6 +553,10 @@ namespace TheRavensCall
                     // WorldCensus checks its own last-run clock and no-ops
                     // until due (§4). A fault inside is caught there too.
                     WorldCensus.MaybeRun();
+                    // Last, so every push sees this tick's three strings
+                    // (§1). No-ops instantly unless PushClient.Enabled and
+                    // it is this tick's turn to attempt a push.
+                    PushClient.MaybeSend();
                 }
 
                 Log.LogInfo($"Poll tick — {online.Count} online, {PlayerRegistry.All.Count()} known player(s).");

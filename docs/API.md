@@ -1,4 +1,4 @@
-# TheRavensCall HTTP API — the 1.4.0 contract
+# TheRavensCall HTTP API — the 1.6.0 contract
 
 Server: `Companion.cs` (`StartHttpServer` / `ProcessRequest`). Listens on
 `http://localhost:<HttpServerPort>` (default 2112). Localhost only unless
@@ -8,12 +8,17 @@ Token: when `HttpApiToken` is set, `/api/state`, `/api/gamedata`, `/api/activity
 `/api/census` (and `/api/pins`) require `?token=<value>` or an `X-Api-Token: <value>` header
 (`ApiTokenOk`). `/api/health` and the page stay open. Ordinal string compare.
 
+**The mod's own routes on `localhost:<HttpServerPort>` are unchanged in 1.6.0** — every route,
+status code and header below stays exactly as it was. 1.6.0 adds an outbound push (below) and,
+separately, a hosted receiver with its own routes on its own domain (also below); neither
+touches what the mod itself serves.
+
 ## Endpoints
 
 | Route | Body |
 |---|---|
 | `GET /`, `/index`, `*.html` | the dashboard page, `text/html; charset=utf-8`. Disk override first: `BepInEx/config/TheRavensCall/theravenscall.html`, then the plugin folder, then the copy embedded in the DLL (`Companion.ReadEmbeddedHtml()`), then 404 only if that embedded read itself fails. A served disk copy that predates 1.3.0 (missing the `<meta name="theravenscall-api">` marker) logs one warning per server run telling the admin to delete it. |
-| `GET /api/health` | `{"status":"ok","version":"1.5.0"}` (the plugin version) |
+| `GET /api/health` | `{"status":"ok","version":"1.6.0"}` (the plugin version) |
 | `GET /api/state` | **Unchanged since 1.3.0: exactly the BarrkBOT export** (the same string written to `BepInEx/config/TheRavensCall/BarrkBOT_data1.json`), shape below. Built on the main thread every `StatsPushIntervalSeconds` (10 s) in `PollAllPlayers`, unconditionally (the file needs it either way); primed once at boot after `PlayerRegistry.LoadAll` (`PrimeStateCache`); before that prime (and if it ever throws) the body is the same envelope with `players: {}`, `online_count: 0` and an empty `generated_at`, so the shape never changes over the endpoint's lifetime. The worker thread only ever hands out the cached string. |
 | `GET /api/gamedata` | the contents of `BarrkBOT_data2.json`: `{"items":[...],"recipes":[...],"buildables":[...],"updated_at":"<ISO-8601 UTC>"}`, written once at boot by `WriteGameData` when `ObjectDB` is ready. Until that write has happened the body is the literal `{"recipes":[],"items":[],"buildables":[]}` with no `updated_at`. `recipes[]` = `{slug, recipe_key, name, category, amount, station, ingredients:[{slug,name,qty}]}`; `items[]` = `{slug, name, category}`; `buildables[]` = `{name, category, ingredients:[{slug,name,qty}]}` (one entry per piece across every `ItemDrop`'s `m_buildPieces`; no `slug` on the buildable itself, only on its ingredients). Empty arrays until written. |
 | `GET /api/pins` | `MapPinTracker.GetJson()`: always `[]` on a dedicated server (no minimap). Kept, unused by the page. |
@@ -206,6 +211,126 @@ server predates 1.5.0; "off" and "too old" stay distinguishable.
 
 **Token gate:** yes, the same as `/api/state` (see the Token paragraph above). Builder names and
 positions appear throughout.
+
+## The push (1.6.0)
+
+With `[Push] PushUrl` set, the mod POSTs its three envelopes to a receiver on its own schedule.
+Outbound only, the same path the Discord webhook already uses, so it works from any host —
+including a rented server with no open ports. With `PushUrl` empty (the default) nothing about
+the mod's own routes above changes.
+
+### Request
+
+One request per push:
+
+```
+POST <PushUrl>/push
+Authorization: Bearer <PushToken>
+Content-Type: application/json
+
+{"v":1,"server_id":"storm10","mod_version":"1.6.0","pushed_at":"2026-09-22T17:02:11Z",
+ "push_interval_seconds":60,"heartbeat_seconds":600,
+ "read_token_sha256":"<hex sha256 of the server's HttpApiToken>",
+ "state":"<escaped JSON string>"|null,"activity":"<…>"|null,"census":"<…>"|null}
+```
+
+| Field | Validation |
+|---|---|
+| `v` | `1`. |
+| `server_id` | Config `PushServerId`. No default — the push is disabled at boot with one warning naming the fix when it is empty or not `[a-z0-9-]{1,32}`. Must equal the id registered in the receiver's `TRC_SERVERS`. |
+| `mod_version` | The plugin version, `1.6.0`. |
+| `pushed_at` | ISO-8601 instant, this push's own clock. |
+| `push_interval_seconds`, `heartbeat_seconds` | The **effective** clamped values (below), not the raw config. |
+| `read_token_sha256` | The hex sha256 of the server's own `HttpApiToken` — the hash, never the token. The push refuses to run at all unless `HttpApiToken` is at least 24 characters. |
+| `state`, `activity`, `census` | Each the exact string the matching route serves (`_stateCache ?? EmptyStateJson`, `_activityCache ?? EmptyActivityJson`, `_censusCache ?? WorldCensus.EmptyEnvelope()`), escaped with `Companion.Esc` — a JSON **string**, not spliced in as raw JSON — or `null`. |
+
+`Authorization: Bearer <PushToken>` is required; `PushToken` is checked against the receiver's
+registry, never logged on either side.
+
+### Change gate
+
+An envelope is `null` when it has not changed since the last **accepted** push. "Changed" is a
+byte comparison with the volatile fields blanked: `generated_at` in all three, plus
+`duration_ms` and `scanned_objects` in the census — deliberately stricter than the page's own
+`stripGeneratedAt`, which blanks `generated_at` only. Portal `connected`, bed `owner` and ward
+`enabled` still count as real changes. No failure of any kind advances the gate, so the first
+push after a fix carries all three envelopes.
+
+### Heartbeat
+
+A heartbeat push carries all three envelopes regardless of the change gate, so a receiver that
+lost or never had them recovers, and "last reported" keeps meaning "the server is alive." The
+effective heartbeat is `max(PushHeartbeatMinutes × 60, effective interval)` — the interval gate
+is never bypassed, so a heartbeat only lands on a tick already allowed to push.
+
+### Schedule and backoff
+
+- Runs from the poll tick (`PollAllPlayers`, every `StatsPushIntervalSeconds`) and no-ops until
+  `PushIntervalSeconds` (default 60, clamped 15..3600) have passed since the last attempt. The
+  effective cadence rounds up to the next multiple of `StatsPushIntervalSeconds`.
+- Nothing changed and no heartbeat due → no request at all.
+- One request in flight at a time, on a ThreadPool worker (`HttpWebRequest`, the Discord
+  webhook's pattern); the main thread never waits on the network. The request timeout is a fixed
+  20 s — deliberately above the receiver Function's own 10 s execution budget — and is not
+  configurable.
+- A bundle over 2 MB drops the largest envelope, sends the rest, and logs one warning naming
+  `server_id` and the size.
+- Failure → exponential backoff: 60 s, 2, 4, 8, then 15 minutes flat. One warning on the first
+  failure, one info line on recovery; while the push keeps failing the warning is re-logged at
+  most once an hour with the consecutive-failure count, the time of the last success and the
+  last error text. Tokens, hashes, header values and bodies are never logged on either side.
+- `PushUrl` is accepted only with scheme `https`, or `http` with `Uri.IsLoopback` true (the test
+  harness); anything else disables the push at boot with one warning naming the host. `PushUrl`
+  set while `HttpApiToken` is short or empty likewise disables the push at boot.
+- A `429` is not a failure: no warning, no backoff step, the change gate untouched, retry on the
+  next due tick honouring `Retry-After`.
+- No final push is attempted on shutdown.
+
+### Named refusals
+
+The receiver's four configuration refusals, each retrying every 15 minutes, verbatim:
+
+| Status | Warning text |
+|---|---|
+| `401` | "PushToken rejected — check [Push] PushToken and PushServerId against the receiver's registry" |
+| `409` | "the receiver has a different HttpApiToken hash registered for '\<id>' — re-register read_token_sha256 and redeploy" |
+| `422` | "the receiver refused the bundle — set [Companion] HttpApiToken (24+ characters)" |
+| `413` | "bundle over the receiver's 2 MB limit" |
+
+## Hosted routes (the receiver)
+
+A Netlify site of its own (`hosting/netlify/`), not this mod's HTTP server — reachable off the
+game server, over the public internet. Registry `TRC_SERVERS` (env var, JSON
+`{"<server_id>": {"w": "<sha256 of the write token>", "r": "<sha256 of the read token>"}}`),
+read id-first; resolved and cached at **deploy** time only. Storage: Netlify Blobs, store `trc`,
+keys `<server_id>/state`, `<server_id>/activity`, `<server_id>/census`, `<server_id>/meta`,
+latest copy only, `consistency: "strong"` on every read.
+
+| Route | Behaviour |
+|---|---|
+| `POST /push` | `401` missing bearer, or a bearer whose sha256 is not the `w` registered under the body's `server_id` — the same body whether that id is registered or not, so nobody can enumerate servers; `409` the body's `read_token_sha256` is not the `r` registered under that id; `413` body over 2 MB; `422` a field fails validation or `read_token_sha256` is missing; `429` more often than every **10 s** per server (the response carries `Retry-After`); else `200 {"ok":true,"stored":["state","census"]}` naming the envelopes that were non-null. |
+| `GET /s/<id>/api/state`, `/activity`, `/census` | Read token in the `X-Api-Token` header **only**, hashed and compared to the registry's `r` for `<id>` before anything is looked up in Blobs, else `401 {"error":"token required"}` — the same body for a wrong token and an unregistered id. A `token` query parameter is answered `400 {"error":"use the X-Api-Token header"}` and never logged (`?token=` stays supported on the mod's own `localhost:2112`, unchanged). Then the stored envelope, `Content-Type: application/json`, `ETag` = its sha256, `Cache-Control: private, no-cache`, `Vary: X-Api-Token`; `If-None-Match` matching → `304`. Before the first push carrying that envelope: **`200` with an empty envelope of the right shape** plus `"no_data":true` — never `503`. For census, the receiver sends `enabled:true`, `interval_minutes:0`, empty groups and lists, `no_data:true`. A no-data response carries no `ETag` and is sent `Cache-Control: no-store`. |
+| `GET /s/<id>/api/health` | Read token required, same as the data routes; `{"status":"ok","hosted":true,"pushed_at":"…","age_seconds":N,"stale_after_seconds":M}` — no `version`. `age_seconds` is measured from `received_at` (the receiver's own clock), never from `pushed_at`. `M` = 3 × the `heartbeat_seconds` of the last accepted push. |
+| `GET /s/<id>/api/gamedata` | Token-gated like the others; `200 {"recipes":[],"items":[],"buildables":[]}` so no 404 lands in the network log. |
+| `GET /s/<id>` | The page, exactly as `/s/<id>/` — no redirect: Netlify matches redirect rules regardless of a trailing slash, so a `301` rule would loop; the page's hosted-id match accepts both forms. |
+| `GET /s/<id>/` | The release's `theravenscall.html` served as a static asset. |
+| `DELETE /s/<id>/api` | Write token in the `Authorization: Bearer` header; removes the four blobs and answers `200 {"deleted":true}` — how an admin unpublishes. Deleting the registry entry takes the dashboard offline on the next request; the stored copy stays until this runs. |
+| `OPTIONS /s/<id>/api/*` | `204` with the CORS headers below. |
+| anything else | `404`. |
+
+The read routes send `Access-Control-Allow-Origin: *`, `Access-Control-Allow-Methods: GET,
+OPTIONS`, `Access-Control-Allow-Headers: X-Api-Token, If-None-Match` and
+`Access-Control-Expose-Headers: ETag`; a `304` carries the same CORS headers as a `200`. Every
+hosted response carries `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`;
+the page is served with `Content-Security-Policy: default-src 'none'; script-src
+'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self' https:; img-src 'self';
+frame-ancestors 'none'; base-uri 'none'`. Every value taken from a pushed body is validated
+before it is stored or echoed (`mod_version` against `[0-9A-Za-z.+-]{1,32}`, `pushed_at` as an
+ISO-8601 instant, `heartbeat_seconds` as 60..86400, `server_id` against `[a-z0-9-]{1,32}`,
+`read_token_sha256` as 64 hex characters); anything that fails is `422` with nothing stored.
+
+Full route table, cost model, security rationale and deploy steps: `docs/SCOPE-1.6.0.md` §4/§6
+and `hosting/netlify/README.md`.
 
 ## Removed in 1.3.0 (breaking; the bundled page was the only consumer)
 
