@@ -278,7 +278,7 @@ A rented server's admin has no shell and can't reach `/api/health` — the BepIn
 
 ### Where this has actually run
 
-As of this release the 1.6.0 push has only been exercised against a local receiver on the test server's own machine. The mod itself boots and completes https requests with certificate validation on a Linux dedicated server (Valheim 1.0.15, under WSL2 — tested on 1.5.0); the push itself has not yet run on Linux, over https, or on a rented host.
+As of this release the 1.6.0 push has run against a local receiver (`netlify dev`) from a Windows test server and from a Linux dedicated server (Valheim 1.0.15, under WSL2), including the change gate, heartbeat, backoff and recovery, the four named refusals and the hosted page's waiting and stale states (`docs/TESTPLAN-local-1.6.0-2026-09-22.md`). The mod completes https requests with certificate validation on that Linux server (`docs/TESTPLAN-linux-wsl2-2026-09-22.md`), but the push itself has not yet run over https to a deployed receiver, and not on a rented host.
 
 ---
 
