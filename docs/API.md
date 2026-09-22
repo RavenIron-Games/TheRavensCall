@@ -327,7 +327,7 @@ the page is served with `Content-Security-Policy: default-src 'none'; script-src
 frame-ancestors 'none'; base-uri 'none'`. Every value taken from a pushed body is validated
 before it is stored or echoed (`mod_version` against `[0-9A-Za-z.+-]{1,32}`, `pushed_at` as an
 ISO-8601 instant, `heartbeat_seconds` as 60..86400, `server_id` against `[a-z0-9-]{1,32}`,
-`read_token_sha256` as 64 hex characters); anything that fails is `422` with nothing stored.
+`read_token_sha256` as 64 hex characters); anything that fails is `422` with nothing stored. On Netlify a browser receives the `ETag` as `"<sha>-df"` (the edge compresses the body and suffixes the compressed variant's tag) and the edge drops any suffixed `If-None-Match` before the function sees it, so the page echoes the bare sha; the receiver also tolerates a `-suffix` for edges that forward it.
 
 Full route table, cost model, security rationale and deploy steps: `docs/SCOPE-1.6.0.md` §4/§6
 and `hosting/netlify/README.md`.

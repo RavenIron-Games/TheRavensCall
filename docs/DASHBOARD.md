@@ -318,7 +318,7 @@ that value is `waiting`. `pollActivity`/`pollCensus` still take their `wasUnauth
 re-render branch, so a fixed token clears the notice even on a `304` poll. The `ETag` map is
 cleared wherever `saveSettings()` clears the other compare gates, so a settings save is always
 answered with a full body. Against the mod's own listener on `localhost:2112` nothing changes —
-it sends no `ETag`, so `If-None-Match` never matches there.
+it sends no `ETag`, so `If-None-Match` never matches there. One hosting detail: Netlify's edge compresses the function response for a browser and hands it the ETag as `"<sha>-df"`, then drops any suffixed `If-None-Match` before the function sees it, so `apiFetch` stores the bare `"<sha>"` form (a regex strips a `-suffix` after the 64-hex value) and the receiver answers `304` to that.
 
 ## Visibility (1.6.0)
 

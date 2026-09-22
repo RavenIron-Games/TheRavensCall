@@ -188,8 +188,9 @@ head -c 3000000 /dev/zero | tr '\0' 'a' | curl -i -X POST "$BASE/push" -H "Autho
 curl -i "$BASE/s/storm10/api/state" -H "X-Api-Token: $READ"
 # -> 200, an ETag header
 
-# Conditional read -> 304 (on the live site a browser's ETag reads "<sha>-df": the edge compresses
-# function responses and suffixes the compressed variant's ETag; the receiver accepts the suffix)
+# Conditional read -> 304. On the live site a browser's ETag reads "<sha>-df" (the edge compresses
+# function responses and suffixes the compressed variant's tag) and the edge drops any SUFFIXED
+# If-None-Match before the function sees it, so the page echoes the bare "<sha>" form.
 curl -i "$BASE/s/storm10/api/state" -H "X-Api-Token: $READ" -H 'If-None-Match: "<etag from above, unquoted or quoted, both are handled>"'
 
 # token as a query param -> 400
