@@ -25,9 +25,10 @@
 
 ### Tested
 - The Linux boot of 1.5.0 passed on WSL2 Valheim 1.0.15 (`docs/TESTPLAN-linux-wsl2-2026-09-22.md`): the mod boots, serves, and counts a copy of Storm10's world to the object, and `HttpWebRequest` completes https requests with certificate validation on. 1.6.0's own push test plan (§8 of `docs/SCOPE-1.6.0.md`) ran locally the same day (`docs/TESTPLAN-local-1.6.0-2026-09-22.md`): steps 1–7 and 10 pass against a local receiver — Storm10 on Windows and the WSL2 Linux server (Valheim 1.0.15) both push; the change gate, the heartbeat, the backoff and recovery, the four named refusals, `429` handling and the hosted page's waiting, `304`, visibility and stale states all behave as scoped. Then the receiver was deployed to the owner's Netlify team and the Linux server pushed to it over https with certificate validation (§8 steps 8 and 9, the release gate); function durations measured at 4–130 ms warm. Not yet run on a rented host. Since 2026-09-22 a real Windows dedicated server on another host pushes to the deployed receiver over the internet (state, feed, a 1.1-million-object census) on the default interval and heartbeat.
+- Netlify credit use for the receiver is to be read from the team's usage page after 24 hours of real hosted traffic and recorded here; it was not yet measured when this release was cut.
 
 ### 🔧 Changed
-- `HexiumDist/plugins/TheRavensCall.dll` not rebuilt yet — refreshed at the cut.
+- `HexiumDist/plugins/TheRavensCall.dll` refreshed: a clean `dotnet build -c Release` of the 1.6.0 source (md5 `334d21ad2c0870933154cdf5d141bc15`, 274,944 bytes; two clean builds of the same commit are byte-identical). It differs from the build that ran the release gate and the first hosted server (md5 `1799895da19c894ab6d12d3e92a2acd2`, also 274,944 bytes) only in the embedded dashboard page, which carries the hosted-page ETag fix; no C# changed between the two.
 
 ---
 
