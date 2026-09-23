@@ -16,9 +16,12 @@
          this the PE debug directory carries the absolute PDB path
          (C:\Users\<name>\...\obj\Release\TheRavensCall.pdb), which exposes
          the Windows user name and makes the md5 depend on where the repo
-         is checked out. The SDK maps the repo root to /_/ in the DLL, the PDB
-         and the PDB's Source Link table alike. -->
-    <DeterministicSourcePaths>true</DeterministicSourcePaths>
+         is checked out. In a git checkout the SDK maps the repo root to /_/
+         in the DLL, the PDB and the PDB's Source Link table alike; that
+         mapping needs git, so a copy without .git (a source zip) maps the
+         project folder to /_/ directly instead. -->
+    <DeterministicSourcePaths Condition="Exists('$(MSBuildProjectDirectory)\.git')">true</DeterministicSourcePaths>
+    <PathMap Condition="!Exists('$(MSBuildProjectDirectory)\.git')">$([MSBuild]::EnsureTrailingSlash('$(MSBuildProjectDirectory)'))=/_/</PathMap>
 
     <!-- *** CRITICAL: produce ONLY  *** -->
     <AssemblyName>TheRavensCall</AssemblyName>
