@@ -244,9 +244,13 @@ namespace TheRavensCall
         // not counted; at a shutdown the leave lines count down N-1, N-2, …
         // and the last has no count. Known limit: a connection that dies
         // without a disconnect (crash, cable) fires no leave hook, so that
-        // player still counts until ZRpc's ping timeout (30 s) drops the
-        // peer; counting names once keeps a quick rejoin inside that window
-        // from counting them twice (the rejoin gets a new uid). ──────────
+        // player still counts until ZRpc's ping timeout drops the peer: 30 s
+        // from ZNet.Start, but ZRpc.m_timeout is static and ZPlayFabSocket
+        // sets it to 90 s when it accepts a crossplay connection, so on a
+        // crossplay server it is 90 s for every peer until the next restart
+        // (Storm10, 2026-09-23: dropped 08:26:07, "ZRpc timeout detected"
+        // 08:27:36). Counting names once keeps a quick rejoin inside that
+        // window from counting them twice (the rejoin gets a new uid). ───
         internal static int OnlineCount()
         {
             var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
