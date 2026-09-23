@@ -1958,7 +1958,11 @@ namespace TheRavensCall
             rec.Dirty = true;
             Plugin.Log.LogInfo($"[TheRavensCall] {playerName} set no title");
             PlayerRegistry.Save(rec);
-            return (1, $"Title cleared. You are {playerName} again.");
+            // EarnTitle (above) re-activates the ActiveTitle automatically the
+            // next time this player earns a title, since it only ever checks
+            // for empty — a deliberate clear isn't remembered as such. Say so
+            // here rather than silently surprising the player later.
+            return (1, $"Title cleared. You are {playerName} again — until your next earned title, which becomes active automatically.");
         }
 
         public static void OnCreatureKill(string playerName, string prefab, PlayerRecord rec)
@@ -2604,7 +2608,11 @@ namespace TheRavensCall
                         reply = TitleSystem.ClearTitle(rec.Name, rec);
                     else
                         reply = TitleSystem.SetTitle(rec.Name, rec, string.Join(" ", args.Args.Skip(3)));
-                    args.Context?.AddString("[TheRavensCall] " + reply.text);
+                    // TitleSystem's strings are written second-person for the
+                    // player themselves ("Your titles", "You are now …"); an
+                    // admin querying someone else needs the target named so
+                    // consecutive lookups aren't indistinguishable.
+                    args.Context?.AddString($"[TheRavensCall] {rec.Name}: {reply.text}");
                     return;
                 }
                 if (args.Length < 2 || args[1] != "season") { args.Context?.AddString("[TheRavensCall] Usage: ravenscall season start [name] | ravenscall season end | ravenscall title <player> [<title>|clear]"); return; }

@@ -299,7 +299,7 @@ Rotates daily at UTC midnight. Enable or disable with `EnableChronicleLog`. Prov
 
 Players unlock titles by slaying creature families (100, 500, 1000 kills) and defeating Valheim's world bosses (*Stag Breaker*, *Bane of the Swamp*, *The Ashen*, etc.). Felling all seven gods awards the legendary title *Slayer of Gods*. Unlocked titles are written directly to `active_title` and `titles_earned` in the export data.
 
-**Choosing your title.** Since 1.7.0 a player picks which earned title shows next to their name, with `WhereTheCrowFlies` 1.2.0+: `/title` lists what you've earned, `/title Wolf Hunter` sets it (only to a title you've already earned), `/title clear` shows no title. An admin can do the same for anyone, online or not, with `ravenscall title <player> [<title>|clear]` — no client mod needed. Either way the change shows up on the dashboard and export at the next poll.
+**Choosing your title.** Since 1.7.0 a player picks which earned title the server uses — in its Discord/Chronicle narration and on the dashboard/export — rather than always the first one earned. Nothing changes on the in-game nameplate. With `WhereTheCrowFlies` 1.2.0+: `/title` lists what you've earned, `/title Wolf Hunter` sets it (only to a title you've already earned), `/title clear` shows no title until your next earned title, which becomes active automatically. An admin can do the same for anyone, online or not, with `ravenscall title <player> [<title>|clear]` — from the server console with no client mod needed, or from an admin's game client that has WhereTheCrowFlies installed. Either way the change shows up on the dashboard and export at the next poll.
 
 ---
 
@@ -317,7 +317,7 @@ ravenscall title <player> clear
 
 Seasons archive Chronicle logs into dated season folders and write summary stats on completion. Since 1.6.1 `season start` refuses while a season is running: end it first.
 
-`ravenscall title` lists, sets or clears a player's active title from the titles they've already earned — the same rule the player's own `/title` follows. The player need not be online.
+`ravenscall title` lists, sets or clears a player's active title from the titles they've already earned — the same rule the player's own `/title` follows. The player need not be online. From the server console it needs no client mod; from an admin's game client it goes through WhereTheCrowFlies' `ravenscall` routing stub, the same as the season commands above.
 
 ---
 
@@ -327,7 +327,7 @@ Configuration is located at `BepInEx/config/com.raveniron.theravenscall.cfg`:
 
 | Section | Setting | Default | Description |
 | :--- | :--- | :--- | :--- |
-| **Combat** | `AcceptClientReports` | `true` | Accepts telemetry RPC reports from *WhereTheCrowFlies* client mods. |
+| **Combat** | `AcceptClientReports` | `true` | Accepts telemetry RPC reports from *WhereTheCrowFlies* client mods. Set to `false` it also disables the player's `/title` picker (the admin's `ravenscall title` still works). |
 | **Combat** | `LogCombatReports` | `false` | Enables verbose console logging for incoming combat reports. |
 | **Events** | `EnablePlayerDeath` ... `EnableTitleEarned` | `true` | Independently toggles narration/Chronicle for each event type. |
 | **Events** | `EnableRaid` | `true` | Records raid start and end in the Chronicle and the dashboard feed (`raid_start`/`raid_end`). Not posted to Discord. The raid banner and `raid_active` in the API work either way — this only gates the narration. |
