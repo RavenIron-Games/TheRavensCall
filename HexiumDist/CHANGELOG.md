@@ -7,7 +7,7 @@
 
 ---
 
-## 🟢 [1.6.1] — (release name TBD by the owner)
+## 🟢 [1.6.1] — The Raven Guards the Season
 
 *One admin-facing fix and the store README's new FAQ. No config, API or dashboard changes.*
 
