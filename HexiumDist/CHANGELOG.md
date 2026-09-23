@@ -7,7 +7,7 @@
 
 ---
 
-## 🟢 [1.7.1] — (name TBD)
+## 🟢 [1.7.1] — The Raven Missed Something
 
 *One wrong number, fixed. No config, API shape or dashboard changes.*
 
