@@ -1564,23 +1564,34 @@ namespace TheRavensCall
                     if (Plugin.LogCombatReports.Value) Plugin.Log.LogWarning($"[TheRavensCall] title request: unknown op {op}");
                     return;
             }
-            SendTitleReply(sender, reply.kind, reply.text);
+            SendTitleReply(sender, reply.kind, reply.text, rec);
         }
 
         // Reply-only RPC, registered by WhereTheCrowFlies — this server never
         // registers a receiver for it, only sends. Schema 1: int
         // schemaVersion, byte kind (1=ok/informational 2=refused), string
         // text (one human-readable line, already final — no localisation
-        // tokens). Always targeted at the requesting peer (InvokeRoutedRPC's
-        // long targetPeerID overload), matching the wire fact that a routed
-        // RPC name unregistered on the receiver is just silently ignored, so
-        // an older WhereTheCrowFlies (pre-1.2.0) simply never sees this.
-        private static void SendTitleReply(long targetPeer, byte kind, string text)
+        // tokens), int count (rec.EarnedTitles.Count), string title × count
+        // (the earned titles, in HashSet iteration order — the same order
+        // TitleCsv/ListTitles already use, so the panel's list always matches
+        // what the text line would have said), string active
+        // (rec.ActiveTitle, "" = none). The list rides every reply — list,
+        // set, clear, even a refusal — so WhereTheCrowFlies' title panel
+        // (1.2.0+) is always fresh after any op without a second round trip
+        // (SPEC-title-ui.md). Always targeted at the requesting peer
+        // (InvokeRoutedRPC's long targetPeerID overload), matching the wire
+        // fact that a routed RPC name unregistered on the receiver is just
+        // silently ignored, so an older WhereTheCrowFlies (pre-1.2.0) simply
+        // never sees this either way.
+        private static void SendTitleReply(long targetPeer, byte kind, string text, PlayerRecord rec)
         {
             var pkg = new ZPackage();
             pkg.Write(1); // schemaVersion
             pkg.Write(kind);
             pkg.Write(text);
+            pkg.Write(rec.EarnedTitles.Count);
+            foreach (string title in rec.EarnedTitles) pkg.Write(title);
+            pkg.Write(rec.ActiveTitle ?? "");
             ZRoutedRpc.instance.InvokeRoutedRPC(targetPeer, "RavensCall_TitleReply_V1", pkg);
         }
     }
