@@ -23,11 +23,12 @@
 
 ### Changed
 - **Only a player's first earned title activates itself.** Through 1.6.1 any title earned while no title was active became the active one — harmless when the only way to have no title was never to have earned one, but it would have silently undone a `/title clear` at the player's next milestone. Since 1.7.0 a cleared title stays cleared; later titles are added to `titles_earned` and wait there until the player picks one. A player who has never cleared or picked sees no difference.
+- `HexiumDist/plugins/TheRavensCall.dll` refreshed: a clean `dotnet build -c Release` of the 1.7.0 source (md5 `19d79acad1d5c4da35685fbe53fc2003`, 279,552 bytes; two clean builds of the same commit are byte-identical). Its decompiled IL is identical, line for line, to build `6b37713a…`, the one that ran on Storm10 in both live runs; no source file or the embedded page changed between the two commits, and the binaries differ in 70 bytes of per-commit Source Link and PE identity.
 
 ### Tested
 - `dotnet build -c Release` of both halves in the same session, 0 warnings, 0 errors each. Two review passes, 42 and 48 agents (three lenses, three skeptics per finding): the first over the commands and the wire, the second over the reply's title list and the client's panel; the wire layout, the trust boundary and every public claim were read against the code and the decompiled game classes, and every finding that survived its skeptics was fixed.
 - **Run on Storm10 (Windows, Valheim 1.0.12) on 2026-09-22 and 2026-09-23** with WhereTheCrowFlies 1.2.0 on the client (`docs/TESTPLAN-storm10-1.7.0-2026-09-22.md`): the build boots as 1.7.0 with zero warnings and the API reports it; clear-and-set cycles from the client landed on the server (`set no title` / `chose the title '…'` in the log, `active_title` following on `/api/state`); the `/titles` panel opened and closed on its key, its Close button and Esc, opened on a record with no titles, and on a record with 16 titles scrolled to the last entry and set it; a death right after was narrated with the picked title; graceful stops with the session summary written.
-- **Not run:** the admin `ravenscall title`, the 5-second no-answer hint. The shipped DLL is refreshed at the cut.
+- **Not run:** the admin `ravenscall title`, the 5-second no-answer hint.
 
 ---
 
