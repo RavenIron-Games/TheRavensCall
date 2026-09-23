@@ -331,7 +331,7 @@ Configuration is located at `BepInEx/config/com.raveniron.theravenscall.cfg`:
 | **Combat** | `LogCombatReports` | `false` | Enables verbose console logging for incoming combat reports. |
 | **Events** | `EnablePlayerDeath` ... `EnableTitleEarned` | `true` | Independently toggles narration/Chronicle for each event type. |
 | **Events** | `EnableRaid` | `true` | Records raid start and end in the Chronicle and the dashboard feed (`raid_start`/`raid_end`). Not posted to Discord. The raid banner and `raid_active` in the API work either way — this only gates the narration. |
-| **Format** | `ShowDayNumber` / `ShowOnlineCount` | `true` | Appends `[Day N]` and `(N online)` to announcements. The count is the players in the world at that moment: a leave line no longer counts the player who just left (since 1.7.1), and the part is left off when nobody is online. |
+| **Format** | `ShowDayNumber` / `ShowOnlineCount` | `true` | Appends `[Day N]` and `(N online)` to each event's line in the server log (Discord and the Chronicle get the plain message; the Chronicle and `/api/activity` rows carry the count as `online_count`). The count is the connected players: since 1.7.1 a leave line no longer counts the player who just left, a player whose game crashed still counts until the server drops the dead connection (up to about 30 s), and the part is left off when nobody is online. |
 | **Format** | `MessagePrefix` | `⚔ ` | Custom prefix added to all broadcast messages. |
 | **Log** | `EnableChronicleLog` | `true` | Writes daily JSONL Chronicle logs. |
 | **Bosses** | `BossCreditRadius` | `100` | Proximity radius (meters) for crediting boss assists. |

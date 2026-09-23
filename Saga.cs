@@ -232,22 +232,27 @@ namespace TheRavensCall
         // ── The "(N online)" suffix and the Chronicle/feed row's online count
         // (1.7.1). Through 1.7.0 both read ZNet.GetConnectedPeers().Count,
         // which is a copy of m_peers: it still holds the leaving peer while
-        // the leave line is written (both leave hooks are prefixes and
-        // ZNet.Disconnect removes the peer only afterwards), and it holds
+        // the leave line is written (the RPC_Disconnect prefix runs before
+        // ZNet.Disconnect removes the peer, and at shutdown the peers stay
+        // listed while the SendDisconnect loop walks them), and it holds
         // peers still in the handshake (m_uid == 0, e.g. at the password
-        // prompt). So "X has left the world" read "(1 online)" with nobody
-        // left. Now: the same connected players /api/state counts
-        // (GetConnectedPlayers: ready and named), and only those whose
-        // session is still open. FireLeaveFor closes the leaver's session
-        // before it narrates, so the leaver is not counted; at a server
-        // shutdown, where SendDisconnect walks every peer in turn, each
-        // leave line counts one fewer. ─────────────────────────────────────
+        // prompt). So "X has left the world" read "(1 online)" in the
+        // server log with nobody left. Now: the same connected players
+        // /api/state counts (GetConnectedPlayers: ready and named), only
+        // those whose session is still open, each name once. FireLeaveFor
+        // closes the leaver's session before it narrates, so the leaver is
+        // not counted; at a shutdown the leave lines count down N-1, N-2, …
+        // and the last has no count. Known limit: a connection that dies
+        // without a disconnect (crash, cable) fires no leave hook, so that
+        // player still counts until ZRpc's ping timeout (30 s) drops the
+        // peer; counting names once keeps a quick rejoin inside that window
+        // from counting them twice (the rejoin gets a new uid). ──────────
         internal static int OnlineCount()
         {
-            int n = 0;
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var p in GetConnectedPlayers())
-                if (Patch_PlayerJoin.HasOpenSession(p.peerUid)) n++;
-            return n;
+                if (Patch_PlayerJoin.HasOpenSession(p.peerUid)) names.Add(p.name);
+            return names.Count;
         }
 
         private static Dictionary<string, string> BuildContextData(string detail)

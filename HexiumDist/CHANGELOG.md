@@ -9,10 +9,10 @@
 
 ## 🟢 [1.7.1] — (name TBD)
 
-*One wrong number in the announcements, fixed. No config, API shape or dashboard changes.*
+*One wrong number, fixed. No config, API shape or dashboard changes.*
 
 ### 🩹 Fixed
-- **A leave line counted the player who had just left.** "Nomad has left the world (played 6m). [Day 19] (1 online)" appeared with nobody left on the server, because the count was taken from the engine's peer list, which still holds the leaving player while the line is written, and which also holds anyone still connecting (a player at the password prompt counted as online). The `(N online)` suffix and the `online_count` of the Chronicle and `/api/activity` rows now count the players `/api/state` counts, with their session still open: the leaver is out of the count, a half-connected peer never counts, the suffix is left off when the last player leaves (as `ShowOnlineCount` has always done at zero), and at a server shutdown each leave line counts one fewer.
+- **A leave line counted the player who had just left.** The server log read "Nomad has left the world (played 6m). [Day 19] (1 online)" with nobody left, and the Chronicle and `/api/activity` rows for the same leave carried `online_count` 1. The count came from the engine's peer list, which still holds the leaving player while the line is written, and which also holds anyone still connecting (a player at the password prompt counted as online). The server log's `(N online)` and the rows' `online_count` now count the players `/api/state` counts, with their session still open, each name once: the leaver is out of the count, a half-connected peer never counts, the log suffix is left off when the last player leaves (as `ShowOnlineCount` has always done at zero), and at a server shutdown the leave lines count down to none. One limit stays: a player whose connection dies without a disconnect (a crash, a pulled cable) still counts until the server drops the dead connection, up to about 30 seconds — the same as `/api/state`.
 
 ### Tested
 - `dotnet build -c Release`, 0 warnings, 0 errors.
