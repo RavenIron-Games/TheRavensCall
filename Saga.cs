@@ -1896,8 +1896,15 @@ namespace TheRavensCall
         {
             if (string.IsNullOrEmpty(title)) return;
             if (rec.EarnedTitles.Contains(title)) return;
+            // Only a player's very first title activates itself. Before 1.7.0
+            // any title earned while ActiveTitle was empty became the active
+            // one, which silently undid a `/title clear` at the next
+            // milestone; now a cleared title stays cleared and later titles
+            // wait in titles_earned until the player picks one (review
+            // 2026-09-22).
+            bool first = rec.EarnedTitles.Count == 0;
             rec.EarnedTitles.Add(title);
-            if (string.IsNullOrEmpty(rec.ActiveTitle)) rec.ActiveTitle = title;
+            if (first && string.IsNullOrEmpty(rec.ActiveTitle)) rec.ActiveTitle = title;
             rec.Dirty = true;
 
             string titleDisplay = GetDisplayName(playerName);
@@ -1958,11 +1965,10 @@ namespace TheRavensCall
             rec.Dirty = true;
             Plugin.Log.LogInfo($"[TheRavensCall] {playerName} set no title");
             PlayerRegistry.Save(rec);
-            // EarnTitle (above) re-activates the ActiveTitle automatically the
-            // next time this player earns a title, since it only ever checks
-            // for empty — a deliberate clear isn't remembered as such. Say so
-            // here rather than silently surprising the player later.
-            return (1, $"Title cleared. You are {playerName} again — until your next earned title, which becomes active automatically.");
+            // Stays cleared: EarnTitle only self-activates a player's first
+            // title, so a later milestone lands in titles_earned without
+            // becoming active (review 2026-09-22).
+            return (1, $"Title cleared. You are {playerName} again.");
         }
 
         public static void OnCreatureKill(string playerName, string prefab, PlayerRecord rec)
@@ -2596,18 +2602,23 @@ namespace TheRavensCall
                     // name must already exist in the registry (PlayerRegistry.Get
                     // would silently create a record for a typo'd name, which
                     // a lookup against .All avoids).
-                    if (args.Length < 3) { args.Context?.AddString("[TheRavensCall] Usage: ravenscall title <player> [<title>|clear]"); return; }
-                    string targetName = args[2];
+                    // ConsoleEventArgs splits on single spaces and keeps the
+                    // empty tokens, so a trailing or doubled space would
+                    // otherwise read as an empty title or a two-space one
+                    // (review 2026-09-22).
+                    var toks = args.Args.Skip(2).Where(t => !string.IsNullOrEmpty(t)).ToList();
+                    if (toks.Count < 1) { args.Context?.AddString("[TheRavensCall] Usage: ravenscall title <player> [<title>|clear]"); return; }
+                    string targetName = toks[0];
                     var rec = PlayerRegistry.All.FirstOrDefault(r => string.Equals(r.Name, targetName, StringComparison.OrdinalIgnoreCase));
                     if (rec == null) { args.Context?.AddString($"[TheRavensCall] No such player: {targetName}"); return; }
 
                     (byte kind, string text) reply;
-                    if (args.Length == 3)
+                    if (toks.Count == 1)
                         reply = TitleSystem.ListTitles(rec);
-                    else if (args.Length == 4 && string.Equals(args[3], "clear", StringComparison.OrdinalIgnoreCase))
+                    else if (toks.Count == 2 && string.Equals(toks[1], "clear", StringComparison.OrdinalIgnoreCase))
                         reply = TitleSystem.ClearTitle(rec.Name, rec);
                     else
-                        reply = TitleSystem.SetTitle(rec.Name, rec, string.Join(" ", args.Args.Skip(3)));
+                        reply = TitleSystem.SetTitle(rec.Name, rec, string.Join(" ", toks.Skip(1)));
                     // TitleSystem's strings are written second-person for the
                     // player themselves ("Your titles", "You are now …"); an
                     // admin querying someone else needs the target named so

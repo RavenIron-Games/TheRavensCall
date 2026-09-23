@@ -9,10 +9,10 @@
 
 ## 🟢 [1.7.0] — (name TBD)
 
-*The store README has claimed since early on that "players can unlock many titles and equip their preferred epithet." Until now that wasn't true — `PlayerRecord.ActiveTitle` was set once, the moment a player's first title was earned, and never changed again. 1.7.0 lets a player pick, from the titles they've actually earned, which one shows next to their name.*
+*The store README has claimed since early on that "players can unlock many titles and equip their preferred epithet." Until now that wasn't true — `PlayerRecord.ActiveTitle` was set once, the moment a player's first title was earned, and never changed again. 1.7.0 lets a player pick, from the titles they've actually earned, which one the server uses when it names them — in its Discord and Chronicle narration and on the dashboard and export. Nothing changes on the in-game nameplate.*
 
 ### Added
-- **The player's `/title` command**, with `WhereTheCrowFlies` 1.2.0+: `/title` (or the F5 console's `title`) lists what you've earned and which one is active; `/title <name>` (multi-word titles work, e.g. `/title Wolf Hunter`) sets it to one you've earned; `/title clear` goes back to showing no title — until the next title you earn, which becomes active automatically. Travels over a new routed RPC pair — `RavensCall_EventReport_V2` event type 13 (`TitleRequest`) carrying the request, a new `RavensCall_TitleReply_V1` carrying the one-line answer back to that player only, never broadcast.
+- **The player's `/title` command**, with `WhereTheCrowFlies` 1.2.0+: `/title` (or the F5 console's `title`) lists what you've earned and which one is active; `/title <name>` (multi-word titles work, e.g. `/title Wolf Hunter`) sets it to one you've earned; `/title clear` shows no title, and stays that way. Travels over a new routed RPC pair — `RavensCall_EventReport_V2` event type 13 (`TitleRequest`) carrying the request, a new `RavensCall_TitleReply_V1` carrying the one-line answer back to that player only, never broadcast.
 - **The admin's `ravenscall title <player> [<title>|clear]`** console subcommand — no client mod required on the server console; from an admin's game client it goes through WhereTheCrowFlies' `ravenscall` routing stub (1.1.3+), exactly like the season commands. Same earned-titles-only rule as the player path; the target player need not be online.
 - A title change is logged on the server (`[TheRavensCall] <name> chose the title '<title>'` / `<name> set no title`) but is not narrated: no Chronicle line, no Discord post, no `/api/activity` row. The Progression tab already shows `active_title` and the earned list, so no dashboard change was needed either.
 
@@ -20,6 +20,9 @@
 - A `WhereTheCrowFlies` 1.2.0+ client against an older `TheRavensCall` server: `/title` sends its request and gets nothing back. Against a 1.2.0–1.6.x server the packet still lands on the `RavensCall_EventReport_V2` channel that server already registers, finds no handler for event type 13, and is dropped there — logging one "unknown eventType 13" line only when `LogCombatReports` is on. (Against a `TheRavensCall` older than 1.2.0, which has no V2 channel at all, the routed RPC is ignored outright as unregistered.) Either way the client prints a "no answer" hint after 5 seconds.
 - An older `WhereTheCrowFlies` (pre-1.2.0) against this server: no `/title` command exists client-side, but an admin can still use `ravenscall title …` from the server console or their own client's routing stub.
 - `AcceptClientReports=false` disables the player `/title` path the same way it disables every other client report; the admin console path is unaffected.
+
+### Changed
+- **Only a player's first earned title activates itself.** Through 1.6.1 any title earned while no title was active became the active one — harmless when the only way to have no title was never to have earned one, but it would have silently undone a `/title clear` at the player's next milestone. Since 1.7.0 a cleared title stays cleared; later titles are added to `titles_earned` and wait there until the player picks one. A player who has never cleared or picked sees no difference.
 
 ### Tested
 - Boot check on Storm10 pending; the in-game run is the owner's.
