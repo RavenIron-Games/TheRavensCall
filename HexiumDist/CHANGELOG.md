@@ -7,6 +7,30 @@
 
 ---
 
+## 🟢 [1.7.0] — (name TBD)
+
+*The store README has claimed since early on that "players can unlock many titles and equip their preferred epithet." Until now that wasn't true — `PlayerRecord.ActiveTitle` was set once, the moment a player's first title was earned, and never changed again. 1.7.0 lets a player pick, from the titles they've actually earned, which one the server uses when it names them — in its Discord and Chronicle narration and on the dashboard and export. Nothing changes on the in-game nameplate.*
+
+### Added
+- **The player's `/title` command**, with `WhereTheCrowFlies` 1.2.0+: `/title` (or the F5 console's `title`) lists what you've earned and which one is active; `/title <name>` (multi-word titles work, e.g. `/title Wolf Hunter`) sets it to one you've earned; `/title clear` shows no title, and stays that way. The same `WhereTheCrowFlies` 1.2.0 also adds a small `/titles` panel — click a button instead of typing the name. Travels over a new routed RPC pair — `RavensCall_EventReport_V2` event type 13 (`TitleRequest`) carrying the request, a new `RavensCall_TitleReply_V1` carrying the one-line answer back to that player only, never broadcast — and since this release that reply always carries the player's full earned-title list and active title too, not just the line, so the panel is fresh after every list, set or clear.
+- **The admin's `ravenscall title <player> [<title>|clear]`** console subcommand — no client mod required on the server console; from an admin's game client it goes through WhereTheCrowFlies' `ravenscall` routing stub (1.1.3+), exactly like the season commands. Same earned-titles-only rule as the player path; the target player need not be online.
+- A title change is logged on the server (`[TheRavensCall] <name> chose the title '<title>'` / `<name> set no title`) but is not narrated: no Chronicle line, no Discord post, no `/api/activity` row. The Progression tab already shows `active_title` and the earned list, so no dashboard change was needed either.
+
+### Compatibility
+- A `WhereTheCrowFlies` 1.2.0+ client against an older `TheRavensCall` server: `/title` sends its request and gets nothing back. Against a 1.2.0–1.6.x server the packet still lands on the `RavensCall_EventReport_V2` channel that server already registers, finds no handler for event type 13, and is dropped there — logging one "unknown eventType 13" line only when `LogCombatReports` is on. (Against a `TheRavensCall` older than 1.2.0, which has no V2 channel at all, the routed RPC is ignored outright as unregistered.) Either way the client prints a "no answer" hint after 5 seconds.
+- An older `WhereTheCrowFlies` (pre-1.2.0) against this server: no `/title` command exists client-side, but an admin can still use `ravenscall title …` from the server console or their own client's routing stub.
+- `AcceptClientReports=false` disables the player `/title` path the same way it disables every other client report; the admin console path is unaffected.
+
+### Changed
+- **Only a player's first earned title activates itself.** Through 1.6.1 any title earned while no title was active became the active one — harmless when the only way to have no title was never to have earned one, but it would have silently undone a `/title clear` at the player's next milestone. Since 1.7.0 a cleared title stays cleared; later titles are added to `titles_earned` and wait there until the player picks one. A player who has never cleared or picked sees no difference.
+
+### Tested
+- `dotnet build -c Release` of both halves in the same session, 0 warnings, 0 errors each. Two review passes, 42 and 48 agents (three lenses, three skeptics per finding): the first over the commands and the wire, the second over the reply's title list and the client's panel; the wire layout, the trust boundary and every public claim were read against the code and the decompiled game classes, and every finding that survived its skeptics was fixed.
+- **Run on Storm10 (Windows, Valheim 1.0.12) on 2026-09-22 and 2026-09-23** with WhereTheCrowFlies 1.2.0 on the client (`docs/TESTPLAN-storm10-1.7.0-2026-09-22.md`): the build boots as 1.7.0 with zero warnings and the API reports it; clear-and-set cycles from the client landed on the server (`set no title` / `chose the title '…'` in the log, `active_title` following on `/api/state`); the `/titles` panel opened and closed on its key, its Close button and Esc, opened on a record with no titles, and on a record with 16 titles scrolled to the last entry and set it; a death right after was narrated with the picked title; graceful stops with the session summary written.
+- **Not run:** the admin `ravenscall title`, the 5-second no-answer hint. The shipped DLL is refreshed at the cut.
+
+---
+
 ## 🟢 [1.6.1] — The Raven Guards the Season
 
 *One admin-facing fix and the store README's new FAQ. No config, API or dashboard changes.*

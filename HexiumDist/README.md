@@ -7,7 +7,7 @@
 [![Companion](https://img.shields.io/badge/Client_Companion-WhereTheCrowFlies-blue.svg)]()
 [![Framework](https://img.shields.io/badge/Requires-BepInEx-red.svg)]()
 [![Publisher](https://img.shields.io/badge/RavenIron-Release-8B6F1F.svg)]()
-[![Version](https://img.shields.io/badge/Version-1.6.1-lightgrey.svg)]()
+[![Version](https://img.shields.io/badge/Version-1.7.0-lightgrey.svg)]()
 
 **RavenIron's server admin & analytics engine: aggregates player telemetry from *WhereTheCrowFlies*, chronicles realm history, and feeds live web dashboards and Discord AI bots.**
 
@@ -62,7 +62,7 @@ To provide seamless, 100% accurate tracking without missing a single event, the 
 - [☁️ Hosted Servers (Nitrado, G-Portal)](#-hosted-servers-nitrado-g-portal)
 - [📖 The Chronicle](#-the-chronicle)
 - [🏆 Titles & Milestones](#-titles--milestones)
-- [🗓️ Seasons](#-seasons)
+- [🗓️ Seasons & Titles](#-seasons--titles)
 - [⚙️ Configuration](#-configuration)
 - [📁 Where Everything Lives](#-where-everything-lives)
 - [📦 Installation & Dependencies](#-installation--dependencies)
@@ -299,18 +299,25 @@ Rotates daily at UTC midnight. Enable or disable with `EnableChronicleLog`. Prov
 
 Players unlock titles by slaying creature families (100, 500, 1000 kills) and defeating Valheim's world bosses (*Stag Breaker*, *Bane of the Swamp*, *The Ashen*, etc.). Felling all seven gods awards the legendary title *Slayer of Gods*. Unlocked titles are written directly to `active_title` and `titles_earned` in the export data.
 
+**Choosing your title.** Since 1.7.0 a player picks which earned title the server uses — in its Discord/Chronicle narration and on the dashboard/export — rather than always the first one earned. Nothing changes on the in-game nameplate. With `WhereTheCrowFlies` 1.2.0+: `/title` lists what you've earned, `/title Wolf Hunter` sets it (only to a title you've already earned), `/title clear` shows no title, and stays that way: titles you earn later are listed but not shown until you pick one (only your very first title ever activates itself). The same `WhereTheCrowFlies` 1.2.0 also has a `/titles` panel — a small window that lists your earned titles as buttons (or opens with the key you've set in its config) instead of typing the title's name; it asks the server on open and refreshes after every click. An admin can do the same for anyone, online or not, with `ravenscall title <player> [<title>|clear]` — from the server console with no client mod needed, or from an admin's game client that has WhereTheCrowFlies installed. Either way the change shows up on the dashboard and export at the next poll.
+
 ---
 
-## 🗓️ Seasons
+## 🗓️ Seasons & Titles
 
-Manage server wipes and eras using in-game console commands:
+Manage server wipes and eras, or set a player's title, using in-game console commands:
 
 ```
 ravenscall season start [name]
 ravenscall season end
+ravenscall title <player>
+ravenscall title <player> <title>
+ravenscall title <player> clear
 ```
 
-Archives Chronicle logs into dated season folders and writes summary stats on completion. Since 1.6.1 `season start` refuses while a season is running: end it first.
+Seasons archive Chronicle logs into dated season folders and write summary stats on completion. Since 1.6.1 `season start` refuses while a season is running: end it first.
+
+`ravenscall title` lists, sets or clears a player's active title from the titles they've already earned — the same rule the player's own `/title` follows. The player need not be online. From the server console it needs no client mod; from an admin's game client it goes through WhereTheCrowFlies' `ravenscall` routing stub, the same as the season commands above.
 
 ---
 
@@ -320,7 +327,7 @@ Configuration is located at `BepInEx/config/com.raveniron.theravenscall.cfg`:
 
 | Section | Setting | Default | Description |
 | :--- | :--- | :--- | :--- |
-| **Combat** | `AcceptClientReports` | `true` | Accepts telemetry RPC reports from *WhereTheCrowFlies* client mods. |
+| **Combat** | `AcceptClientReports` | `true` | Accepts telemetry RPC reports from *WhereTheCrowFlies* client mods. Set to `false` it also disables the player's `/title` picker (the admin's `ravenscall title` still works). |
 | **Combat** | `LogCombatReports` | `false` | Enables verbose console logging for incoming combat reports. |
 | **Events** | `EnablePlayerDeath` ... `EnableTitleEarned` | `true` | Independently toggles narration/Chronicle for each event type. |
 | **Events** | `EnableRaid` | `true` | Records raid start and end in the Chronicle and the dashboard feed (`raid_start`/`raid_end`). Not posted to Discord. The raid banner and `raid_active` in the API work either way — this only gates the narration. |
@@ -407,7 +414,7 @@ Only to whoever holds that server's read token, and only for that server. They s
 Read the BepInEx log. A working push logs one `Push enabled: server_id='…'` line at boot and then stays quiet. A `Push disabled:` line names the config key that is missing or malformed; a `Push rejected:` line names one of the four receiver refusals listed under [When the push is refused](#when-the-push-is-refused); a `Push failed:` line means the receiver could not be reached, and the mod keeps retrying on its own. Until the first push lands the hosted page reads "Registered, waiting for <id> to report"; "server silent since …" means no push has arrived for three heartbeats.
 
 **How do I start or end a season?**
-From an admin's game client that has WhereTheCrowFlies installed, in the console (F5): `ravenscall season start Autumn`, later `ravenscall season end`. The server checks its admin list before running it. Leave the name off and the season is named `Season_` plus today's date; the name becomes the Chronicle's season folder, so trailing periods and spaces are trimmed and it is capped at 64 characters. End the running season first: since 1.6.1 `season start` refuses while a season is running and names it (before 1.6.1 it replaced the running season in place: the console still answered "Season started", but the old season got no summary and no season-end line). See [Seasons](#-seasons).
+From an admin's game client that has WhereTheCrowFlies installed, in the console (F5): `ravenscall season start Autumn`, later `ravenscall season end`. The server checks its admin list before running it. Leave the name off and the season is named `Season_` plus today's date; the name becomes the Chronicle's season folder, so trailing periods and spaces are trimmed and it is capped at 64 characters. End the running season first: since 1.6.1 `season start` refuses while a season is running and names it (before 1.6.1 it replaced the running season in place: the console still answered "Season started", but the old season got no summary and no season-end line). See [Seasons & Titles](#-seasons--titles).
 
 **Does the world census slow the server down?**
 It walks the loaded world's objects on the main thread, on a timer, every 5 minutes by default; a real server with about 1.1 million objects finishes in under half a second, so it costs one short hitch every five minutes. `CensusIntervalMinutes = 0` turns it off, and `/api/census` then answers with `enabled: false`.
