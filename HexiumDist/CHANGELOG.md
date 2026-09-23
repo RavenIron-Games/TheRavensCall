@@ -26,8 +26,8 @@
 
 ### Tested
 - `dotnet build -c Release` of both halves in the same session, 0 warnings, 0 errors each. Two review passes, 42 and 48 agents (three lenses, three skeptics per finding): the first over the commands and the wire, the second over the reply's title list and the client's panel; the wire layout, the trust boundary and every public claim were read against the code and the decompiled game classes, and every finding that survived its skeptics was fixed.
-- **Run on Storm10 (Windows, Valheim 1.0.12) on 2026-09-22** with WhereTheCrowFlies 1.2.0 on the client (`docs/TESTPLAN-storm10-1.7.0-2026-09-22.md`): the build boots as 1.7.0 with zero warnings and the API reports it; two full clear-and-set cycles from the client landed on the server (`set no title` / `chose the title 'Stag Breaker'` in the log, `active_title` following on `/api/state`); the `/titles` panel opened and closed on its key and its Close button, and opened on a record with no titles; graceful stop with the session summary written.
-- **Not run:** Esc to close the panel, the panel's scroll with a long earned list, the admin `ravenscall title`, the 5-second no-answer hint. The shipped DLL is refreshed at the cut.
+- **Run on Storm10 (Windows, Valheim 1.0.12) on 2026-09-22 and 2026-09-23** with WhereTheCrowFlies 1.2.0 on the client (`docs/TESTPLAN-storm10-1.7.0-2026-09-22.md`): the build boots as 1.7.0 with zero warnings and the API reports it; clear-and-set cycles from the client landed on the server (`set no title` / `chose the title '…'` in the log, `active_title` following on `/api/state`); the `/titles` panel opened and closed on its key, its Close button and Esc, opened on a record with no titles, and on a record with 16 titles scrolled to the last entry and set it; a death right after was narrated with the picked title; graceful stops with the session summary written.
+- **Not run:** the admin `ravenscall title`, the 5-second no-answer hint. The shipped DLL is refreshed at the cut.
 
 ---
 

@@ -1,4 +1,4 @@
-# TheRavensCall 1.7.0 + WhereTheCrowFlies 1.2.0 — Storm10 live run, 2026-09-22
+# TheRavensCall 1.7.0 + WhereTheCrowFlies 1.2.0 — Storm10 live runs, 2026-09-22 and 2026-09-23
 
 Branches `feat/title-picker-1.7.0` (TheRavensCall, PR #21) and `feat/title-picker-1.2.0` (WhereTheCrowFlies, PR #6): the title picker (`/title`, the `/titles` panel, `ravenscall title`). Storm10 = the owner's Windows dedicated server on Valheim 1.0.12; the client = the owner's Gale `testing` profile. Both builds were staged and the server started by the owner's hand; the session tooling read the logs and the local API only.
 
@@ -11,6 +11,19 @@ Branches `feat/title-picker-1.7.0` (TheRavensCall, PR #21) and `feat/title-picke
 | Panel open/close | **PASS.** Client log: `title panel closed: key` ×5 (the owner bound `TitlePanelKey`; the key opens and closes), `title panel closed: close button` ×4. One opening as Nomad, whose record has no titles at all, exercised the empty-list branch (the note with no buttons). The reply text on screen is not logged, so its wording was checked by the owner's eyes only. |
 | Input gate | No stray attack, inventory or menu reported by the owner while the panel was up; the gate is a postfix on `TextInput.IsVisible()` (see `WhereTheCrowFlies/Patches/TitlePanel.cs`). Not instrumented beyond that. |
 | Stop | 19:57:20 graceful: `OnApplicationQuit`, `Shutting down`, `ZNet Shutdown`, `Session summary written to Chronicle.` The owner closed it; the shutdown save rewrote every player file from memory. |
-| **Not run** | Esc to close (only the key and the button were used); the scroll view with a long earned list (a 16-title edit of `players/TestNomad.json` was planned for the next run — edit it while the server is DOWN, the shutdown save overwrites the file otherwise); the admin `ravenscall title <player>`; the 5-second no-answer hint; a listen host. The `/title` command and the panel are indistinguishable in the server log, so the clear/set cycles above may have been either. |
+| **Not run on 2026-09-22** | Esc to close; the scroll view with a long earned list; the admin `ravenscall title <player>`; the 5-second no-answer hint; a listen host. The `/title` command and the panel are indistinguishable in the server log, so the clear/set cycles above may have been either. |
+
+## Second run, 2026-09-23 morning (same builds, same staging)
+
+`players/TestNomad.json` was edited while the server was down to carry 16 earned titles (Stag Breaker plus fifteen real ones from the mod's own tables, Ghost of the Meadows last); the shutdown save had rewritten the file the night before, which is why the edit has to happen with the server off.
+
+| Step | Result |
+|---|---|
+| Boot | 06:33: `Loading [TheRavensCall 1.7.0]`, awakens, `PlayerRegistry loaded 3 player record(s).`, Chronicle opened for the day, `World census: 262523 objects in 33 ms.`, join code registered; `/api/state` served TestNomad with 16 `titles_earned` and `active_title` Stag Breaker. Client: crow 1.2.0 loaded. |
+| Long list + scroll | **PASS.** TestNomad opened the panel and picked `Ghost of the Meadows` (the 16th and last entry, only reachable by scrolling), then `Boss Hunter` (the 15th): `TestNomad chose the title 'Ghost of the Meadows'` and `… 'Boss Hunter'` in the server log, in that order. |
+| Esc | **PASS.** Client log `title panel closed: escape`; the owner reported no pause menu opening on that press. |
+| Title in narration | **PASS.** A fall death right after was narrated as `TestNomad the Boss Hunter met their end at the hands of falling.` — the picked title is the display name from then on. The one warning of the run, `death report dropped — budget exceeded`, is the known twin drop of the crow's V1+V2 death pair (since 1.2.4), not a title-picker line. |
+| Stop | 06:38:26 graceful (`OnApplicationQuit`, `Shutting down`, `ZNet Shutdown`, `Session summary written to Chronicle.`), closed by the owner; the saved record reads `active_title` Boss Hunter. |
+| **Still not run** | The admin `ravenscall title <player>`; the 5-second no-answer hint; a listen host. |
 
 Still present, unchanged since 1.3.0: the leave line reads `(1 online)` while counting the leaver (a `FormatMessage` count taken before the peer is removed).
