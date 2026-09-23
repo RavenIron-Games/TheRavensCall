@@ -40,13 +40,16 @@
     <PackageReference Include="BepInEx.AssemblyPublicizer.MSBuild" Version="0.4.1" PrivateAssets="all" />
   </ItemGroup>
 
-  <ItemGroup Condition="!Exists('$(MSBuildProjectDirectory)\.git')">
-    <!-- git supplies the repo root as a source root for the mapping above;
-         a copy without .git (a source zip) names the project folder here
-         instead, or its build would carry the absolute path again. This
-         csproj sits at the repo root; a project in a subfolder must test
-         the repo root's .git (e.g. $(MSBuildProjectDirectory)\..\.git). -->
-    <SourceRoot Include="$(MSBuildProjectDirectory)\" />
+  <ItemGroup>
+    <!-- Always name the project folder as a source root for the mapping
+         above. In a git checkout git adds the same root with its Source
+         Link data and the two merge into one; without it (a source zip, a
+         broken .git, git queries switched off) the folder would stay
+         unmapped and its absolute path would go back into the DLL with no
+         warning. This csproj sits at the repo root; a project in a
+         subfolder should add the repo root instead (e.g. from a
+         Directory.Build.props there). -->
+    <SourceRoot Include="$(MSBuildThisFileDirectory)" />
   </ItemGroup>
 
   <ItemGroup>
