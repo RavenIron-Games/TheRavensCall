@@ -16,12 +16,9 @@
          this the PE debug directory carries the absolute PDB path
          (C:\Users\<name>\...\obj\Release\TheRavensCall.pdb), which exposes
          the Windows user name and makes the md5 depend on where the repo
-         is checked out. In a git checkout the SDK maps the repo root to /_/
-         in the DLL, the PDB and the PDB's Source Link table alike; that
-         mapping needs git, so a copy without .git (a source zip) maps the
-         project folder to /_/ directly instead. -->
-    <DeterministicSourcePaths Condition="Exists('$(MSBuildProjectDirectory)\.git')">true</DeterministicSourcePaths>
-    <PathMap Condition="!Exists('$(MSBuildProjectDirectory)\.git')">$([MSBuild]::EnsureTrailingSlash('$(MSBuildProjectDirectory)'))=/_/</PathMap>
+         is checked out. The SDK maps each source root to /_/, /_1/, … in
+         the DLL, the PDB and the PDB's Source Link table alike. -->
+    <DeterministicSourcePaths>true</DeterministicSourcePaths>
 
     <!-- *** CRITICAL: produce ONLY  *** -->
     <AssemblyName>TheRavensCall</AssemblyName>
@@ -41,6 +38,13 @@
          time — matches BlightedHeart's csproj, needed because this code
          patches several non-public ZNet/Terminal methods by nameof(). -->
     <PackageReference Include="BepInEx.AssemblyPublicizer.MSBuild" Version="0.4.1" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup Condition="!Exists('$(MSBuildProjectDirectory)\.git')">
+    <!-- git supplies the repo root as a source root for the mapping above;
+         a copy without .git (a source zip) names the project folder here
+         instead, or its build would carry the absolute path again. -->
+    <SourceRoot Include="$(MSBuildProjectDirectory)\" />
   </ItemGroup>
 
   <ItemGroup>
