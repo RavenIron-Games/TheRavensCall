@@ -228,7 +228,7 @@ if (player) {
 
 ### The Discord Webhook (Narration)
 
-Set `WebhookUrl` under `[Discord]` in `BepInEx/config/com.raveniron.theravenscall.cfg` to post real-time event embeds (deaths, boss kills, milestones, biome discoveries, gear advances) directly into your Discord channel.
+Set `WebhookUrl` under `[Discord]` in `BepInEx/config/com.raveniron.theravenscall.cfg` to post real-time event embeds (deaths, boss kills, kill and death milestones, biome discoveries, titles earned) directly into your Discord channel.
 
 ---
 
@@ -249,7 +249,7 @@ A full player-stats dashboard served directly by the mod's built-in HTTP server:
 
 ## ☁️ Hosted Servers (Nitrado, G-Portal)
 
-On a rented game server the admin gets the game's ports, a web panel and FTP — no shell, no extra services, no way to open the dashboard's port. So `http://localhost:2112` is unreachable from anywhere on a Nitrado or G-Portal box. Since 1.6.0 the mod can instead **push** its data out over HTTPS to a small receiver hosted by RavenIron, which keeps the latest copy and serves the same dashboard page from a public URL. With `PushUrl` empty (the default) nothing changes — the server behaves exactly like 1.5.0, entirely local.
+On a rented game server the admin gets the game's ports, a web panel and FTP — no shell, no extra services, no way to open the dashboard's port. So `http://localhost:2112` is unreachable from anywhere on a Nitrado or G-Portal box. Since 1.6.0 the mod can instead **push** its data out over HTTPS to a small receiver site you deploy from `hosting/netlify/` (RavenIron runs one for its own servers only), which keeps the latest copy and serves the same dashboard page from a public URL. With `PushUrl` empty (the default) nothing changes — the server behaves exactly like 1.5.0, entirely local.
 
 > [!IMPORTANT]
 > **What hosting publishes.** A read-token holder sees everything the three pushed routes serve: every known player's stats, skills, titles and death coordinates (`/api/state`); the event feed and season standings (`/api/activity`); and the census, which lists every portal, bed and ward in the loaded world with its rounded x/z — in effect where the bases are. Until 1.6.0 all of that stayed on a machine the admin controls; hosting moves the latest copy to a third party's storage behind one shared token. **Leaving `PushUrl` empty keeps a server entirely local, exactly as before.**
@@ -331,8 +331,8 @@ Configuration is located at `BepInEx/config/com.raveniron.theravenscall.cfg`:
 | **Combat** | `LogCombatReports` | `false` | Enables verbose console logging for incoming combat reports. |
 | **Events** | `EnablePlayerDeath` ... `EnableTitleEarned` | `true` | Independently toggles narration/Chronicle for each event type. |
 | **Events** | `EnableRaid` | `true` | Records raid start and end in the Chronicle and the dashboard feed (`raid_start`/`raid_end`). Not posted to Discord. The raid banner and `raid_active` in the API work either way — this only gates the narration. |
-| **Format** | `ShowDayNumber` / `ShowOnlineCount` | `true` | Appends `[Day N]` and `(N online)` to each event's line in the server log (Discord and the Chronicle get the plain message; the Chronicle and `/api/activity` rows carry the count as `online_count`). The count is the connected players: since 1.7.1 a leave line no longer counts the player who just left, a player whose game crashed still counts until the server drops the dead connection (up to 30 s, or up to 90 s on a crossplay server), and the part is left off when nobody is online. |
-| **Format** | `MessagePrefix` | `⚔ ` | Custom prefix added to all broadcast messages. |
+| **Format** | `ShowDayNumber` / `ShowOnlineCount` | `true` | Appends `[Day N]` and `(N online)` to each event's line in the server log (Discord and the Chronicle get the plain message; the Chronicle and `/api/activity` rows carry the day and the count as their own `day` and `online_count` fields, however these two are set). The count is the connected players: since 1.7.1 a leave line no longer counts the player who just left, a player whose game crashed still counts until the server drops the dead connection (up to 30 s, or up to 90 s on a crossplay server), and the part is left off when nobody is online. |
+| **Format** | `MessagePrefix` | `⚔ ` | Prefix on each event's line in the server log (Discord and the Chronicle get the message without it). |
 | **Log** | `EnableChronicleLog` | `true` | Writes daily JSONL Chronicle logs. |
 | **Bosses** | `BossCreditRadius` | `100` | Proximity radius (meters) for crediting boss assists. |
 | **Discord** | `WebhookUrl` | `""` | Discord webhook URL for event embeds. |
@@ -405,7 +405,7 @@ See above: that player is not running WhereTheCrowFlies. Once they install it, t
 The `HttpApiToken` value from `com.raveniron.theravenscall.cfg`, once, in the page's Settings panel (the gear icon, top right). It is kept in that browser only. `/api/health` and the page itself never need it.
 
 **My server is on Nitrado or G-Portal and I cannot open port 2112. Can I still get the dashboard?**
-Yes, since 1.6.0: the mod pushes its data out over HTTPS to a small receiver site, and the same dashboard page is served from there. It needs nothing but outbound HTTPS, the same path out of the host the Discord webhook already uses — though it has not yet been run on a rented host. Raven Iron Games' own receiver is not open to other servers in 1.6.0, so deploy your own private copy of `hosting/netlify/` from the [GitHub repo](https://github.com/RavenIron-Games/TheRavensCall); its README has the steps. See [Hosted Servers](#-hosted-servers-nitrado-g-portal).
+Yes, since 1.6.0: the mod pushes its data out over HTTPS to a small receiver site, and the same dashboard page is served from there. It needs nothing but outbound HTTPS, the same path out of the host the Discord webhook already uses — though it has not yet been run on a rented host. Raven Iron Games' own receiver is not open to other servers, so deploy your own private copy of `hosting/netlify/` from the [GitHub repo](https://github.com/RavenIron-Games/TheRavensCall); its README has the steps. See [Hosted Servers](#-hosted-servers-nitrado-g-portal).
 
 **Does pushing make my server's data public?**
 Only to whoever holds that server's read token, and only for that server. They see everything the three pushed routes serve: every known player's stats, skills, titles and death coordinates, the event feed and season standings, and the census with the position of every portal, bed and ward. With `PushUrl` empty, the default, nothing leaves the box.
