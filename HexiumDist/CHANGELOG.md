@@ -17,7 +17,8 @@
 ### Tested
 - `dotnet build -c Release`, 0 warnings, 0 errors.
 - **Run on Storm10 (Windows, Valheim 1.0.15, crossplay) on 2026-09-23:** the join line read "TestNomad has entered the world. [Day 19] (1 online)". The player's game then dropped without sending a disconnect, so the server kept the connection for the 90-second crossplay timeout (dropped 08:26:07, timed out 08:27:36) and wrote "TestNomad has left the world (connection lost). [Day 19]" with no count; the Chronicle and `/api/activity` rows for that leave carry `online_count` 0. This path read 0 before 1.7.1 too, so it confirms the join count and the crash-window limit, not the fix.
-- **Not run yet:** a leave by logging out to the menu, the path the fix changes (1.7.0 wrote "(1 online)" there on Storm10 at 06:37 the same day), and a shutdown with players online.
+- **Then, on a fresh boot of the same build (08:32-08:35):** a leave by logging out to the menu, the path the fix changes, wrote "TestNomad has left the world (played 0m). [Day 19]" with no count, where 1.7.0 wrote "(1 online)" on the same path at 06:37 that morning. A server shutdown with the player still in the world wrote the same line with no count. The Chronicle and `/api/activity` rows for both leaves carry `online_count` 0, and each join before them carries 1. A join with a wrong password was turned away at the handshake and produced no join or leave line.
+- **Not run:** a shutdown with two or more players online, where the leave lines count down.
 
 ---
 
