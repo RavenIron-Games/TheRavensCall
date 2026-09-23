@@ -25,8 +25,8 @@
 - **Only a player's first earned title activates itself.** Through 1.6.1 any title earned while no title was active became the active one — harmless when the only way to have no title was never to have earned one, but it would have silently undone a `/title clear` at the player's next milestone. Since 1.7.0 a cleared title stays cleared; later titles are added to `titles_earned` and wait there until the player picks one. A player who has never cleared or picked sees no difference.
 
 ### Tested
-- `dotnet build -c Release` of both halves, 0 warnings, 0 errors; the wire layout, the trust boundary and every public claim were read against the code and the decompiled game classes by a 42-agent review pass (three lenses, three skeptics per finding, eleven findings fixed).
-- **Not run:** a boot of this build on a dedicated server, and the in-game round trip itself (`/title` from a WhereTheCrowFlies 1.2.0 client, the reply, the admin `ravenscall title`). Both are the owner's before the cut; this entry's Tested lines get the boot record then.
+- `dotnet build -c Release` of both halves, 0 warnings, 0 errors; the wire layout, the trust boundary and every public claim were read against the code and the decompiled game classes by a 42-agent review pass on the command half (three lenses, three skeptics per finding, eleven findings fixed); the reply's title list and the client's panel were reviewed separately.
+- **Not run:** a boot of this build on a dedicated server, and the in-game round trip itself (`/title` from a WhereTheCrowFlies 1.2.0 client, the reply, the `/titles` panel, the admin `ravenscall title`). Both are the owner's before the cut; this entry's Tested lines get the boot record then.
 
 ---
 
