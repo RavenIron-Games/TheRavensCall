@@ -12,6 +12,13 @@
     <Deterministic>true</Deterministic>
     <Optimize>true</Optimize>
     <DebugType>portable</DebugType>
+    <!-- Keep the build machine's folders out of the shipped DLL. Without
+         this the PE debug directory carries the absolute PDB path
+         (C:\Users\<name>\...\obj\Release\TheRavensCall.pdb), which exposes
+         the Windows user name and makes the md5 depend on where the repo
+         is checked out. The SDK maps the repo root to /_/ in the DLL, the PDB
+         and the PDB's Source Link table alike. -->
+    <DeterministicSourcePaths>true</DeterministicSourcePaths>
 
     <!-- *** CRITICAL: produce ONLY  *** -->
     <AssemblyName>TheRavensCall</AssemblyName>
