@@ -33,7 +33,7 @@ namespace TheRavensCall
     {
         public const string PluginGUID = "com.raveniron.theravenscall";
         public const string PluginName = "TheRavensCall";
-        public const string PluginVersion = "1.6.1";
+        public const string PluginVersion = "1.7.0";
 
         internal static ManualLogSource Log;
         internal static Plugin Instance;
@@ -1236,6 +1236,8 @@ namespace TheRavensCall
     //                           5=building 6=crafting 7=harvesting
     //                           8=consumables 9=worldEvent 10=statSync(delta)
     //                           11=statSnapshot(absolute) 12=skillSnapshot(absolute)
+    //                           13=titleRequest (1.7.0 — the only type that
+    //                           replies to the sender; see HandleTitleRequest)
     //   3.. event-specific payload — see each Handle* method below.
     //
     // eventType 10 (StatSync, every 10s) and 11 (StatSnapshot, absolute —
@@ -1294,6 +1296,7 @@ namespace TheRavensCall
                     case 10: HandleStatSyncDelta(reporterPeer, pkg); break;
                     case 11: HandleStatSnapshot(reporterPeer, pkg); break;
                     case 12: HandleSkillSnapshot(reporterPeer, pkg); break;
+                    case 13: HandleTitleRequest(sender, reporterPeer, pkg); break;
                     default:
                         if (Plugin.LogCombatReports.Value) Plugin.Log.LogWarning($"[TheRavensCall] event report: unknown eventType {eventType}");
                         break;
@@ -1529,6 +1532,56 @@ namespace TheRavensCall
 
             if (!VerifySelf(reporter, playerName, out string verified)) return;
             CombatCredit.ApplySkillLevels(verified, levels, progress);
+        }
+
+        // Player title picker (1.7.0) — payload: string playerName, byte op
+        // (1=List 2=Set 3=Clear), string title (Set only, "" otherwise; the
+        // client trims, this caps). The only V2 event type that answers the
+        // sender: every other handler above only ever credits state, but a
+        // player needs to know whether their pick took, so this always sends
+        // exactly one RavensCall_TitleReply_V1 back to `sender` — never
+        // broadcast, never silent except for a genuinely unrecognized op
+        // (matches every other handler's "unknown eventType" drop). The List/
+        // Set/Clear rules themselves live on TitleSystem so the admin's
+        // `ravenscall title` console subcommand (Patch_Terminal, below)
+        // applies the exact same rules instead of a second copy of them.
+        private static void HandleTitleRequest(long sender, ZNetPeer reporter, ZPackage pkg)
+        {
+            string playerName = Cap(pkg.ReadString(), 32);
+            byte op = pkg.ReadByte();
+            string title = Cap(pkg.ReadString(), 64);
+
+            if (!VerifySelf(reporter, playerName, out string verified)) return;
+
+            var rec = PlayerRegistry.Get(verified);
+            (byte kind, string text) reply;
+            switch (op)
+            {
+                case 1: reply = TitleSystem.ListTitles(rec); break;
+                case 2: reply = TitleSystem.SetTitle(verified, rec, title); break;
+                case 3: reply = TitleSystem.ClearTitle(verified, rec); break;
+                default:
+                    if (Plugin.LogCombatReports.Value) Plugin.Log.LogWarning($"[TheRavensCall] title request: unknown op {op}");
+                    return;
+            }
+            SendTitleReply(sender, reply.kind, reply.text);
+        }
+
+        // Reply-only RPC, registered by WhereTheCrowFlies — this server never
+        // registers a receiver for it, only sends. Schema 1: int
+        // schemaVersion, byte kind (1=ok/informational 2=refused), string
+        // text (one human-readable line, already final — no localisation
+        // tokens). Always targeted at the requesting peer (InvokeRoutedRPC's
+        // long targetPeerID overload), matching the wire fact that a routed
+        // RPC name unregistered on the receiver is just silently ignored, so
+        // an older WhereTheCrowFlies (pre-1.2.0) simply never sees this.
+        private static void SendTitleReply(long targetPeer, byte kind, string text)
+        {
+            var pkg = new ZPackage();
+            pkg.Write(1); // schemaVersion
+            pkg.Write(kind);
+            pkg.Write(text);
+            ZRoutedRpc.instance.InvokeRoutedRPC(targetPeer, "RavensCall_TitleReply_V1", pkg);
         }
     }
 
@@ -1854,6 +1907,58 @@ namespace TheRavensCall
             }, $"{titleDisplay} has earned the title: {title}!");
             if (Plugin.EnableTitleEarned.Value) Plugin.FireEvent("title_earned", playerName, titleMsg, title);
             PlayerRegistry.Save(rec);
+        }
+
+        // ── Title picker (1.7.0) ────────────────────────────────────────
+        // Shared by EventReportReceiver.HandleTitleRequest (the player's
+        // `/title` in WhereTheCrowFlies, replying over the RPC) and
+        // Patch_Terminal's `ravenscall title` admin subcommand (replying via
+        // Terminal.AddString) so both apply identical rules — see the spec's
+        // wording, echoed in the messages below, for what each reply says.
+        // Deliberately no narration/Chronicle/Discord line here (non-goal
+        // for 1.7.0): callers only log and reply.
+        private static string TitleCsv(PlayerRecord rec) => string.Join(", ", rec.EarnedTitles);
+
+        public static (byte kind, string text) ListTitles(PlayerRecord rec)
+        {
+            if (rec.EarnedTitles.Count == 0) return (1, "You have earned no titles yet.");
+            string suffix = string.IsNullOrEmpty(rec.ActiveTitle) ? "" : $" (active: {rec.ActiveTitle})";
+            return (1, $"Your titles: {TitleCsv(rec)}{suffix}");
+        }
+
+        public static (byte kind, string text) SetTitle(string playerName, PlayerRecord rec, string title)
+        {
+            title = (title ?? "").Trim();
+            if (string.IsNullOrEmpty(title))
+                return (2, "Usage: title <name> — pick one of your earned titles, or `title clear`.");
+
+            // Match case-insensitively but store (and echo back) the exact
+            // spelling already on the record, never the typed casing.
+            string stored = rec.EarnedTitles.FirstOrDefault(t => string.Equals(t, title, StringComparison.OrdinalIgnoreCase));
+            if (stored == null)
+                return (2, rec.EarnedTitles.Count == 0
+                    ? $"You have not earned '{title}'. You have earned no titles yet."
+                    : $"You have not earned '{title}'. Your titles: {TitleCsv(rec)}");
+
+            if (string.Equals(rec.ActiveTitle, stored, StringComparison.Ordinal))
+                return (1, $"'{stored}' is already your title.");
+
+            rec.ActiveTitle = stored;
+            rec.Dirty = true;
+            Plugin.Log.LogInfo($"[TheRavensCall] {playerName} chose the title '{stored}'");
+            PlayerRegistry.Save(rec);
+            return (1, $"Title set: {stored}. You are now {playerName} the {stored}.");
+        }
+
+        public static (byte kind, string text) ClearTitle(string playerName, PlayerRecord rec)
+        {
+            if (string.IsNullOrEmpty(rec.ActiveTitle)) return (1, "You have no active title.");
+
+            rec.ActiveTitle = "";
+            rec.Dirty = true;
+            Plugin.Log.LogInfo($"[TheRavensCall] {playerName} set no title");
+            PlayerRegistry.Save(rec);
+            return (1, $"Title cleared. You are {playerName} again.");
         }
 
         public static void OnCreatureKill(string playerName, string prefab, PlayerRecord rec)
@@ -2477,9 +2582,32 @@ namespace TheRavensCall
             // sends it through ZNet.RemoteCommand, the server checks the admin
             // list in RPC_RemoteCommand, and this action runs here. Without
             // the stub a client never knew the name at all (review 2026-09-15).
-            new Terminal.ConsoleCommand("ravenscall", "Usage: ravenscall season start [name] | ravenscall season end", args =>
+            new Terminal.ConsoleCommand("ravenscall", "Usage: ravenscall season start [name] | ravenscall season end | ravenscall title <player> [<title>|clear]", args =>
             {
-                if (args.Length < 2 || args[1] != "season") { args.Context?.AddString("[TheRavensCall] Usage: ravenscall season start [name] | ravenscall season end"); return; }
+                if (args.Length >= 2 && args[1] == "title")
+                {
+                    // Admin path (1.7.0): no client mod needed — same rules as
+                    // the player's own /title, via TitleSystem's shared
+                    // List/Set/Clear. The player need not be online, but the
+                    // name must already exist in the registry (PlayerRegistry.Get
+                    // would silently create a record for a typo'd name, which
+                    // a lookup against .All avoids).
+                    if (args.Length < 3) { args.Context?.AddString("[TheRavensCall] Usage: ravenscall title <player> [<title>|clear]"); return; }
+                    string targetName = args[2];
+                    var rec = PlayerRegistry.All.FirstOrDefault(r => string.Equals(r.Name, targetName, StringComparison.OrdinalIgnoreCase));
+                    if (rec == null) { args.Context?.AddString($"[TheRavensCall] No such player: {targetName}"); return; }
+
+                    (byte kind, string text) reply;
+                    if (args.Length == 3)
+                        reply = TitleSystem.ListTitles(rec);
+                    else if (args.Length == 4 && string.Equals(args[3], "clear", StringComparison.OrdinalIgnoreCase))
+                        reply = TitleSystem.ClearTitle(rec.Name, rec);
+                    else
+                        reply = TitleSystem.SetTitle(rec.Name, rec, string.Join(" ", args.Args.Skip(3)));
+                    args.Context?.AddString("[TheRavensCall] " + reply.text);
+                    return;
+                }
+                if (args.Length < 2 || args[1] != "season") { args.Context?.AddString("[TheRavensCall] Usage: ravenscall season start [name] | ravenscall season end | ravenscall title <player> [<title>|clear]"); return; }
                 if (args.Length >= 3 && args[2] == "start")
                 {
                     string sName = args.Length >= 4 ? args[3] : "Season_" + DateTime.UtcNow.ToString("yyyyMMdd");
@@ -2501,7 +2629,7 @@ namespace TheRavensCall
                 }
                 else
                 {
-                    args.Context?.AddString("[TheRavensCall] Usage: ravenscall season start [name] | ravenscall season end");
+                    args.Context?.AddString("[TheRavensCall] Usage: ravenscall season start [name] | ravenscall season end | ravenscall title <player> [<title>|clear]");
                 }
             }, onlyServer: true, remoteCommand: true);
         }

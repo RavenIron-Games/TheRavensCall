@@ -18,7 +18,7 @@ touches what the mod itself serves.
 | Route | Body |
 |---|---|
 | `GET /`, `/index`, `*.html` | the dashboard page, `text/html; charset=utf-8`. Disk override first: `BepInEx/config/TheRavensCall/theravenscall.html`, then the plugin folder, then the copy embedded in the DLL (`Companion.ReadEmbeddedHtml()`), then 404 only if that embedded read itself fails. A served disk copy that predates 1.3.0 (missing the `<meta name="theravenscall-api">` marker) logs one warning per server run telling the admin to delete it. |
-| `GET /api/health` | `{"status":"ok","version":"1.6.1"}` (the plugin version) |
+| `GET /api/health` | `{"status":"ok","version":"1.7.0"}` (the plugin version) |
 | `GET /api/state` | **Unchanged since 1.3.0: exactly the BarrkBOT export** (the same string written to `BepInEx/config/TheRavensCall/BarrkBOT_data1.json`), shape below. Built on the main thread every `StatsPushIntervalSeconds` (10 s) in `PollAllPlayers`, unconditionally (the file needs it either way); primed once at boot after `PlayerRegistry.LoadAll` (`PrimeStateCache`); before that prime (and if it ever throws) the body is the same envelope with `players: {}`, `online_count: 0` and an empty `generated_at`, so the shape never changes over the endpoint's lifetime. The worker thread only ever hands out the cached string. |
 | `GET /api/gamedata` | the contents of `BarrkBOT_data2.json`: `{"items":[...],"recipes":[...],"buildables":[...],"updated_at":"<ISO-8601 UTC>"}`, written once at boot by `WriteGameData` when `ObjectDB` is ready. Until that write has happened the body is the literal `{"recipes":[],"items":[],"buildables":[]}` with no `updated_at`. `recipes[]` = `{slug, recipe_key, name, category, amount, station, ingredients:[{slug,name,qty}]}`; `items[]` = `{slug, name, category}`; `buildables[]` = `{name, category, ingredients:[{slug,name,qty}]}` (one entry per piece across every `ItemDrop`'s `m_buildPieces`; no `slug` on the buildable itself, only on its ingredients). Empty arrays until written. |
 | `GET /api/pins` | `MapPinTracker.GetJson()`: always `[]` on a dedicated server (no minimap). Kept, unused by the page. |
@@ -56,7 +56,7 @@ Every row is `PlayerRegistry.ToJson(rec)` (PlayerRegistry.cs ~line 380), nothing
 | `playtime_seconds_lifetime` | int | |
 | `kills_narrative`, `deaths_narrative` | int | the Saga narrative counters (server-attributed) |
 | `gear_tier` | int | **always 0 on a dedicated server** (needs a client report that does not exist yet, HANDOFF.md) |
-| `active_title` | string | |
+| `active_title` | string | since 1.7.0 the player can change it with `/title` (`WhereTheCrowFlies` 1.2.0+) or an admin's `ravenscall title` |
 | `titles_earned` | string[] | |
 | `biomes_discovered` | string[] | not `Heightmap.Biome` names — the nine `BiomeAndGearTracking.NormalizeBiome` spellings (`Meadows`, `BlackForest`, `Swamp`, `Mountain`, `Plains`, `Ocean`, `Mistlands`, `Ashlands`, `DeepNorth`); anything that method doesn't recognise passes through raw |
 | `boss_kills_credited` | int | |
@@ -228,7 +228,7 @@ POST <PushUrl>/push
 Authorization: Bearer <PushToken>
 Content-Type: application/json
 
-{"v":1,"server_id":"storm10","mod_version":"1.6.1","pushed_at":"2026-09-22T17:02:11Z",
+{"v":1,"server_id":"storm10","mod_version":"1.7.0","pushed_at":"2026-09-22T17:02:11Z",
  "push_interval_seconds":60,"heartbeat_seconds":600,
  "read_token_sha256":"<hex sha256 of the server's HttpApiToken>",
  "state":"<escaped JSON string>"|null,"activity":"<…>"|null,"census":"<…>"|null}
@@ -238,7 +238,7 @@ Content-Type: application/json
 |---|---|
 | `v` | `1`. |
 | `server_id` | Config `PushServerId`. No default — the push is disabled at boot with one warning naming the fix when it is empty or not `[a-z0-9-]{1,32}`. Must equal the id registered in the receiver's `TRC_SERVERS`. |
-| `mod_version` | The plugin version, `1.6.1`. |
+| `mod_version` | The plugin version, `1.7.0`. |
 | `pushed_at` | ISO-8601 instant, this push's own clock. |
 | `push_interval_seconds`, `heartbeat_seconds` | The **effective** clamped values (below), not the raw config. |
 | `read_token_sha256` | The hex sha256 of the server's own `HttpApiToken` — the hash, never the token. The push refuses to run at all unless `HttpApiToken` is at least 24 characters. |
