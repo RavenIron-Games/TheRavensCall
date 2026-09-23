@@ -297,9 +297,9 @@ Rotates daily at UTC midnight. Enable or disable with `EnableChronicleLog`. Prov
 
 ## 🏆 Titles & Milestones
 
-Players unlock titles by slaying creature families (100, 500, 1000 kills) and defeating Valheim's world bosses (*Stag Breaker*, *Bane of the Swamp*, *The Ashen*, etc.). Felling all seven gods awards the legendary title *Slayer of Gods*. Unlocked titles are written directly to `active_title` and `titles_earned` in the export data.
+Players unlock titles by slaying creature families (100, 500, 1000 kills) and defeating Valheim's world bosses (*Stag Breaker*, *Bane of the Swamp*, *The Ashen*, etc.). Felling all seven gods awards the legendary title *Slayer of Gods*. Unlocked titles are added to `titles_earned` in the export data; a player's very first title also becomes `active_title`, and after that the player chooses which one is active (see below).
 
-**Choosing your title.** Since 1.7.0 a player picks which earned title the server uses — in its Discord/Chronicle narration and on the dashboard/export — rather than always the first one earned. Nothing changes on the in-game nameplate. With `WhereTheCrowFlies` 1.2.0+: `/title` lists what you've earned, `/title Wolf Hunter` sets it (only to a title you've already earned), `/title clear` shows no title, and stays that way: titles you earn later are listed but not shown until you pick one (only your very first title ever activates itself). The same `WhereTheCrowFlies` 1.2.0 also has a `/titles` panel — a small window that lists your earned titles as buttons (or opens with the key you've set in its config) instead of typing the title's name; it asks the server on open and refreshes after every click. An admin can do the same for anyone, online or not, with `ravenscall title <player> [<title>|clear]` — from the server console with no client mod needed, or from an admin's game client that has WhereTheCrowFlies installed. Either way the change shows up on the dashboard and export at the next poll.
+**Choosing your title.** Since 1.7.0 a player picks which earned title the server uses — in its Discord/Chronicle narration and on the dashboard/export — rather than always the first one earned. Nothing changes on the in-game nameplate. With `WhereTheCrowFlies` 1.2.0+: `/title` lists what you've earned, `/title Wolf Hunter` sets it (only to a title you've already earned), `/title clear` shows no title, and stays that way: titles you earn later are listed but not shown until you pick one (only your very first title ever activates itself). The same `WhereTheCrowFlies` 1.2.0 also has a `/titles` panel — a small window that lists your earned titles as buttons (or opens with the key you've set in its config) instead of typing the title's name; it asks the server on open and refreshes after every click. An admin can do the same for anyone, online or not, with `ravenscall title <player> [<title>|clear]` — from the server console with no client mod needed, or from an admin's game client that has WhereTheCrowFlies 1.1.3+ installed. Either way the change shows up on the dashboard and export at the next poll.
 
 ---
 
@@ -432,7 +432,7 @@ Delete any `theravenscall.html` you placed in `BepInEx/config/TheRavensCall/` or
 Yes. 1.6.0 has run on a Linux dedicated server on Valheim 1.0.15 (under WSL2), including the push over HTTPS with certificate validation on.
 
 **Which Valheim version does it need?**
-Valheim 1.0. The 1.6.0 build has run on 1.0.12 (a Windows dedicated server) and 1.0.15 (a Linux one). The older 0.22x builds are not supported: on them the `ravenscall` console command fails to register at load, and the world census throws on its first run.
+Valheim 1.0. The 1.6.0 build and later have run on 1.0.15, on a Windows dedicated server and a Linux one. The older 0.22x builds are not supported: on them the `ravenscall` console command fails to register at load, and the world census throws on its first run.
 
 **Can I run it on a listen server hosted from the game?**
 It is built and tested for dedicated servers. It loads on a listen-server host, but that setup has not been tested.

@@ -1,6 +1,6 @@
 # TheRavensCall 1.7.0 + WhereTheCrowFlies 1.2.0 — Storm10 live runs, 2026-09-22 and 2026-09-23
 
-Branches `feat/title-picker-1.7.0` (TheRavensCall, PR #21) and `feat/title-picker-1.2.0` (WhereTheCrowFlies, PR #6): the title picker (`/title`, the `/titles` panel, `ravenscall title`). Storm10 = the owner's Windows dedicated server on Valheim 1.0.12; the client = the owner's Gale `testing` profile. Both builds were staged and the server started by the owner's hand; the session tooling read the logs and the local API only.
+Branches `feat/title-picker-1.7.0` (TheRavensCall, PR #21) and `feat/title-picker-1.2.0` (WhereTheCrowFlies, PR #6): the title picker (`/title`, the `/titles` panel, `ravenscall title`). Storm10 = the owner's Windows dedicated server, on Valheim 1.0.15 (network version 40) at every boot in both runs; the client = the owner's Gale `testing` profile. Both builds were staged and the server started by the owner's hand; the session tooling read the logs and the local API only.
 
 | Step | Result |
 |---|---|
