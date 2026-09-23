@@ -17,8 +17,12 @@
 ### 📝 Docs
 - The store README gained a FAQ of nineteen questions admins actually ask: what players must install, why kills read zero without the crow, the dashboard and its token, rented hosts and what pushing exposes, seasons, the census cost, the BarrkBOT files, Linux, Valheim versions, listen servers, and what to copy when moving a server.
 
+### Tested
+- Boot checks on the Storm10 Windows dedicated server (Valheim 1.0.12) on 2026-09-22, three times across the branch and the shipped bytes (`docs/TESTPLAN-storm10-1.6.1-2026-09-22.md`): the mod loads and awakens as 1.6.1, the Chronicle opens, the census runs, zero warnings, graceful stops.
+- **Not run in game:** the refusal itself. `ravenscall` is a remote console command that reaches the server only from an admin's game client with WhereTheCrowFlies, so `season start` over a running season was proven by review and reading, not by a live console. The path is one guard on the season name the server already keeps; report anything unexpected on GitHub.
+
 ### 🔧 Changed
-- `HexiumDist/plugins/TheRavensCall.dll` not rebuilt yet — refreshed at the cut.
+- `HexiumDist/plugins/TheRavensCall.dll` refreshed: a clean `dotnet build -c Release` of the 1.6.1 source (md5 `7bd20ab0eae86cfe9dc3e4d585dd6d0a`, 275,968 bytes; two clean builds of the same commit are byte-identical). The same source booted on Storm10 during review as build `104b6792…`; the two differ only in the per-commit Source Link and PE identity bytes, not in code.
 
 ---
 
