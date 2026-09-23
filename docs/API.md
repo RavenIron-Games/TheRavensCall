@@ -18,7 +18,7 @@ touches what the mod itself serves.
 | Route | Body |
 |---|---|
 | `GET /`, `/index`, `*.html` | the dashboard page, `text/html; charset=utf-8`. Disk override first: `BepInEx/config/TheRavensCall/theravenscall.html`, then the plugin folder, then the copy embedded in the DLL (`Companion.ReadEmbeddedHtml()`), then 404 only if that embedded read itself fails. A served disk copy that predates 1.3.0 (missing the `<meta name="theravenscall-api">` marker) logs one warning per server run telling the admin to delete it. |
-| `GET /api/health` | `{"status":"ok","version":"1.7.0"}` (the plugin version) |
+| `GET /api/health` | `{"status":"ok","version":"1.7.1"}` (the plugin version) |
 | `GET /api/state` | **Unchanged since 1.3.0: exactly the BarrkBOT export** (the same string written to `BepInEx/config/TheRavensCall/BarrkBOT_data1.json`), shape below. Built on the main thread every `StatsPushIntervalSeconds` (10 s) in `PollAllPlayers`, unconditionally (the file needs it either way); primed once at boot after `PlayerRegistry.LoadAll` (`PrimeStateCache`); before that prime (and if it ever throws) the body is the same envelope with `players: {}`, `online_count: 0` and an empty `generated_at`, so the shape never changes over the endpoint's lifetime. The worker thread only ever hands out the cached string. |
 | `GET /api/gamedata` | the contents of `BarrkBOT_data2.json`: `{"items":[...],"recipes":[...],"buildables":[...],"updated_at":"<ISO-8601 UTC>"}`, written once at boot by `WriteGameData` when `ObjectDB` is ready. Until that write has happened the body is the literal `{"recipes":[],"items":[],"buildables":[]}` with no `updated_at`. `recipes[]` = `{slug, recipe_key, name, category, amount, station, ingredients:[{slug,name,qty}]}`; `items[]` = `{slug, name, category}`; `buildables[]` = `{name, category, ingredients:[{slug,name,qty}]}` (one entry per piece across every `ItemDrop`'s `m_buildPieces`; no `slug` on the buildable itself, only on its ingredients). Empty arrays until written. |
 | `GET /api/pins` | `MapPinTracker.GetJson()`: always `[]` on a dedicated server (no minimap). Kept, unused by the page. |
@@ -127,6 +127,7 @@ BarrkBOT export; everything below is new and lives on its own route.
 | `events[]` | array | Newest first, at most `EventFeedCapacity` entries, `[]` when the feed is off or nothing has happened. Each element is a Chronicle line verbatim. |
 | `events[].event_type` | string | 16 types in practice: `player_join`, `player_leave`, `player_death`, `boss_kill`, `biome_discovery`, `kill_milestone`, `death_milestone`, `title_earned`, `season_start`, `season_end`, `world_event`, `lore`, `startup`, `shutdown`, `raid_start`, `raid_end`. (`gear_tier` exists in the schema but only fires from a dormant path, so it never appears on a dedicated server.) |
 | `events[].player_name` | string | `"world"` or `"SERVER"` for world-scoped rows. |
+| `events[].online_count` | int | Players in the world when the line was written: the same connected players `/api/state` counts, with sessions still open. Since 1.7.1 a `player_leave` row no longer counts the player who left, a peer still at the password prompt is never counted, and a name counts once. A player whose connection died without a disconnect still counts until ZRpc's ping timeout drops the peer, as in `/api/state`: 30 s, or 90 s for every peer on a crossplay server once a crossplay player has connected (until the server restarts). |
 | `events[].message` | string | The raw narrative message, exactly what Discord and the Chronicle get — no emoji prefix, no season prefix, no `[Day N]`, no `(N online)`; `day` and `online_count` are their own typed fields on the row instead. |
 | `events[].detail` | string | The event's detail as the Chronicle records it: the death cause, the boss prefab, the milestone count, the title, the biome key, the raid name, the `player_leave` duration text. `""` when none (`world_event`, `lore`, `startup`, `shutdown`). |
 
@@ -228,7 +229,7 @@ POST <PushUrl>/push
 Authorization: Bearer <PushToken>
 Content-Type: application/json
 
-{"v":1,"server_id":"storm10","mod_version":"1.7.0","pushed_at":"2026-09-22T17:02:11Z",
+{"v":1,"server_id":"storm10","mod_version":"1.7.1","pushed_at":"2026-09-22T17:02:11Z",
  "push_interval_seconds":60,"heartbeat_seconds":600,
  "read_token_sha256":"<hex sha256 of the server's HttpApiToken>",
  "state":"<escaped JSON string>"|null,"activity":"<…>"|null,"census":"<…>"|null}
@@ -238,7 +239,7 @@ Content-Type: application/json
 |---|---|
 | `v` | `1`. |
 | `server_id` | Config `PushServerId`. No default — the push is disabled at boot with one warning naming the fix when it is empty or not `[a-z0-9-]{1,32}`. Must equal the id registered in the receiver's `TRC_SERVERS`. |
-| `mod_version` | The plugin version, `1.7.0`. |
+| `mod_version` | The plugin version, `1.7.1`. |
 | `pushed_at` | ISO-8601 instant, this push's own clock. |
 | `push_interval_seconds`, `heartbeat_seconds` | The **effective** clamped values (below), not the raw config. |
 | `read_token_sha256` | The hex sha256 of the server's own `HttpApiToken` — the hash, never the token. The push refuses to run at all unless `HttpApiToken` is at least 24 characters. |

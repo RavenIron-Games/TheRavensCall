@@ -33,7 +33,7 @@ namespace TheRavensCall
     {
         public const string PluginGUID = "com.raveniron.theravenscall";
         public const string PluginName = "TheRavensCall";
-        public const string PluginVersion = "1.7.0";
+        public const string PluginVersion = "1.7.1";
 
         internal static ManualLogSource Log;
         internal static Plugin Instance;
@@ -223,16 +223,46 @@ namespace TheRavensCall
                 ? SeasonSystem.GetCurrentSeasonName() : "";
             if (!string.IsNullOrEmpty(season)) prefix = $"[{season}] {prefix}";
             int day = EnvMan.instance != null ? EnvMan.instance.GetDay() : 0;
-            int online = ZNet.instance != null ? ZNet.instance.GetConnectedPeers().Count : 0;
+            int online = OnlineCount();
             string dayPart = ShowDayNumber.Value && day > 0 ? $" [Day {day}]" : "";
             string countPart = ShowOnlineCount.Value && online > 0 ? $" ({online} online)" : "";
             return $"{prefix}{message}{dayPart}{countPart}";
         }
 
+        // ── The "(N online)" suffix and the Chronicle/feed row's online count
+        // (1.7.1). Through 1.7.0 both read ZNet.GetConnectedPeers().Count,
+        // which is a copy of m_peers: it still holds the leaving peer while
+        // the leave line is written (the RPC_Disconnect prefix runs before
+        // ZNet.Disconnect removes the peer, and at shutdown the peers stay
+        // listed while the SendDisconnect loop walks them), and it holds
+        // peers still in the handshake (m_uid == 0, e.g. at the password
+        // prompt). So "X has left the world" read "(1 online)" in the
+        // server log with nobody left. Now: the same connected players
+        // /api/state counts (GetConnectedPlayers: ready and named), only
+        // those whose session is still open, each name once. FireLeaveFor
+        // closes the leaver's session before it narrates, so the leaver is
+        // not counted; at a shutdown the leave lines count down N-1, N-2, …
+        // and the last has no count. Known limit: a connection that dies
+        // without a disconnect (crash, cable) fires no leave hook, so that
+        // player still counts until ZRpc's ping timeout drops the peer: 30 s
+        // from ZNet.Start, but ZRpc.m_timeout is static and ZPlayFabSocket
+        // sets it to 90 s when it accepts a crossplay connection, so on a
+        // crossplay server it is 90 s for every peer until the next restart
+        // (Storm10, 2026-09-23: dropped 08:26:07, "ZRpc timeout detected"
+        // 08:27:36). Counting names once keeps a quick rejoin inside that
+        // window from counting them twice (the rejoin gets a new uid). ───
+        internal static int OnlineCount()
+        {
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var p in GetConnectedPlayers())
+                if (Patch_PlayerJoin.HasOpenSession(p.peerUid)) names.Add(p.name);
+            return names.Count;
+        }
+
         private static Dictionary<string, string> BuildContextData(string detail)
         {
             int day = EnvMan.instance != null ? EnvMan.instance.GetDay() : 0;
-            int online = ZNet.instance != null ? ZNet.instance.GetConnectedPeers().Count : 0;
+            int online = OnlineCount();
             return new Dictionary<string, string>
             {
                 { "day",    day.ToString()    },
@@ -418,6 +448,10 @@ namespace TheRavensCall
         private static readonly HashSet<long> _fired = new HashSet<long>();
 
         internal static bool GetJoinTime(long uid, out DateTime joinTime) => JoinTimes.TryGetValue(uid, out joinTime);
+        // A session is open from the join postfix until FireLeaveFor (or the
+        // disconnect that never reached a leave hook, which also takes the
+        // peer out of ZNet's list, so Plugin.OnlineCount never sees it).
+        internal static bool HasOpenSession(long uid) => JoinTimes.ContainsKey(uid);
         internal static void ClearJoinTime(long uid) { JoinTimes.Remove(uid); _fired.Remove(uid); }
 
         private static void Postfix(ZRpc rpc)

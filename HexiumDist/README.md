@@ -7,7 +7,7 @@
 [![Companion](https://img.shields.io/badge/Client_Companion-WhereTheCrowFlies-blue.svg)]()
 [![Framework](https://img.shields.io/badge/Requires-BepInEx-red.svg)]()
 [![Publisher](https://img.shields.io/badge/RavenIron-Release-8B6F1F.svg)]()
-[![Version](https://img.shields.io/badge/Version-1.7.0-lightgrey.svg)]()
+[![Version](https://img.shields.io/badge/Version-1.7.1-lightgrey.svg)]()
 
 **RavenIron's server admin & analytics engine: aggregates player telemetry from *WhereTheCrowFlies*, chronicles realm history, and feeds live web dashboards and Discord AI bots.**
 
@@ -249,14 +249,14 @@ A full player-stats dashboard served directly by the mod's built-in HTTP server:
 
 ## ☁️ Hosted Servers (Nitrado, G-Portal)
 
-On a rented game server the admin gets the game's ports, a web panel and FTP — no shell, no extra services, no way to open the dashboard's port. So `http://localhost:2112` is unreachable from anywhere on a Nitrado or G-Portal box. Since 1.6.0 the mod can instead **push** its data out over HTTPS to a small receiver on the owner's Netlify team, which keeps the latest copy and serves the same dashboard page from a public URL. With `PushUrl` empty (the default) nothing changes — the server behaves exactly like 1.5.0, entirely local.
+On a rented game server the admin gets the game's ports, a web panel and FTP — no shell, no extra services, no way to open the dashboard's port. So `http://localhost:2112` is unreachable from anywhere on a Nitrado or G-Portal box. Since 1.6.0 the mod can instead **push** its data out over HTTPS to a small receiver hosted by RavenIron, which keeps the latest copy and serves the same dashboard page from a public URL. With `PushUrl` empty (the default) nothing changes — the server behaves exactly like 1.5.0, entirely local.
 
 > [!IMPORTANT]
 > **What hosting publishes.** A read-token holder sees everything the three pushed routes serve: every known player's stats, skills, titles and death coordinates (`/api/state`); the event feed and season standings (`/api/activity`); and the census, which lists every portal, bed and ward in the loaded world with its rounded x/z — in effect where the bases are. Until 1.6.0 all of that stayed on a machine the admin controls; hosting moves the latest copy to a third party's storage behind one shared token. **Leaving `PushUrl` empty keeps a server entirely local, exactly as before.**
 
 ### Setup
 
-The receiver described here is the owner's own and isn't open to other servers in 1.6.0; if you want a hosted dashboard for your own server, deploy your own private copy of `hosting/netlify/` from the [GitHub repo](https://github.com/RavenIron-Games/TheRavensCall) — steps 3 and 4 below are then done in your own Netlify account against your own domain.
+RavenIron's own receiver isn't open to other servers; if you want a hosted dashboard for your own server, deploy your own private copy of `hosting/netlify/` from the [GitHub repo](https://github.com/RavenIron-Games/TheRavensCall) — steps 3 and 4 below are then done in your own Netlify account against your own domain.
 
 1. **Generate both tokens** — `openssl rand -hex 24`, run twice: once for `HttpApiToken` (if you don't already have one at least 24 characters long) and once for `PushToken`.
 2. **Set `HttpApiToken` (24+ characters), `PushUrl`, `PushToken` and `PushServerId`** under `[Companion]`/`[Push]` in `com.raveniron.theravenscall.cfg`.
@@ -279,7 +279,7 @@ A rented server's admin has no shell and can't reach `/api/health` — the BepIn
 
 ### Where this has actually run
 
-As of this release the 1.6.0 push has run against a local receiver (`netlify dev`) from a Windows test server and from a Linux dedicated server (Valheim 1.0.15, under WSL2), including the change gate, heartbeat, backoff and recovery, the four named refusals and the hosted page's waiting and stale states (`docs/TESTPLAN-local-1.6.0-2026-09-22.md`). The same Linux server then pushed over https, with certificate validation, to the receiver deployed on the owner's Netlify team (§8 step 9 of the scope, the release gate). Not yet run on a rented host. Since 2026-09-22 a real dedicated server (Windows, on another host, over the internet) pushes to the hosted receiver at `https://trc.ravenirongames.com`: state, feed and a census of about 1.1 million objects (370 ms), on the default 60 s interval and 10 min heartbeat.
+As of this release the 1.6.0 push has run against a local receiver (`netlify dev`) from a Windows test server and from a Linux dedicated server (Valheim 1.0.15, under WSL2), including the change gate, heartbeat, backoff and recovery, the four named refusals and the hosted page's waiting and stale states (`docs/TESTPLAN-local-1.6.0-2026-09-22.md`). The same Linux server then pushed over https, with certificate validation, to the RavenIron receiver (§8 step 9 of the scope, the release gate). Not yet run on a rented host. Since 2026-09-22 a real dedicated server (Windows, on another host, over the internet) pushes to the hosted receiver at `https://trc.ravenirongames.com`: state, feed and a census of about 1.1 million objects (370 ms), on the default 60 s interval and 10 min heartbeat.
 
 ---
 
@@ -331,7 +331,7 @@ Configuration is located at `BepInEx/config/com.raveniron.theravenscall.cfg`:
 | **Combat** | `LogCombatReports` | `false` | Enables verbose console logging for incoming combat reports. |
 | **Events** | `EnablePlayerDeath` ... `EnableTitleEarned` | `true` | Independently toggles narration/Chronicle for each event type. |
 | **Events** | `EnableRaid` | `true` | Records raid start and end in the Chronicle and the dashboard feed (`raid_start`/`raid_end`). Not posted to Discord. The raid banner and `raid_active` in the API work either way — this only gates the narration. |
-| **Format** | `ShowDayNumber` / `ShowOnlineCount` | `true` | Appends `[Day N]` and `(N online)` to announcements. |
+| **Format** | `ShowDayNumber` / `ShowOnlineCount` | `true` | Appends `[Day N]` and `(N online)` to each event's line in the server log (Discord and the Chronicle get the plain message; the Chronicle and `/api/activity` rows carry the count as `online_count`). The count is the connected players: since 1.7.1 a leave line no longer counts the player who just left, a player whose game crashed still counts until the server drops the dead connection (up to 30 s, or up to 90 s on a crossplay server), and the part is left off when nobody is online. |
 | **Format** | `MessagePrefix` | `⚔ ` | Custom prefix added to all broadcast messages. |
 | **Log** | `EnableChronicleLog` | `true` | Writes daily JSONL Chronicle logs. |
 | **Bosses** | `BossCreditRadius` | `100` | Proximity radius (meters) for crediting boss assists. |
