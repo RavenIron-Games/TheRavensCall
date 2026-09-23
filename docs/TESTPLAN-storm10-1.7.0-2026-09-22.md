@@ -21,7 +21,7 @@ Branches `feat/title-picker-1.7.0` (TheRavensCall, PR #21) and `feat/title-picke
 |---|---|
 | Boot | 06:33: `Loading [TheRavensCall 1.7.0]`, awakens, `PlayerRegistry loaded 3 player record(s).`, Chronicle opened for the day, `World census: 262523 objects in 33 ms.`, join code registered; `/api/state` served TestNomad with 16 `titles_earned` and `active_title` Stag Breaker. Client: crow 1.2.0 loaded. |
 | Long list + scroll | **PASS.** TestNomad opened the panel and picked `Ghost of the Meadows` (the 16th and last entry, only reachable by scrolling), then `Boss Hunter` (the 15th): `TestNomad chose the title 'Ghost of the Meadows'` and `… 'Boss Hunter'` in the server log, in that order. |
-| Esc | **PASS.** Client log `title panel closed: escape`; the owner reported no pause menu opening on that press. |
+| Esc | **PASS** for the close itself: client log `title panel closed: escape`. Whether the pause menu also opened on that press was not reported either way; the one-frame gate grace is what is meant to prevent it. |
 | Title in narration | **PASS.** A fall death right after was narrated as `TestNomad the Boss Hunter met their end at the hands of falling.` — the picked title is the display name from then on. The one warning of the run, `death report dropped — budget exceeded`, is the known twin drop of the crow's V1+V2 death pair (since 1.2.4), not a title-picker line. |
 | Stop | 06:38:26 graceful (`OnApplicationQuit`, `Shutting down`, `ZNet Shutdown`, `Session summary written to Chronicle.`), closed by the owner; the saved record reads `active_title` Boss Hunter. |
 | **Still not run** | The admin `ravenscall title <player>`; the 5-second no-answer hint; a listen host. |
