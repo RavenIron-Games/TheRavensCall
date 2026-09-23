@@ -12,6 +12,13 @@
     <Deterministic>true</Deterministic>
     <Optimize>true</Optimize>
     <DebugType>portable</DebugType>
+    <!-- Keep the build machine's folders out of the shipped DLL. Without
+         this the PE debug directory carries the absolute PDB path
+         (C:\Users\<name>\...\obj\Release\TheRavensCall.pdb), which exposes
+         the Windows user name and makes the md5 depend on where the repo
+         is checked out. The SDK maps each source root to /_/, /_1/, … in
+         the DLL, the PDB and the PDB's Source Link table alike. -->
+    <DeterministicSourcePaths>true</DeterministicSourcePaths>
 
     <!-- *** CRITICAL: produce ONLY  *** -->
     <AssemblyName>TheRavensCall</AssemblyName>
@@ -31,6 +38,18 @@
          time — matches BlightedHeart's csproj, needed because this code
          patches several non-public ZNet/Terminal methods by nameof(). -->
     <PackageReference Include="BepInEx.AssemblyPublicizer.MSBuild" Version="0.4.1" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Always name the project folder as a source root for the mapping
+         above. In a git checkout git adds the same root with its Source
+         Link data and the two merge into one; without it (a source zip, a
+         broken .git, git queries switched off) the folder would stay
+         unmapped and its absolute path would go back into the DLL with no
+         warning. This csproj sits at the repo root; a project in a
+         subfolder should add the repo root instead (e.g. from a
+         Directory.Build.props there). -->
+    <SourceRoot Include="$(MSBuildThisFileDirectory)" />
   </ItemGroup>
 
   <ItemGroup>
