@@ -7,7 +7,7 @@
 [![Companion](https://img.shields.io/badge/Client_Companion-WhereTheCrowFlies-blue.svg)]()
 [![Framework](https://img.shields.io/badge/Requires-BepInEx-red.svg)]()
 [![Publisher](https://img.shields.io/badge/RavenIron-Release-8B6F1F.svg)]()
-[![Version](https://img.shields.io/badge/Version-1.7.0-lightgrey.svg)]()
+[![Version](https://img.shields.io/badge/Version-1.7.1-lightgrey.svg)]()
 
 **RavenIron's server admin & analytics engine: aggregates player telemetry from *WhereTheCrowFlies*, chronicles realm history, and feeds live web dashboards and Discord AI bots.**
 
@@ -331,7 +331,7 @@ Configuration is located at `BepInEx/config/com.raveniron.theravenscall.cfg`:
 | **Combat** | `LogCombatReports` | `false` | Enables verbose console logging for incoming combat reports. |
 | **Events** | `EnablePlayerDeath` ... `EnableTitleEarned` | `true` | Independently toggles narration/Chronicle for each event type. |
 | **Events** | `EnableRaid` | `true` | Records raid start and end in the Chronicle and the dashboard feed (`raid_start`/`raid_end`). Not posted to Discord. The raid banner and `raid_active` in the API work either way — this only gates the narration. |
-| **Format** | `ShowDayNumber` / `ShowOnlineCount` | `true` | Appends `[Day N]` and `(N online)` to announcements. |
+| **Format** | `ShowDayNumber` / `ShowOnlineCount` | `true` | Appends `[Day N]` and `(N online)` to announcements. The count is the players in the world at that moment: a leave line no longer counts the player who just left (since 1.7.1), and the part is left off when nobody is online. |
 | **Format** | `MessagePrefix` | `⚔ ` | Custom prefix added to all broadcast messages. |
 | **Log** | `EnableChronicleLog` | `true` | Writes daily JSONL Chronicle logs. |
 | **Bosses** | `BossCreditRadius` | `100` | Proximity radius (meters) for crediting boss assists. |

@@ -7,6 +7,19 @@
 
 ---
 
+## 🟢 [1.7.1] — (name TBD)
+
+*One wrong number in the announcements, fixed. No config, API shape or dashboard changes.*
+
+### 🩹 Fixed
+- **A leave line counted the player who had just left.** "Nomad has left the world (played 6m). [Day 19] (1 online)" appeared with nobody left on the server, because the count was taken from the engine's peer list, which still holds the leaving player while the line is written, and which also holds anyone still connecting (a player at the password prompt counted as online). The `(N online)` suffix and the `online_count` of the Chronicle and `/api/activity` rows now count the players `/api/state` counts, with their session still open: the leaver is out of the count, a half-connected peer never counts, the suffix is left off when the last player leaves (as `ShowOnlineCount` has always done at zero), and at a server shutdown each leave line counts one fewer.
+
+### Tested
+- `dotnet build -c Release`, 0 warnings, 0 errors.
+- **Not run yet:** a live join and leave on Storm10; the owner's before the cut.
+
+---
+
 ## 🟢 [1.7.0] — The Raven Gives Names
 
 *The store README has claimed since early on that "players can unlock many titles and equip their preferred epithet." Until now that wasn't true — `PlayerRecord.ActiveTitle` was set once, the moment a player's first title was earned, and never changed again. 1.7.0 lets a player pick, from the titles they've actually earned, which one the server uses when it names them — in its Discord and Chronicle narration and on the dashboard and export. Nothing changes on the in-game nameplate.*

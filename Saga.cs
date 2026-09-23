@@ -33,7 +33,7 @@ namespace TheRavensCall
     {
         public const string PluginGUID = "com.raveniron.theravenscall";
         public const string PluginName = "TheRavensCall";
-        public const string PluginVersion = "1.7.0";
+        public const string PluginVersion = "1.7.1";
 
         internal static ManualLogSource Log;
         internal static Plugin Instance;
@@ -223,16 +223,37 @@ namespace TheRavensCall
                 ? SeasonSystem.GetCurrentSeasonName() : "";
             if (!string.IsNullOrEmpty(season)) prefix = $"[{season}] {prefix}";
             int day = EnvMan.instance != null ? EnvMan.instance.GetDay() : 0;
-            int online = ZNet.instance != null ? ZNet.instance.GetConnectedPeers().Count : 0;
+            int online = OnlineCount();
             string dayPart = ShowDayNumber.Value && day > 0 ? $" [Day {day}]" : "";
             string countPart = ShowOnlineCount.Value && online > 0 ? $" ({online} online)" : "";
             return $"{prefix}{message}{dayPart}{countPart}";
         }
 
+        // ── The "(N online)" suffix and the Chronicle/feed row's online count
+        // (1.7.1). Through 1.7.0 both read ZNet.GetConnectedPeers().Count,
+        // which is a copy of m_peers: it still holds the leaving peer while
+        // the leave line is written (both leave hooks are prefixes and
+        // ZNet.Disconnect removes the peer only afterwards), and it holds
+        // peers still in the handshake (m_uid == 0, e.g. at the password
+        // prompt). So "X has left the world" read "(1 online)" with nobody
+        // left. Now: the same connected players /api/state counts
+        // (GetConnectedPlayers: ready and named), and only those whose
+        // session is still open. FireLeaveFor closes the leaver's session
+        // before it narrates, so the leaver is not counted; at a server
+        // shutdown, where SendDisconnect walks every peer in turn, each
+        // leave line counts one fewer. ─────────────────────────────────────
+        internal static int OnlineCount()
+        {
+            int n = 0;
+            foreach (var p in GetConnectedPlayers())
+                if (Patch_PlayerJoin.HasOpenSession(p.peerUid)) n++;
+            return n;
+        }
+
         private static Dictionary<string, string> BuildContextData(string detail)
         {
             int day = EnvMan.instance != null ? EnvMan.instance.GetDay() : 0;
-            int online = ZNet.instance != null ? ZNet.instance.GetConnectedPeers().Count : 0;
+            int online = OnlineCount();
             return new Dictionary<string, string>
             {
                 { "day",    day.ToString()    },
@@ -418,6 +439,10 @@ namespace TheRavensCall
         private static readonly HashSet<long> _fired = new HashSet<long>();
 
         internal static bool GetJoinTime(long uid, out DateTime joinTime) => JoinTimes.TryGetValue(uid, out joinTime);
+        // A session is open from the join postfix until FireLeaveFor (or the
+        // disconnect that never reached a leave hook, which also takes the
+        // peer out of ZNet's list, so Plugin.OnlineCount never sees it).
+        internal static bool HasOpenSession(long uid) => JoinTimes.ContainsKey(uid);
         internal static void ClearJoinTime(long uid) { JoinTimes.Remove(uid); _fired.Remove(uid); }
 
         private static void Postfix(ZRpc rpc)
