@@ -302,6 +302,10 @@ namespace TheRavensCall
             foreach (var peer in ZNet.instance.GetPeers())
             {
                 if (peer == null || !peer.IsReady() || string.IsNullOrEmpty(peer.m_playerName)) continue;
+                // 1.8.0: a name the files cannot hold as sent is never a
+                // connected player here, so it can never be credited, named
+                // in a report or given a record (see PlatformBinding).
+                if (!PlatformBinding.IsStorableName(peer.m_playerName)) continue;
                 var zdo = ZDOMan.instance?.GetZDO(peer.m_characterID);
                 Vector3 pos = zdo != null ? zdo.GetPosition() : peer.m_refPos;
                 long playerID = zdo != null ? zdo.GetLong(ZDOVars.s_playerID, 0L) : 0L;
@@ -340,7 +344,7 @@ namespace TheRavensCall
         {
             if (reporter == null || string.IsNullOrEmpty(reportedName) || string.IsNullOrEmpty(reporter.m_playerName)) return false;
             return string.Equals(reporter.m_playerName, reportedName, StringComparison.OrdinalIgnoreCase)
-                && PlatformBinding.Matches(reporter);
+                && PlatformBinding.Check(reporter);
         }
 
         public static HitData GetLastHit(Character c)
@@ -484,10 +488,18 @@ namespace TheRavensCall
                 JoinTimes[peer.m_uid] = DateTime.UtcNow;
 
                 string name = string.IsNullOrEmpty(peer.m_playerName) ? "A Viking" : peer.m_playerName;
-                if (!PlatformBinding.CheckOrBind(peer))
+                if (!PlatformBinding.Check(peer))
                 {
                     _untrusted.Add(peer.m_uid);
-                    Plugin.Log.LogWarning($"[TheRavensCall] {name} joined from a different account than the one this name is bound to; its reports and title changes are refused and it does not update {name}'s record (ravenscall unbind {name} releases the name).");
+                    if (!PlatformBinding.IsStorableName(name))
+                    {
+                        // A control character or a broken surrogate: the
+                        // files cannot hold the name as sent (see
+                        // PlatformBinding), so it gets no record and no line.
+                        Plugin.Log.LogWarning($"[TheRavensCall] A player joined with a name containing control or invalid characters ({Companion.Esc(name)}); it is not tracked and its reports are refused.");
+                        return;
+                    }
+                    Plugin.Log.LogWarning($"[TheRavensCall] {name} joined from a different account than the one this name is bound to, or with no usable account id; its self-reports and title changes are refused and it does not update {name}'s record (ravenscall unbind {name} releases the name).");
                     if (Plugin.EnablePlayerJoin.Value)
                         Plugin.Narrate($"{name} has entered the world.", "player_join", name);
                     return;
@@ -573,7 +585,7 @@ namespace TheRavensCall
             // the leave line only; the record belongs to someone else.
             if (untrusted)
             {
-                if (Plugin.EnablePlayerLeave.Value)
+                if (Plugin.EnablePlayerLeave.Value && PlatformBinding.IsStorableName(name))
                     Plugin.Narrate($"{name} has left the world{duration}.", "player_leave", name, duration.Trim());
                 return;
             }

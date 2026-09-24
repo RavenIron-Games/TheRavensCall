@@ -94,46 +94,157 @@ namespace TheRavensCall
         public static string RaidType = "";
     }
 
-    // ── Name ↔ platform account binding (1.8.0). A record is keyed by the
-    // character name the client sends in PeerInfo, and the server does not
-    // stop two accounts from using the same name. So two players both called
-    // "Bjorn" overwrote each other's snapshots, and anyone could make a
-    // character with a leader's name and send snapshots or /title changes
-    // as them (review 2026-09-24). The first account seen under a name (its
-    // platform id, ZNetPeer.m_socket.GetHostName(): a Steam id, or a
-    // crossplay id such as "Steam_…"/"Xbox_…") is remembered in
-    // player_platforms.json next to the players folder; a later peer with
+    // ── Name ↔ account binding (1.8.0). A record is keyed by the character
+    // name the client sends in PeerInfo, and the server does not stop two
+    // accounts from using the same name. So two players both called "Bjorn"
+    // overwrote each other's snapshots, and anyone could make a character
+    // with a leader's name and send snapshots or /title changes as them
+    // (review 2026-09-24). The first account seen under a name is remembered
+    // in player_platforms.json next to the players folder; a later peer with
     // that name on another account is refused for self-reports and title
-    // changes, and its join and leave never touch the record. Kept out of
-    // the player files on purpose: those are the BarrkBOT export's shape,
-    // and platform ids are not for publishing. An admin can release a name
-    // with `ravenscall unbind <player>` (the next account to join takes it).
-    // A peer with no usable platform id (an IP-address socket) is not
-    // checked, as before. ───────────────────────────────────────────────
+    // changes, and its join, leave and poll never touch the record. Kill
+    // reports that name a player stay open to any reporter, as before (the
+    // creature's owner reports a kill). Kept out of the player files on
+    // purpose: those are the BarrkBOT export's shape, and account ids are
+    // not for publishing. An admin can release a name with
+    // `ravenscall unbind <player>` (the next account to join takes it).
+    //
+    // Which id identifies an account (1.0.15 decompile):
+    // • Steam-only server (ZSteamSocket): GetHostName() is the SteamID64 of
+    //   the Steam connection, and RPC_PeerInfo checks the Steam session
+    //   ticket for it. Verified; stored as "Steam_<id>".
+    // • Crossplay server (ZPlayFabSocket, every peer, Steam players too):
+    //   GetHostName() is the platform id the client itself sends in the
+    //   socket's first message (InternalReceive), and nothing checks it:
+    //   an unparsable one becomes "" and PlayFabManager.
+    //   CheckIfUserAuthenticated is a stub that always answers true. What
+    //   the client does not choose is m_remotePlayerId, the PlayFab entity
+    //   id of the PlayFab Party player the listen socket was created for
+    //   (remotePlayer.EntityKey.Id); the game signs in to PlayFab with its
+    //   platform's ticket (PlayFabAuthWithSteam for Steam), and PlayFab
+    //   Party, not the game, vouches for that id. So on crossplay the name
+    //   is bound to that PlayFab id ("pf"). The client-sent platform id is
+    //   kept only as a claim, normalized, to carry a binding across a
+    //   crossplay switch.
+    // • Switching crossplay on or off: "Steam_<id>" (crossplay) and a bare
+    //   "<id>" (Steam-only) are the same account. A name bound on a
+    //   Steam-only server takes its PlayFab id from the first crossplay join
+    //   whose claimed platform id is the bound Steam id; that one join is
+    //   the step nothing can verify (a Steam id is public), after which the
+    //   PlayFab id holds. A name first bound on crossplay must match its
+    //   claimed platform id on a Steam-only server, or takes the verified
+    //   Steam id there if it claimed none.
+    // • A crossplay or Steam peer without a usable id is refused, not waved
+    //   through (a modified client can send an empty or junk platform id).
+    //   Only a socket that has no platform id at all (ZSocket2, an IP
+    //   address) is not checked, as before.
+    // • A name with a control character or a broken surrogate is refused
+    //   everywhere (Plugin.GetConnectedPlayers, IsSelfReport, the join, and
+    //   here): the JSON writer drops those characters, so "Nomad\u0001"
+    //   would be saved as "Nomad" and could take over the real row after a
+    //   restart. ──────────────────────────────────────────────────────────
     public static class PlatformBinding
     {
-        private static readonly Dictionary<string, string> _ids =
-            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private class Binding { public string Platform; public string PlayFab; }
+
+        private static readonly Dictionary<string, Binding> _b =
+            new Dictionary<string, Binding>(StringComparer.OrdinalIgnoreCase);
 
         private static string FilePath =>
             Path.Combine(BepInEx.Paths.ConfigPath, "TheRavensCall", "player_platforms.json");
 
+        // False for a name the files cannot hold losslessly: any character
+        // below 0x20 or DEL (Companion.Esc drops them, and the reader turns
+        // an escaped \n into 'n'), or an unpaired surrogate (UTF-8 writes
+        // it as U+FFFD).
+        public static bool IsStorableName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+            for (int i = 0; i < name.Length; i++)
+            {
+                char c = name[i];
+                if (c < 0x20 || c == 0x7F) return false;
+                if (char.IsHighSurrogate(c))
+                {
+                    if (i + 1 >= name.Length || !char.IsLowSurrogate(name[i + 1])) return false;
+                    i++;
+                }
+                else if (char.IsLowSurrogate(c)) return false;
+            }
+            return true;
+        }
+
+        // "Steam_<digits>" and a bare "<digits>" (ZSteamSocket's SteamID64)
+        // are one account; other platform ids ("Xbox_…") are kept as they
+        // are. Anything else (empty, "None", junk) is no id.
+        internal static string NormalizePlatformId(string h)
+        {
+            if (string.IsNullOrEmpty(h)) return null;
+            h = h.Trim();
+            if (h.Length == 0 || h == "None") return null;
+            if (h.All(char.IsDigit)) return h.Length >= 5 ? "Steam_" + h : null;
+            int us = h.IndexOf('_');
+            if (us <= 0 || us == h.Length - 1) return null;
+            string plat = h.Substring(0, us), rest = h.Substring(us + 1);
+            if (!plat.All(char.IsLetter) || !rest.All(ch => char.IsLetterOrDigit(ch) || ch == '-')) return null;
+            if (string.Equals(plat, "Steam", StringComparison.OrdinalIgnoreCase))
+                return rest.All(char.IsDigit) ? "Steam_" + rest : null;
+            return plat + "_" + rest;
+        }
+
         public static void Load()
         {
-            _ids.Clear();
+            _b.Clear();
+            if (TryLoadFrom(FilePath, out string why)) return;
+            if (why == null) return; // no file yet
+            // A broken file must not be overwritten by the next join's Save
+            // and take every binding with it: move it aside, say so loudly,
+            // and fall back to the copy the last good Save kept.
+            _b.Clear();
+            try { File.Copy(FilePath, FilePath + ".corrupt", true); File.Delete(FilePath); } catch { }
+            Plugin.Log.LogError($"[TheRavensCall] player_platforms.json is unreadable ({why}); moved to player_platforms.json.corrupt.");
+            string bak = FilePath + ".bak";
+            if (File.Exists(bak) && TryLoadFrom(bak, out _))
+            {
+                Plugin.Log.LogError($"[TheRavensCall] Name bindings restored from player_platforms.json.bak ({_b.Count} name(s)); any binding made after that copy is missing, see the .corrupt file.");
+                Save();
+            }
+            else
+            {
+                _b.Clear();
+                Plugin.Log.LogError("[TheRavensCall] No usable player_platforms.json.bak: every name is unbound until its player joins again. Restore the bindings from player_platforms.json.corrupt by hand (server stopped) if they matter.");
+            }
+        }
+
+        // why: null when the file does not exist, else why it failed.
+        private static bool TryLoadFrom(string path, out string why)
+        {
+            why = null;
             try
             {
-                if (!File.Exists(FilePath)) return;
-                string json = File.ReadAllText(FilePath, Encoding.UTF8);
+                if (!File.Exists(path)) return false;
+                string json = File.ReadAllText(path, Encoding.UTF8);
+                string t = json.Trim();
+                if (!t.StartsWith("{") || !t.EndsWith("}") || t.IndexOf("\"bindings\":[", StringComparison.Ordinal) < 0)
+                { why = "not a bindings file, or truncated"; return false; }
+                int bad = 0;
                 foreach (string row in Companion.JsonGetArray(json, "bindings"))
                 {
-                    string id = Companion.JsonGetString(row, "id");
                     string name = Companion.JsonGetString(row, "name");
-                    if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(name)) _ids[name] = id;
+                    string plat = NormalizePlatformId(Companion.JsonGetString(row, "id"));
+                    string pf = Companion.JsonGetString(row, "pf");
+                    if (string.IsNullOrEmpty(pf)) pf = null;
+                    if (!IsStorableName(name) || (plat == null && pf == null)) { bad++; continue; }
+                    // Two rows for one name: keep the first, never let a
+                    // later row silently win.
+                    if (_b.ContainsKey(name)) { bad++; continue; }
+                    _b[name] = new Binding { Platform = plat, PlayFab = pf };
                 }
-                Plugin.Log.LogInfo($"[TheRavensCall] PlatformBinding loaded {_ids.Count} name binding(s).");
+                if (bad > 0) Plugin.Log.LogWarning($"[TheRavensCall] {Path.GetFileName(path)}: skipped {bad} malformed or duplicate row(s).");
+                Plugin.Log.LogInfo($"[TheRavensCall] PlatformBinding loaded {_b.Count} name binding(s) from {Path.GetFileName(path)}.");
+                return true;
             }
-            catch (Exception ex) { Plugin.Log.LogWarning("[TheRavensCall] player_platforms.json load failed: " + ex.Message); }
+            catch (Exception ex) { why = ex.Message; return false; }
         }
 
         private static void Save()
@@ -141,54 +252,75 @@ namespace TheRavensCall
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(FilePath));
-                string rows = string.Join(",", _ids.OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
-                    .Select(kv => "{\"id\":\"" + Companion.Esc(kv.Value) + "\",\"name\":\"" + Companion.Esc(kv.Key) + "\"}"));
+                // Keep the last good file as .bak before replacing it (Load
+                // falls back to it if the main file is ever unreadable).
+                if (File.Exists(FilePath)) { try { File.Copy(FilePath, FilePath + ".bak", true); } catch { } }
+                string rows = string.Join(",", _b.OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
+                    .Select(kv => "{\"id\":\"" + Companion.Esc(kv.Value.Platform ?? "") + "\",\"pf\":\"" + Companion.Esc(kv.Value.PlayFab ?? "") +
+                                  "\",\"name\":\"" + Companion.Esc(kv.Key) + "\"}"));
                 PlayerRegistry.AtomicWrite(FilePath, "{\"bindings\":[" + rows + "]}");
             }
             catch (Exception ex) { Plugin.Log.LogWarning("[TheRavensCall] player_platforms.json write failed: " + ex.Message); }
         }
 
-        // The peer's platform id, or null when it has none worth binding to.
-        private static string HostOf(ZNetPeer peer)
-        {
-            try
-            {
-                string h = peer?.m_socket?.GetHostName();
-                if (string.IsNullOrEmpty(h) || h == "None") return null;
-                // ZSocket2 answers with the remote IP address, which changes;
-                // Steam and crossplay ids contain neither '.' nor ':'.
-                if ((h.IndexOf('.') >= 0 || h.IndexOf(':') >= 0) && System.Net.IPAddress.TryParse(h, out _)) return null;
-                return h;
-            }
-            catch { return null; }
-        }
-
-        // Join: binds a name seen for the first time; false when the name is
-        // already bound to another account.
-        public static bool CheckOrBind(ZNetPeer peer)
+        // Join, reports and title changes all ask this. True when the peer
+        // may act as its name: binds a name seen for the first time, and
+        // fills in the other id of a known name when a crossplay switch
+        // brings it (see the class comment). Never true for an unstorable
+        // name or a Steam/crossplay peer without a usable id.
+        public static bool Check(ZNetPeer peer)
         {
             string name = peer?.m_playerName;
-            string host = HostOf(peer);
-            if (string.IsNullOrEmpty(name) || host == null) return true;
-            if (_ids.TryGetValue(name, out string bound)) return string.Equals(bound, host, StringComparison.Ordinal);
-            _ids[name] = host;
+            if (!IsStorableName(name)) return false;
+            string plat, pf = null;
+            bool crossplay;
+            try
+            {
+                if (peer.m_socket is ZPlayFabSocket pfs)
+                {
+                    crossplay = true;
+                    pf = string.IsNullOrEmpty(pfs.m_remotePlayerId) ? null : pfs.m_remotePlayerId;
+                    plat = NormalizePlatformId(pfs.GetHostName());
+                    if (pf == null) return false;
+                }
+                else if (peer.m_socket is ZSteamSocket)
+                {
+                    crossplay = false;
+                    plat = NormalizePlatformId(peer.m_socket.GetHostName());
+                    if (plat == null) return false;
+                }
+                else return true; // no platform id at all (ZSocket2): not checked
+            }
+            catch { return false; }
+
+            if (!_b.TryGetValue(name, out var b))
+            {
+                _b[name] = new Binding { Platform = plat, PlayFab = pf };
+                Save();
+                return true;
+            }
+            if (crossplay)
+            {
+                if (b.PlayFab != null) return string.Equals(b.PlayFab, pf, StringComparison.Ordinal);
+                // Bound on a Steam-only server: this join's claimed platform
+                // id must be the bound one; then the PlayFab id is kept.
+                if (plat == null || !string.Equals(b.Platform, plat, StringComparison.Ordinal)) return false;
+                b.PlayFab = pf;
+                Save();
+                Plugin.Log.LogInfo($"[TheRavensCall] {name}: PlayFab account recorded for crossplay.");
+                return true;
+            }
+            if (b.Platform != null) return string.Equals(b.Platform, plat, StringComparison.Ordinal);
+            // Bound on crossplay with no platform id claimed: the verified
+            // Steam id of this Steam-only join takes it.
+            b.Platform = plat;
             Save();
             return true;
         }
 
-        // Reports and title changes: false only for a peer whose name is
-        // bound to another account.
-        public static bool Matches(ZNetPeer peer)
-        {
-            string name = peer?.m_playerName;
-            string host = HostOf(peer);
-            if (string.IsNullOrEmpty(name) || host == null) return true;
-            return !_ids.TryGetValue(name, out string bound) || string.Equals(bound, host, StringComparison.Ordinal);
-        }
-
         public static bool Unbind(string name)
         {
-            if (string.IsNullOrEmpty(name) || !_ids.Remove(name)) return false;
+            if (string.IsNullOrEmpty(name) || !_b.Remove(name)) return false;
             Save();
             return true;
         }
@@ -241,6 +373,14 @@ namespace TheRavensCall
                     string name = null;
                     try { name = Companion.JsonGetString(File.ReadAllText(file, Encoding.UTF8), "name"); } catch { }
                     if (string.IsNullOrEmpty(name)) name = fileKey;
+                    // Two files never load into one record (1.8.0): the first
+                    // one read keeps the name and a second is left on disk
+                    // untouched, with a warning.
+                    if (_records.ContainsKey(name) || !PlatformBinding.IsStorableName(name))
+                    {
+                        Plugin.Log.LogWarning($"[TheRavensCall] PlayerRegistry: {Path.GetFileName(file)} was not loaded — its name is already taken by another file or cannot be stored as written.");
+                        continue;
+                    }
                     // A file that no longer sits where Save() will write it (a
                     // reserved device name, now prefixed) is migrated once, so
                     // two files can never claim one key. If the new-style file
@@ -307,14 +447,30 @@ namespace TheRavensCall
             "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
         };
 
+        // One file per name, never two names per file (1.8.0). This used to
+        // replace every character a file name cannot hold with '_', so "Od:in"
+        // and "Od_in" wrote the same file and overwrote each other, and
+        // "_CON" collided with the prefixed "CON". Now such a character, '%'
+        // itself, and trailing dots and spaces (Windows drops those) become
+        // %XX, and a reserved device name gets a bare '%' in front, which no
+        // escape can produce. Files written under the old scheme are moved
+        // once by LoadAll, which reads each file's own "name" field.
         private static string SanitizeForFile(string name)
         {
             if (string.IsNullOrEmpty(name)) return "unknown";
             var sb = new StringBuilder();
             char[] invalid = Path.GetInvalidFileNameChars();
-            foreach (char c in name) sb.Append(Array.IndexOf(invalid, c) >= 0 ? '_' : c);
+            int keep = name.Length;
+            while (keep > 0 && (name[keep - 1] == '.' || name[keep - 1] == ' ')) keep--;
+            for (int i = 0; i < name.Length; i++)
+            {
+                char c = name[i];
+                if (c == '%' || Array.IndexOf(invalid, c) >= 0 || i >= keep)
+                    sb.Append('%').Append(((int)c).ToString("X2"));
+                else sb.Append(c);
+            }
             string s = sb.ToString();
-            return ReservedFileNames.Contains(s) ? "_" + s : s;
+            return ReservedFileNames.Contains(s) ? "%" + s : s;
         }
 
         // Temp file + rename, so a reader (BarrkBOT reads these off disk) can
