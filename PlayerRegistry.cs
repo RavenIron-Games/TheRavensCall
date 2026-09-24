@@ -263,6 +263,38 @@ namespace TheRavensCall
             catch (Exception ex) { Plugin.Log.LogWarning("[TheRavensCall] PlayerRegistry.LoadAll error: " + ex.Message); }
         }
 
+        // ── Sessions left open by an unclean stop (1.8.0). The leave hooks and
+        // Plugin.OnDestroy only run on a clean shutdown; after a killed
+        // process, a closed console window or a crash, every record that was
+        // online still carries its session_start on disk, and that playtime
+        // used to be dropped (review 2026-09-24). Called once at boot, after
+        // LoadAll: credits last_seen − session_start (not "now", so the
+        // server's downtime is not counted) and closes the session. The poll
+        // tick persists last_seen about once a minute for this. ─────────────
+        public static void CloseSessionsLeftOpen()
+        {
+            int closed = 0; long credited = 0;
+            foreach (var rec in _records.Values)
+            {
+                if (string.IsNullOrEmpty(rec.SessionStart)) continue;
+                var styles = System.Globalization.DateTimeStyles.RoundtripKind;
+                if (DateTime.TryParse(rec.SessionStart, null, styles, out DateTime start) &&
+                    DateTime.TryParse(rec.LastSeen, null, styles, out DateTime last))
+                {
+                    long secs = Math.Max(0, (long)(last.ToUniversalTime() - start.ToUniversalTime()).TotalSeconds);
+                    rec.PlaytimeSecondsLifetime += secs;
+                    credited += secs;
+                }
+                rec.SessionStart = null;
+                rec.Online = false;
+                rec.Dirty = true;
+                Save(rec);
+                closed++;
+            }
+            if (closed > 0)
+                Plugin.Log.LogInfo($"[TheRavensCall] Closed {closed} session(s) left open by the last stop, crediting {credited} s of playtime up to each player's last-seen time.");
+        }
+
         private static string SanitizedFileName(string playerName) =>
             Path.Combine(PlayersDir, SanitizeForFile(playerName) + ".json");
 
@@ -347,6 +379,9 @@ namespace TheRavensCall
                     Name = playerName,
                     FirstSeen = Companion.JsonGetString(json, "first_seen") ?? DateTime.UtcNow.ToString("o"),
                     LastSeen = Companion.JsonGetString(json, "last_seen") ?? "",
+                    // Read back since 1.8.0 so a session left open by an
+                    // unclean stop can be credited (CloseSessionsLeftOpen).
+                    SessionStart = Companion.JsonGetString(json, "session_start"),
                     PlaytimeSecondsLifetime = Companion.JsonGetLong(json, "playtime_seconds_lifetime"),
                     Kills = Companion.JsonGetInt(json, "kills_narrative"),
                     Deaths = Companion.JsonGetInt(json, "deaths_narrative"),

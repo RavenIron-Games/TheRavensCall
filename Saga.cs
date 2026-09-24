@@ -407,6 +407,7 @@ namespace TheRavensCall
                 EventFeed.Init();
                 WorldCensus.Init();
                 PlayerRegistry.LoadAll();
+                PlayerRegistry.CloseSessionsLeftOpen();
                 PlatformBinding.Load();
                 Companion.PrimeStateCache();
                 SessionTracker.Begin();

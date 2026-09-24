@@ -502,6 +502,8 @@ namespace TheRavensCall
         // refreshes the BarrkBOT export file. All persistence goes through
         // PlayerRegistry now — there is no more per-character state/session/
         // stats.json trio on disk. ────────────────────────────────────────
+        private static DateTime _lastSeenFlush = DateTime.MinValue;
+
         internal static void PollAllPlayers()
         {
             try
@@ -511,6 +513,12 @@ namespace TheRavensCall
                 // poll zero players every tick. Plugin.GetConnectedPlayers() is
                 // the server-side "who's online and where" API instead.
                 var online = Plugin.GetConnectedPlayers().ToList();
+                // About once a minute, persist every online player's
+                // last_seen, so after an unclean stop the next boot can
+                // credit their open session up to it
+                // (PlayerRegistry.CloseSessionsLeftOpen, 1.8.0).
+                bool flushLastSeen = (DateTime.UtcNow - _lastSeenFlush).TotalSeconds >= 60;
+                if (flushLastSeen) _lastSeenFlush = DateTime.UtcNow;
                 foreach (var p in online)
                 {
                     if (string.IsNullOrEmpty(p.name)) continue;
@@ -520,6 +528,7 @@ namespace TheRavensCall
                     var rec = PlayerRegistry.Get(p.name);
                     rec.Online = true;
                     rec.LastSeen = DateTime.UtcNow.ToString("o");
+                    if (flushLastSeen) rec.Dirty = true;
                     BiomeAndGearTracking.CheckBiome(p.name, p.pos, rec);
                 }
                 PlayerRegistry.SaveDirty();
