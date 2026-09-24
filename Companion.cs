@@ -515,6 +515,7 @@ namespace TheRavensCall
         // PlayerRegistry now — there is no more per-character state/session/
         // stats.json trio on disk. ────────────────────────────────────────
         private static DateTime _lastSeenFlush = DateTime.MinValue;
+        private static DateTime _lastExportWarn = DateTime.MinValue;
 
         internal static void PollAllPlayers()
         {
@@ -548,7 +549,20 @@ namespace TheRavensCall
                 string worldName = ZNet.instance != null ? ZNet.instance.GetWorldName() : "Unknown";
                 int day = EnvMan.instance != null ? EnvMan.instance.GetDay() : 0;
                 string barrkBotJson = PlayerRegistry.BuildBarrkBotJson(worldName, day, online.Count);
-                PlayerRegistry.AtomicWrite(Path.Combine(OutputDir, "BarrkBOT_data1.json"), barrkBotJson);
+                // Its own try (1.8.0): on Windows the replace fails while
+                // another process holds the file open without delete sharing
+                // (a reader, a backup or antivirus scan), and that used to
+                // abort the rest of the tick — the /api caches, the feed save,
+                // the census and the push. Logged at most once a minute.
+                try { PlayerRegistry.AtomicWrite(Path.Combine(OutputDir, "BarrkBOT_data1.json"), barrkBotJson); }
+                catch (Exception wex)
+                {
+                    if ((DateTime.UtcNow - _lastExportWarn).TotalSeconds >= 60)
+                    {
+                        _lastExportWarn = DateTime.UtcNow;
+                        Log.LogWarning("BarrkBOT_data1.json write failed (retried next tick): " + wex.Message);
+                    }
+                }
 
                 // Outside the EnableHttpServer guard below, same as the
                 // BarrkBOT export above — the feed persists even with the
