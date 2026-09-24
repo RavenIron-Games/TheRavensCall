@@ -7,7 +7,7 @@
 [![Companion](https://img.shields.io/badge/Client_Companion-WhereTheCrowFlies-blue.svg)]()
 [![Framework](https://img.shields.io/badge/Requires-BepInEx-red.svg)]()
 [![Publisher](https://img.shields.io/badge/RavenIron-Release-8B6F1F.svg)]()
-[![Version](https://img.shields.io/badge/Version-1.7.2-lightgrey.svg)]()
+[![Version](https://img.shields.io/badge/Version-1.8.0-lightgrey.svg)]()
 
 **RavenIron's server admin & analytics engine: aggregates player telemetry from *WhereTheCrowFlies*, chronicles realm history, and feeds live web dashboards and Discord AI bots.**
 
@@ -313,11 +313,14 @@ ravenscall season end
 ravenscall title <player>
 ravenscall title <player> <title>
 ravenscall title <player> clear
+ravenscall unbind <player>
 ```
 
 Seasons archive Chronicle logs into dated season folders and write summary stats on completion. Since 1.6.1 `season start` refuses while a season is running: end it first.
 
 `ravenscall title` lists, sets or clears a player's active title from the titles they've already earned — the same rule the player's own `/title` follows. The player need not be online. From the server console it needs no client mod; from an admin's game client it goes through WhereTheCrowFlies' `ravenscall` routing stub, the same as the season commands above.
+
+`ravenscall unbind` (since 1.8.0) releases a character name from the Steam or crossplay account it is bound to. The server binds each name to the first account that joins with it, and refuses stats and title changes from a player using that name on another account; after `unbind`, the next account to join under the name takes it (for example a player who moved to another platform).
 
 ---
 

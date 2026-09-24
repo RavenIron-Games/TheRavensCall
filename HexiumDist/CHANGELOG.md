@@ -7,9 +7,20 @@
 
 ---
 
-## 🟢 [1.7.2] — NAME TBD
+## 🟢 [1.8.0] — NAME TBD
 
-*A cleanup release: how the DLL is built, and one docs fix. No code, config, API shape or dashboard changes — on a server it behaves exactly like 1.7.1.*
+*Security and bookkeeping fixes from a code review, plus a cleaner build. No config keys, BarrkBOT export shape or dashboard changes; one new admin command and one new file under `BepInEx/config/TheRavensCall/`.*
+
+### 🛡️ Security
+- **A modified client could report as another player.** Every client report carries a sender id that the client itself writes, and Valheim hands it on without checking it against the connection it came in on. So a modified client naming another player's id passed the "this report is about yourself" check as that player: it could overwrite their game stats, post a death for them to Discord and their death history, or change or clear their title. The server now accepts a report only when its sender id is the connection that actually delivered it, for kills, deaths, damage, fishing, building, crafting, harvesting, food, world events, stat and skill snapshots and title requests alike. The 30-reports-a-second limit now counts per real connection too, so made-up sender ids no longer get around it.
+- **Two accounts with the same character name shared one record.** The server does not stop two players from using the same character name, and a player's record is keyed by that name. Two players called "Bjorn" overwrote each other's stats, and anyone could make a character with a leaderboard leader's or an admin's name and send stats or title changes as them. The first account (Steam or crossplay id) seen under a name is now remembered; a later player with that name on another account can still play and still gets join and leave lines, but their reports and `/title` changes are refused and they never update the named player's record. The server log says so when they join. The ids live in `BepInEx/config/TheRavensCall/player_platforms.json`, never in the export, the API or a push. **After upgrading, the first account to join under each name takes it.** If a player moves to another platform, `ravenscall unbind <player>` in the server console releases the name for the next account that joins with it.
+- **With the default config, a web page open on the server machine could read the whole API.** Without an `HttpApiToken` every data route is open, and the server told every browser that any website may read it, so a page visited on the server machine could read every player's stats and death spots and, from the census, where every bed, ward and portal is. The server now sends those cross-origin (CORS) headers only while `HttpApiToken` is set. The dashboard served on the port itself, BarrkBOT and other programs reading the API are unaffected. A dashboard opened from disk or from another address (the page's Base URL override) now needs a token set.
+- **One client could grow any online player's record without limit.** A kill or fish report names its creature or fish as text, and every new name became a permanent entry in that player's record, the export and every push. Random names at the report rate limit reached megabytes an hour and could push `/api/state` past the hosted receiver's size limit. A kill now counts only for a creature that exists in the game, and a catch only for a real fish; harvest names and skill ids are capped per player (512 and 256 distinct names, far above real play); stat ids this version of Valheim does not have are ignored. Entries already in a record stay.
+
+### 🩹 Fixed
+- **A quick rejoin lost the whole earlier session's playtime.** When a player's game crashed and they were back before the server dropped the dead connection (up to 90 seconds on a crossplay server), the rejoin started a new session over the old one: the earlier session's time never reached `playtime_seconds_lifetime` or the season standings, and it got no leave line. The rejoin now credits the earlier session and writes its "(connection lost)" leave line first.
+- **An unclean server stop lost the playtime of everyone online.** After a killed process, a closed console window or a crash, every session open at the time was dropped. The server now records each online player's last-seen time about once a minute and, on the next start, credits every session left open up to that time (the downtime is not counted), logging how many it closed.
+- **A locked `BarrkBOT_data1.json` stalled the dashboard and the push.** On Windows, a program holding the export open without sharing it (some readers, a backup or antivirus scan) made its write fail, and that skipped the rest of the tick: `/api/state`, `/api/activity`, the feed save, the census and the push. The failed write is now logged (at most once a minute) and retried on the next tick while the rest carries on.
 
 ### 🔧 Changed
 - **The DLL no longer carries an absolute build path that included the build machine's user name.** Every DLL through 1.7.1 named the folder it was built in as its debug-symbol path. The project now maps its source folders to neutral names at build time, so neither the DLL nor its debug symbols name a local folder, wherever the repository is checked out or copied. DLLs already published are unchanged.
@@ -20,7 +31,6 @@
 
 ### Tested
 - `dotnet build -c Release`, 0 warnings, 0 errors; the built DLL names its debug-symbol path as `/_/obj/Release/TheRavensCall.pdb` and contains no local folder. Two clean builds of the same tree are byte-identical.
-- Not run in game: no code changed since 1.7.1.
 
 ---
 

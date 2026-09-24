@@ -33,7 +33,7 @@ namespace TheRavensCall
     {
         public const string PluginGUID = "com.raveniron.theravenscall";
         public const string PluginName = "TheRavensCall";
-        public const string PluginVersion = "1.7.2";
+        public const string PluginVersion = "1.8.0";
 
         internal static ManualLogSource Log;
         internal static Plugin Instance;
