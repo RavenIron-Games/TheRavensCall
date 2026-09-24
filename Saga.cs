@@ -755,6 +755,53 @@ namespace TheRavensCall
     // is the only caller that actually fires; the patches stay wired to the
     // same functions so the two paths can never compute a kill differently.
     // ═════════════════════════════════════════════════════════════════════════
+    // ── Which client-sent names are real (1.8.0). A kill or fish report
+    // names its victim as a string, and that string becomes a permanent key
+    // in the named player's record (creature_kills, caught_fish), in the
+    // BarrkBOT export and in every push. Unchecked, one client sending
+    // random names could grow any online player's record by MBs an hour
+    // (review 2026-09-24). A creature must be a ZNetScene prefab with a
+    // Character; a fish is matched against every ZNetScene prefab with a
+    // Fish component, by prefab name or by its item's name token (the
+    // client sends m_shared.m_name, e.g. "$animal_perch"). ZNetScene is
+    // always up on a running server; without one the check stands aside,
+    // as before 1.8.0. ──────────────────────────────────────────────────
+    internal static class KnownPrefabs
+    {
+        private static ZNetScene _fishScene;
+        private static HashSet<string> _fish;
+
+        public static bool IsCreature(string prefab)
+        {
+            if (string.IsNullOrEmpty(prefab)) return false;
+            var scene = ZNetScene.instance;
+            if (scene == null) return true;
+            var go = scene.GetPrefab(prefab);
+            return go != null && string.Equals(go.name, prefab, StringComparison.Ordinal) && go.GetComponent<Character>() != null;
+        }
+
+        public static bool IsFish(string slug)
+        {
+            if (string.IsNullOrEmpty(slug)) return false;
+            var scene = ZNetScene.instance;
+            if (scene == null) return true;
+            if (_fish == null || _fishScene != scene)
+            {
+                var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var go in scene.m_prefabs)
+                {
+                    if (go == null || go.GetComponent<Fish>() == null) continue;
+                    set.Add(go.name);
+                    string token = go.GetComponent<ItemDrop>()?.m_itemData?.m_shared?.m_name;
+                    if (!string.IsNullOrEmpty(token)) set.Add(token);
+                }
+                _fish = set;
+                _fishScene = scene;
+            }
+            return _fish.Contains(slug);
+        }
+    }
+
     public static class CombatCredit
     {
         private const float BossDedupBucketMeters = 64f;
@@ -769,8 +816,23 @@ namespace TheRavensCall
         private const float MaxSkillProgress = 100f; // vanilla sends a 0..1 fraction; tolerant of a percent
         private static bool Finite(float v) => !float.IsNaN(v) && !float.IsInfinity(v);
 
+        // Distinct-key caps for the two maps whose keys a client picks and no
+        // prefab list can check (1.8.0): harvest names are localized hover
+        // names, and skill ids include mods' own skills. Far above what real
+        // play reaches; a new key past the cap is ignored, known keys still
+        // update.
+        private const int MaxHarvestKeys = 512;
+        private const int MaxSkillKeys = 256;
+
         public static void CreditCreatureKill(string name, string prefab, Vector3 position)
         {
+            // The prefab name comes off the wire and becomes a permanent
+            // creature_kills key, so only a real creature counts (1.8.0).
+            if (!KnownPrefabs.IsCreature(prefab))
+            {
+                if (Plugin.LogCombatReports.Value) Plugin.Log.LogWarning($"[TheRavensCall] kill report dropped — '{prefab}' is not a creature prefab");
+                return;
+            }
             if (TitleSystem.BossTitles.ContainsKey(prefab)) { CreditBossKill(prefab, position, name); return; }
             if (CombatEventDedup.AlreadyProcessed("kill", name, prefab, position)) return;
 
@@ -877,6 +939,12 @@ namespace TheRavensCall
         public static void CreditFish(string name, string fishSlug)
         {
             if (string.IsNullOrEmpty(fishSlug)) return;
+            // Same rule as creature kills: caught_fish only takes a real fish.
+            if (!KnownPrefabs.IsFish(fishSlug))
+            {
+                if (Plugin.LogCombatReports.Value) Plugin.Log.LogWarning($"[TheRavensCall] fish report dropped — '{fishSlug}' is not a fish");
+                return;
+            }
             if (CombatEventDedup.AlreadyProcessed("fish", name, fishSlug, Vector3.zero)) return;
 
             var rec = PlayerRegistry.Get(name);
@@ -930,7 +998,10 @@ namespace TheRavensCall
         {
             if (string.IsNullOrEmpty(resourceName) || amount <= 0) return;
             var rec = PlayerRegistry.Get(name);
-            rec.ResourcesHarvested.TryGetValue(resourceName, out int cur);
+            // The client sends the pickable's hover name (localized), so there
+            // is no prefab to check it against; cap the distinct names instead
+            // so one client cannot grow a record without bound (1.8.0).
+            if (!rec.ResourcesHarvested.TryGetValue(resourceName, out int cur) && rec.ResourcesHarvested.Count >= MaxHarvestKeys) return;
             rec.ResourcesHarvested[resourceName] = cur + amount;
             rec.Dirty = true;
         }
@@ -1005,10 +1076,12 @@ namespace TheRavensCall
             var rec = PlayerRegistry.Get(name);
             if (levels != null)
                 foreach (var kv in levels)
-                    if (Finite(kv.Value)) rec.SkillLevels[kv.Key] = Mathf.Clamp(kv.Value, 0f, MaxSkillLevel);
+                    if (Finite(kv.Value) && (rec.SkillLevels.ContainsKey(kv.Key) || rec.SkillLevels.Count < MaxSkillKeys))
+                        rec.SkillLevels[kv.Key] = Mathf.Clamp(kv.Value, 0f, MaxSkillLevel);
             if (progress != null)
                 foreach (var kv in progress)
-                    if (Finite(kv.Value)) rec.SkillProgress[kv.Key] = Mathf.Clamp(kv.Value, 0f, MaxSkillProgress);
+                    if (Finite(kv.Value) && (rec.SkillProgress.ContainsKey(kv.Key) || rec.SkillProgress.Count < MaxSkillKeys))
+                        rec.SkillProgress[kv.Key] = Mathf.Clamp(kv.Value, 0f, MaxSkillProgress);
             rec.Dirty = true;
         }
     }
@@ -1593,7 +1666,10 @@ namespace TheRavensCall
             {
                 short statId = pkg.ReadShort();
                 float delta = pkg.ReadSingle();
-                deltas[((PlayerStatType)statId).ToString()] = delta;
+                // An id this Valheim does not define would become a numeric
+                // vanilla_stats key forever (1.8.0).
+                if (Enum.IsDefined(typeof(PlayerStatType), (int)statId))
+                    deltas[((PlayerStatType)statId).ToString()] = delta;
             }
 
             if (!VerifySelf(reporter, playerName, out string verified)) return;
@@ -1611,7 +1687,8 @@ namespace TheRavensCall
             {
                 short statId = pkg.ReadShort();
                 float value = pkg.ReadSingle();
-                stats[((PlayerStatType)statId).ToString()] = value;
+                if (Enum.IsDefined(typeof(PlayerStatType), (int)statId)) // see HandleStatSyncDelta
+                    stats[((PlayerStatType)statId).ToString()] = value;
             }
 
             if (!VerifySelf(reporter, playerName, out string verified)) return;
