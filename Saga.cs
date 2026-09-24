@@ -492,6 +492,34 @@ namespace TheRavensCall
                     return;
                 }
                 var rec = PlayerRegistry.Get(name);
+
+                // 1.8.0: a quick rejoin. When a game crashes or a connection
+                // drops, the old peer stays connected until ZRpc's timeout
+                // (90 s on a crossplay server), and 1.0.15 then removes it
+                // without any leave hook. A rejoin inside that window used to
+                // overwrite SessionStart, so the whole earlier session never
+                // reached playtime_seconds_lifetime and got no leave line
+                // (review 2026-09-24). Close it here instead, and retire the
+                // earlier peers' join times under this name (and any whose
+                // peer is already gone), so a late leave hook for them cannot
+                // close the session that starts now.
+                bool closedEarlier = false;
+                if (rec.Online && !string.IsNullOrEmpty(rec.SessionStart) &&
+                    DateTime.TryParse(rec.SessionStart, null, System.Globalization.DateTimeStyles.RoundtripKind, out DateTime earlierStart))
+                {
+                    rec.PlaytimeSecondsLifetime += Math.Max(0, (long)(DateTime.UtcNow - earlierStart.ToUniversalTime()).TotalSeconds);
+                    closedEarlier = true;
+                }
+                foreach (long uid in JoinTimes.Keys.ToList())
+                {
+                    if (uid == peer.m_uid || _untrusted.Contains(uid)) continue;
+                    var other = ZNet.instance.GetPeer(uid);
+                    if (other == null || string.Equals(other.m_playerName, name, StringComparison.OrdinalIgnoreCase))
+                    { JoinTimes.Remove(uid); _fired.Remove(uid); }
+                }
+                if (closedEarlier && Plugin.EnablePlayerLeave.Value)
+                    Plugin.Narrate($"{name} has left the world (connection lost).", "player_leave", name, "(connection lost)");
+
                 rec.Online = true;
                 rec.SessionStart = DateTime.UtcNow.ToString("o");
                 rec.LastSeen = rec.SessionStart;
