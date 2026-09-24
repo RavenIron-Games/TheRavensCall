@@ -1040,9 +1040,73 @@ namespace TheRavensCall
         }
     }
 
+    // ── Routed-RPC sender binding (1.8.0). The `sender` a ZRoutedRpc handler
+    // receives is RoutedRPCData.m_senderPeerID, read straight from the
+    // client's bytes in ZRoutedRpc.RPC_RoutedRPC and never compared with the
+    // connection that delivered them (1.0.15 decompile: RPC_RoutedRPC →
+    // Deserialize → HandleRoutedRPC → Invoke(data.m_senderPeerID, …)). So a
+    // modified client could name any other player's uid as the sender and
+    // pass every "is this a self-report" check below as that player
+    // (review 2026-09-24, reopening must-fix #2 of 2026-09-15). This
+    // remembers the uid of the peer whose connection is delivering the
+    // current RoutedRPC; the receivers accept a report only when the claimed
+    // sender is that uid. A routed RPC this process invokes on itself never
+    // passes through RPC_RoutedRPC and is refused, as before (the server is
+    // not in its own peer list). Server-side only; clients are unaffected. ──
+    [HarmonyPatch(typeof(ZRoutedRpc), nameof(ZRoutedRpc.RPC_RoutedRPC))]
+    public static class RoutedSenderGuard
+    {
+        // One entry per RPC_RoutedRPC on the call stack (a stack, in case a
+        // handler ever delivers another one inline); 0 = no ready peer.
+        private static readonly Stack<long> _delivering = new Stack<long>();
+        private static readonly Dictionary<long, float> _lastWarn = new Dictionary<long, float>();
+
+        private static void Prefix(ZRpc rpc)
+        {
+            long uid = 0L;
+            try { uid = ZNet.instance?.GetPeer(rpc)?.m_uid ?? 0L; } catch { }
+            _delivering.Push(uid);
+        }
+
+        // A finalizer, not a postfix, so the entry is popped even when a
+        // handler throws out of HandleRoutedRPC.
+        private static void Finalizer()
+        {
+            if (_delivering.Count > 0) _delivering.Pop();
+        }
+
+        // True only when `claimed` is the uid of the ready peer whose
+        // connection delivered this RoutedRPC; `peer` is then that peer.
+        public static bool TryResolveSender(long claimed, out ZNetPeer peer)
+        {
+            peer = null;
+            if (_delivering.Count == 0 || ZNet.instance == null) return false;
+            long delivering = _delivering.Peek();
+            if (delivering == 0L) return false;
+            if (claimed != delivering)
+            {
+                // A real client never does this; say so, at most once a
+                // minute per connection so a flood cannot flood the log.
+                float now = Time.realtimeSinceStartup;
+                if (!_lastWarn.TryGetValue(delivering, out float t) || now - t >= 60f)
+                {
+                    if (_lastWarn.Count > 256) _lastWarn.Clear();
+                    _lastWarn[delivering] = now;
+                    string who = ZNet.instance.GetPeer(delivering)?.m_playerName;
+                    Plugin.Log.LogWarning($"[TheRavensCall] report dropped — connection {delivering} ({who}) claimed to send as {claimed}");
+                }
+                return false;
+            }
+            peer = ZNet.instance.GetPeer(claimed);
+            return peer != null && peer.IsReady();
+        }
+    }
+
     // ── Per-sender flood guard for the RPC receiver. A malicious or broken
     // client can invoke a routed RPC as fast as it wants; nothing upstream
-    // rate-limits that for us. ──────────────────────────────────────────
+    // rate-limits that for us. Keyed on the verified peer uid (see
+    // RoutedSenderGuard), so a client can no longer rotate made-up sender
+    // ids past the cap or grow this table with them (1.8.0). ─────────────
     internal static class CombatReportRateLimiter
     {
         private const int MaxPerSecond = 30;
@@ -1051,6 +1115,11 @@ namespace TheRavensCall
         public static bool Exceeded(long sender)
         {
             float now = Time.realtimeSinceStartup;
+            // Every reconnect gets a new uid; drop idle windows now and then
+            // so a long uptime does not keep one entry per past connection.
+            if (_windows.Count > 128)
+                foreach (var k in new List<long>(_windows.Keys))
+                    if (now - _windows[k].windowStart >= 1f) _windows.Remove(k);
             if (!_windows.TryGetValue(sender, out var w) || now - w.windowStart >= 1f)
             {
                 _windows[sender] = (1, now);
@@ -1166,6 +1235,12 @@ namespace TheRavensCall
             {
                 if (!Plugin.IsServer() || !Plugin.AcceptClientReports.Value) return;
 
+                // Reporter identity is the peer whose connection delivered
+                // this packet, never the payload and never the client-chosen
+                // routed sender id alone (RoutedSenderGuard, 1.8.0). From
+                // here on `sender` is that verified uid.
+                if (!RoutedSenderGuard.TryResolveSender(sender, out var reporterPeer)) return;
+
                 if (CombatReportRateLimiter.Exceeded(sender))
                 {
                     if (Plugin.LogCombatReports.Value) Plugin.Log.LogWarning($"[TheRavensCall] combat report rate-limited from sender {sender}");
@@ -1181,11 +1256,6 @@ namespace TheRavensCall
                 Vector3 position = pkg.ReadVector3();
                 float dmgDealt = ClampDamage(pkg.ReadSingle());
                 float dmgTaken = ClampDamage(pkg.ReadSingle());
-
-                // Reporter identity comes from the routed-RPC sender (resolved
-                // through ZNet.GetPeer), never trusted from the payload.
-                var reporterPeer = ZNet.instance?.GetPeer(sender);
-                if (reporterPeer == null) return;
 
                 // Self-reports (death, damage batch, fish) must name the
                 // reporter's own character. Only a kill may legitimately name
@@ -1300,6 +1370,14 @@ namespace TheRavensCall
             {
                 if (!Plugin.IsServer() || !Plugin.AcceptClientReports.Value) return;
 
+                // The reporter's peer is the identity every self-report is
+                // bound to below; the payload name alone was never enough
+                // (review 2026-09-15), and neither is the client-chosen
+                // routed sender id (RoutedSenderGuard, 1.8.0). From here on
+                // `sender` is the verified uid of the delivering connection,
+                // so the rate limits and the title reply's target are too.
+                if (!RoutedSenderGuard.TryResolveSender(sender, out var reporterPeer)) return;
+
                 if (CombatReportRateLimiter.Exceeded(sender))
                 {
                     if (Plugin.LogCombatReports.Value) Plugin.Log.LogWarning($"[TheRavensCall] event report rate-limited from sender {sender}");
@@ -1308,12 +1386,6 @@ namespace TheRavensCall
 
                 int schema = pkg.ReadInt();
                 if (schema != SchemaVersion) return; // unknown future schema: ignore, never guess
-
-                // The reporter's peer is the identity every self-report is
-                // bound to below; the payload name alone was never enough
-                // (review 2026-09-15).
-                var reporterPeer = ZNet.instance?.GetPeer(sender);
-                if (reporterPeer == null) return;
 
                 byte eventType = pkg.ReadByte();
                 switch (eventType)
