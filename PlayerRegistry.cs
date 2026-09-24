@@ -146,6 +146,11 @@ namespace TheRavensCall
     public static class PlatformBinding
     {
         private class Binding { public string Platform; public string PlayFab; }
+        private static bool _warnedUnknownSocket;
+        // True only while the main file on disk is known good (read with no
+        // skipped rows, or written by Save); Save copies it to .bak only then,
+        // so a bad or unmovable file never replaces the good backup.
+        private static bool _cleanOnDisk;
 
         private static readonly Dictionary<string, Binding> _b =
             new Dictionary<string, Binding>(StringComparer.OrdinalIgnoreCase);
@@ -195,14 +200,18 @@ namespace TheRavensCall
         public static void Load()
         {
             _b.Clear();
+            _cleanOnDisk = false;
             if (TryLoadFrom(FilePath, out string why)) return;
             if (why == null) return; // no file yet
             // A broken file must not be overwritten by the next join's Save
             // and take every binding with it: move it aside, say so loudly,
             // and fall back to the copy the last good Save kept.
             _b.Clear();
-            try { File.Copy(FilePath, FilePath + ".corrupt", true); File.Delete(FilePath); } catch { }
-            Plugin.Log.LogError($"[TheRavensCall] player_platforms.json is unreadable ({why}); moved to player_platforms.json.corrupt.");
+            _cleanOnDisk = false;
+            string moved;
+            try { File.Copy(FilePath, FilePath + ".corrupt", true); File.Delete(FilePath); moved = "moved to player_platforms.json.corrupt"; }
+            catch (Exception mex) { moved = "could NOT be moved aside (" + mex.Message + "); the .bak is left as it is"; }
+            Plugin.Log.LogError($"[TheRavensCall] player_platforms.json is unreadable ({why}); {moved}.");
             string bak = FilePath + ".bak";
             if (File.Exists(bak) && TryLoadFrom(bak, out _))
             {
@@ -225,7 +234,7 @@ namespace TheRavensCall
                 if (!File.Exists(path)) return false;
                 string json = File.ReadAllText(path, Encoding.UTF8);
                 string t = json.Trim();
-                if (!t.StartsWith("{") || !t.EndsWith("}") || t.IndexOf("\"bindings\":[", StringComparison.Ordinal) < 0)
+                if (!t.StartsWith("{") || !t.EndsWith("]}") || t.IndexOf("\"bindings\":[", StringComparison.Ordinal) < 0)
                 { why = "not a bindings file, or truncated"; return false; }
                 int bad = 0;
                 foreach (string row in Companion.JsonGetArray(json, "bindings"))
@@ -241,6 +250,7 @@ namespace TheRavensCall
                     _b[name] = new Binding { Platform = plat, PlayFab = pf };
                 }
                 if (bad > 0) Plugin.Log.LogWarning($"[TheRavensCall] {Path.GetFileName(path)}: skipped {bad} malformed or duplicate row(s).");
+                _cleanOnDisk = bad == 0 && path == FilePath;
                 Plugin.Log.LogInfo($"[TheRavensCall] PlatformBinding loaded {_b.Count} name binding(s) from {Path.GetFileName(path)}.");
                 return true;
             }
@@ -254,21 +264,25 @@ namespace TheRavensCall
                 Directory.CreateDirectory(Path.GetDirectoryName(FilePath));
                 // Keep the last good file as .bak before replacing it (Load
                 // falls back to it if the main file is ever unreadable).
-                if (File.Exists(FilePath)) { try { File.Copy(FilePath, FilePath + ".bak", true); } catch { } }
+                if (_cleanOnDisk && File.Exists(FilePath)) { try { File.Copy(FilePath, FilePath + ".bak", true); } catch { } }
                 string rows = string.Join(",", _b.OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
                     .Select(kv => "{\"id\":\"" + Companion.Esc(kv.Value.Platform ?? "") + "\",\"pf\":\"" + Companion.Esc(kv.Value.PlayFab ?? "") +
                                   "\",\"name\":\"" + Companion.Esc(kv.Key) + "\"}"));
                 PlayerRegistry.AtomicWrite(FilePath, "{\"bindings\":[" + rows + "]}");
+                _cleanOnDisk = true;
             }
             catch (Exception ex) { Plugin.Log.LogWarning("[TheRavensCall] player_platforms.json write failed: " + ex.Message); }
         }
 
-        // Join, reports and title changes all ask this. True when the peer
-        // may act as its name: binds a name seen for the first time, and
-        // fills in the other id of a known name when a crossplay switch
-        // brings it (see the class comment). Never true for an unstorable
-        // name or a Steam/crossplay peer without a usable id.
-        public static bool Check(ZNetPeer peer)
+        // True when the peer may act as its name. Never true for an
+        // unstorable name or a Steam/crossplay peer without a usable id.
+        // Only the join passes allowBind: it binds a name seen for the first
+        // time and fills in the other id of a known name when a crossplay
+        // switch brings it (see the class comment). Reports and title
+        // changes never bind: a name that is unbound (e.g. after `ravenscall
+        // unbind` while its player is online) is refused until the next
+        // join takes it, so the first same-name reporter cannot.
+        public static bool Check(ZNetPeer peer, bool allowBind)
         {
             string name = peer?.m_playerName;
             if (!IsStorableName(name)) return false;
@@ -289,12 +303,24 @@ namespace TheRavensCall
                     plat = NormalizePlatformId(peer.m_socket.GetHostName());
                     if (plat == null) return false;
                 }
-                else return true; // no platform id at all (ZSocket2): not checked
+                else
+                {
+                    // No platform id at all: a socket type another mod adds
+                    // (a 1.0.15 server itself never accepts a ZSocket2). Not
+                    // checked; said once so it is visible.
+                    if (!_warnedUnknownSocket)
+                    {
+                        _warnedUnknownSocket = true;
+                        Plugin.Log.LogWarning($"[TheRavensCall] A player connected through {peer.m_socket?.GetType().Name}, which has no platform id; names on such connections are not bound to an account.");
+                    }
+                    return true;
+                }
             }
             catch { return false; }
 
             if (!_b.TryGetValue(name, out var b))
             {
+                if (!allowBind) return false;
                 _b[name] = new Binding { Platform = plat, PlayFab = pf };
                 Save();
                 return true;
@@ -304,7 +330,7 @@ namespace TheRavensCall
                 if (b.PlayFab != null) return string.Equals(b.PlayFab, pf, StringComparison.Ordinal);
                 // Bound on a Steam-only server: this join's claimed platform
                 // id must be the bound one; then the PlayFab id is kept.
-                if (plat == null || !string.Equals(b.Platform, plat, StringComparison.Ordinal)) return false;
+                if (!allowBind || plat == null || !string.Equals(b.Platform, plat, StringComparison.Ordinal)) return false;
                 b.PlayFab = pf;
                 Save();
                 Plugin.Log.LogInfo($"[TheRavensCall] {name}: PlayFab account recorded for crossplay.");
@@ -313,6 +339,7 @@ namespace TheRavensCall
             if (b.Platform != null) return string.Equals(b.Platform, plat, StringComparison.Ordinal);
             // Bound on crossplay with no platform id claimed: the verified
             // Steam id of this Steam-only join takes it.
+            if (!allowBind) return false;
             b.Platform = plat;
             Save();
             return true;

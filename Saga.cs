@@ -343,8 +343,11 @@ namespace TheRavensCall
         public static bool IsSelfReport(ZNetPeer reporter, string reportedName)
         {
             if (reporter == null || string.IsNullOrEmpty(reportedName) || string.IsNullOrEmpty(reporter.m_playerName)) return false;
+            // A peer the join marked untrusted stays so for its whole
+            // connection, and a report never binds a name (1.8.0).
             return string.Equals(reporter.m_playerName, reportedName, StringComparison.OrdinalIgnoreCase)
-                && PlatformBinding.Check(reporter);
+                && !Patch_PlayerJoin.IsUntrusted(reporter.m_uid)
+                && PlatformBinding.Check(reporter, allowBind: false);
         }
 
         public static HitData GetLastHit(Character c)
@@ -488,7 +491,7 @@ namespace TheRavensCall
                 JoinTimes[peer.m_uid] = DateTime.UtcNow;
 
                 string name = string.IsNullOrEmpty(peer.m_playerName) ? "A Viking" : peer.m_playerName;
-                if (!PlatformBinding.Check(peer))
+                if (!PlatformBinding.Check(peer, allowBind: true))
                 {
                     _untrusted.Add(peer.m_uid);
                     if (!PlatformBinding.IsStorableName(name))
