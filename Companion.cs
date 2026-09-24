@@ -171,10 +171,22 @@ namespace TheRavensCall
                 string path = ctx.Request.Url.AbsolutePath.TrimEnd('/');
                 if (string.IsNullOrEmpty(path)) path = "/";
 
-                // CORS headers so browser can fetch from file:// or any origin
-                ctx.Response.AddHeader("Access-Control-Allow-Origin", "*");
-                ctx.Response.AddHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-                ctx.Response.AddHeader("Access-Control-Allow-Headers", "Content-Type, X-Api-Token");
+                // CORS headers so a browser can fetch from file:// or another
+                // origin (the page's base-URL override) — only when
+                // HttpApiToken is set (1.8.0). With no token every data route
+                // is open, and `Access-Control-Allow-Origin: *` let any web
+                // page open on this machine read /api/state and /api/census
+                // with a plain fetch (review 2026-09-24). With a token such a
+                // page still cannot read anything without it. The bundled
+                // page served from this listener is same-origin and never
+                // needed these; server-side readers (BarrkBOT, curl, a proxy)
+                // ignore CORS.
+                if (!string.IsNullOrEmpty(Plugin.HttpApiToken?.Value))
+                {
+                    ctx.Response.AddHeader("Access-Control-Allow-Origin", "*");
+                    ctx.Response.AddHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+                    ctx.Response.AddHeader("Access-Control-Allow-Headers", "Content-Type, X-Api-Token");
+                }
 
                 if (ctx.Request.HttpMethod == "OPTIONS")
                 { ctx.Response.StatusCode = 204; ctx.Response.Close(); return; }

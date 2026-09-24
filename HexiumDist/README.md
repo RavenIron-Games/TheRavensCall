@@ -340,7 +340,7 @@ Configuration is located at `BepInEx/config/com.raveniron.theravenscall.cfg`:
 | **Companion**| `EnableHttpServer` | `true` | Runs the web dashboard and local HTTP API. |
 | **Companion**| `HttpServerPort` | `2112` | Port for web dashboard and API access. |
 | **Companion**| `HttpBindAllInterfaces` | `false` | Also listen on every interface. Off by default since 1.2.4; the API has no login. |
-| **Companion**| `HttpApiToken` | `""` | If set, `/api/state`, `/api/gamedata`, `/api/activity`, `/api/census` and `/api/pins` require `?token=` or `X-Api-Token`. |
+| **Companion**| `HttpApiToken` | `""` | If set, `/api/state`, `/api/gamedata`, `/api/activity`, `/api/census` and `/api/pins` require `?token=` or `X-Api-Token`. Since 1.8.0 the server only sends cross-origin (CORS) headers while this is set: the page served on the port itself never needs them, but a copy opened from disk or another address (the page's Base URL override) needs a token set. |
 | **Companion**| `StatsPushIntervalSeconds` | `10` | Frequency (seconds) for updating `BarrkBOT_data1.json` / `BarrkBOT_data2.json`. |
 | **Companion**| `EventFeedCapacity` | `200` | Number of recent events kept in memory and served by `/api/activity`, newest first (0 to 1000). Saved to `event_feed.json` so the feed survives a restart. `0` turns the feed off; the endpoint still answers, with an empty `events` array. |
 | **Census** | `CensusIntervalMinutes` | `5` | How often (minutes) the server counts portals, beds, wards, ships, carts, chests and crafting stations standing in the world and rebuilds `/api/census`. `0` turns the census off; the endpoint still answers, with `enabled: false`. |

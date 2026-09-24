@@ -8,6 +8,12 @@ Token: when `HttpApiToken` is set, `/api/state`, `/api/gamedata`, `/api/activity
 `/api/census` (and `/api/pins`) require `?token=<value>` or an `X-Api-Token: <value>` header
 (`ApiTokenOk`). `/api/health` and the page stay open. Ordinal string compare.
 
+CORS (since 1.8.0): `Access-Control-Allow-Origin: *`, `Access-Control-Allow-Methods: GET, OPTIONS`
+and `Access-Control-Allow-Headers: Content-Type, X-Api-Token` are sent on every response only
+while `HttpApiToken` is set. With no token they are left off, so another origin's page (a web
+page open on the server machine, or a dashboard copy opened from disk) cannot read the open
+data routes. `OPTIONS` still answers `204`. Same-origin and server-side readers are unaffected.
+
 **The mod's own routes on `localhost:<HttpServerPort>` are unchanged in 1.6.0** — every route,
 status code and header below stays exactly as it was. 1.6.0 adds an outbound push (below) and,
 separately, a hosted receiver with its own routes on its own domain (also below); neither
