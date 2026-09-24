@@ -82,8 +82,9 @@ openssl rand -hex 24
 ```
 
 ```powershell
-# PowerShell (CSPRNG — Get-Random is not cryptographically secure)
-$b=[byte[]]::new(24); [System.Security.Cryptography.RandomNumberGenerator]::Fill($b); -join ($b | ForEach-Object { $_.ToString("x2") })
+# PowerShell 5.1 or 7 (CSPRNG — Get-Random is not cryptographically secure;
+# RandomNumberGenerator::Fill exists only on PowerShell 7, so use Create().GetBytes)
+$b=[byte[]]::new(24); [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); -join ($b | ForEach-Object { $_.ToString("x2") })
 ```
 
 **Hash a token** (only the hash goes in `TRC_SERVERS` — never the plaintext;
