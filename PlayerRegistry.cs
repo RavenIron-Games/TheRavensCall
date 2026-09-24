@@ -94,6 +94,106 @@ namespace TheRavensCall
         public static string RaidType = "";
     }
 
+    // ── Name ↔ platform account binding (1.8.0). A record is keyed by the
+    // character name the client sends in PeerInfo, and the server does not
+    // stop two accounts from using the same name. So two players both called
+    // "Bjorn" overwrote each other's snapshots, and anyone could make a
+    // character with a leader's name and send snapshots or /title changes
+    // as them (review 2026-09-24). The first account seen under a name (its
+    // platform id, ZNetPeer.m_socket.GetHostName(): a Steam id, or a
+    // crossplay id such as "Steam_…"/"Xbox_…") is remembered in
+    // player_platforms.json next to the players folder; a later peer with
+    // that name on another account is refused for self-reports and title
+    // changes, and its join and leave never touch the record. Kept out of
+    // the player files on purpose: those are the BarrkBOT export's shape,
+    // and platform ids are not for publishing. An admin can release a name
+    // with `ravenscall unbind <player>` (the next account to join takes it).
+    // A peer with no usable platform id (an IP-address socket) is not
+    // checked, as before. ───────────────────────────────────────────────
+    public static class PlatformBinding
+    {
+        private static readonly Dictionary<string, string> _ids =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        private static string FilePath =>
+            Path.Combine(BepInEx.Paths.ConfigPath, "TheRavensCall", "player_platforms.json");
+
+        public static void Load()
+        {
+            _ids.Clear();
+            try
+            {
+                if (!File.Exists(FilePath)) return;
+                string json = File.ReadAllText(FilePath, Encoding.UTF8);
+                foreach (string row in Companion.JsonGetArray(json, "bindings"))
+                {
+                    string id = Companion.JsonGetString(row, "id");
+                    string name = Companion.JsonGetString(row, "name");
+                    if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(name)) _ids[name] = id;
+                }
+                Plugin.Log.LogInfo($"[TheRavensCall] PlatformBinding loaded {_ids.Count} name binding(s).");
+            }
+            catch (Exception ex) { Plugin.Log.LogWarning("[TheRavensCall] player_platforms.json load failed: " + ex.Message); }
+        }
+
+        private static void Save()
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(FilePath));
+                string rows = string.Join(",", _ids.OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
+                    .Select(kv => "{\"id\":\"" + Companion.Esc(kv.Value) + "\",\"name\":\"" + Companion.Esc(kv.Key) + "\"}"));
+                PlayerRegistry.AtomicWrite(FilePath, "{\"bindings\":[" + rows + "]}");
+            }
+            catch (Exception ex) { Plugin.Log.LogWarning("[TheRavensCall] player_platforms.json write failed: " + ex.Message); }
+        }
+
+        // The peer's platform id, or null when it has none worth binding to.
+        private static string HostOf(ZNetPeer peer)
+        {
+            try
+            {
+                string h = peer?.m_socket?.GetHostName();
+                if (string.IsNullOrEmpty(h) || h == "None") return null;
+                // ZSocket2 answers with the remote IP address, which changes;
+                // Steam and crossplay ids contain neither '.' nor ':'.
+                if ((h.IndexOf('.') >= 0 || h.IndexOf(':') >= 0) && System.Net.IPAddress.TryParse(h, out _)) return null;
+                return h;
+            }
+            catch { return null; }
+        }
+
+        // Join: binds a name seen for the first time; false when the name is
+        // already bound to another account.
+        public static bool CheckOrBind(ZNetPeer peer)
+        {
+            string name = peer?.m_playerName;
+            string host = HostOf(peer);
+            if (string.IsNullOrEmpty(name) || host == null) return true;
+            if (_ids.TryGetValue(name, out string bound)) return string.Equals(bound, host, StringComparison.Ordinal);
+            _ids[name] = host;
+            Save();
+            return true;
+        }
+
+        // Reports and title changes: false only for a peer whose name is
+        // bound to another account.
+        public static bool Matches(ZNetPeer peer)
+        {
+            string name = peer?.m_playerName;
+            string host = HostOf(peer);
+            if (string.IsNullOrEmpty(name) || host == null) return true;
+            return !_ids.TryGetValue(name, out string bound) || string.Equals(bound, host, StringComparison.Ordinal);
+        }
+
+        public static bool Unbind(string name)
+        {
+            if (string.IsNullOrEmpty(name) || !_ids.Remove(name)) return false;
+            Save();
+            return true;
+        }
+    }
+
     public static class PlayerRegistry
     {
         private static readonly Dictionary<string, PlayerRecord> _records =

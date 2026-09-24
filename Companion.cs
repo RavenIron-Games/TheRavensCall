@@ -514,6 +514,9 @@ namespace TheRavensCall
                 foreach (var p in online)
                 {
                     if (string.IsNullOrEmpty(p.name)) continue;
+                    // A peer on another account than its name's never
+                    // updates that name's record (PlatformBinding, 1.8.0).
+                    if (Patch_PlayerJoin.IsUntrusted(p.peerUid)) continue;
                     var rec = PlayerRegistry.Get(p.name);
                     rec.Online = true;
                     rec.LastSeen = DateTime.UtcNow.ToString("o");

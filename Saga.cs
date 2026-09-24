@@ -332,11 +332,15 @@ namespace TheRavensCall
         // reporting peer's own character. m_playerName is what the peer sent
         // in PeerInfo (its profile name), the same string Player.GetPlayerName
         // returns on that client, so the two are expected to match exactly
-        // modulo case (the registry is case-insensitive too). ────────────────
+        // modulo case (the registry is case-insensitive too). Since 1.8.0 the
+        // peer must also be on the account that name is bound to (see
+        // PlatformBinding), since the name alone is whatever the client
+        // chose. ─────────────────────────────────────────────────────────────
         public static bool IsSelfReport(ZNetPeer reporter, string reportedName)
         {
             if (reporter == null || string.IsNullOrEmpty(reportedName) || string.IsNullOrEmpty(reporter.m_playerName)) return false;
-            return string.Equals(reporter.m_playerName, reportedName, StringComparison.OrdinalIgnoreCase);
+            return string.Equals(reporter.m_playerName, reportedName, StringComparison.OrdinalIgnoreCase)
+                && PlatformBinding.Matches(reporter);
         }
 
         public static HitData GetLastHit(Character c)
@@ -403,6 +407,7 @@ namespace TheRavensCall
                 EventFeed.Init();
                 WorldCensus.Init();
                 PlayerRegistry.LoadAll();
+                PlatformBinding.Load();
                 Companion.PrimeStateCache();
                 SessionTracker.Begin();
                 // SeasonSystem.Init() re-points the Chronicle at the active
@@ -446,13 +451,18 @@ namespace TheRavensCall
     {
         private static readonly Dictionary<long, DateTime> JoinTimes = new Dictionary<long, DateTime>();
         private static readonly HashSet<long> _fired = new HashSet<long>();
+        // Peers whose name is bound to another account (PlatformBinding,
+        // 1.8.0): counted online and narrated, but they never touch the
+        // record that name belongs to.
+        private static readonly HashSet<long> _untrusted = new HashSet<long>();
 
         internal static bool GetJoinTime(long uid, out DateTime joinTime) => JoinTimes.TryGetValue(uid, out joinTime);
         // A session is open from the join postfix until FireLeaveFor (or the
         // disconnect that never reached a leave hook, which also takes the
         // peer out of ZNet's list, so Plugin.OnlineCount never sees it).
         internal static bool HasOpenSession(long uid) => JoinTimes.ContainsKey(uid);
-        internal static void ClearJoinTime(long uid) { JoinTimes.Remove(uid); _fired.Remove(uid); }
+        internal static bool IsUntrusted(long uid) => _untrusted.Contains(uid);
+        internal static void ClearJoinTime(long uid) { JoinTimes.Remove(uid); _fired.Remove(uid); _untrusted.Remove(uid); }
 
         private static void Postfix(ZRpc rpc)
         {
@@ -473,6 +483,14 @@ namespace TheRavensCall
                 JoinTimes[peer.m_uid] = DateTime.UtcNow;
 
                 string name = string.IsNullOrEmpty(peer.m_playerName) ? "A Viking" : peer.m_playerName;
+                if (!PlatformBinding.CheckOrBind(peer))
+                {
+                    _untrusted.Add(peer.m_uid);
+                    Plugin.Log.LogWarning($"[TheRavensCall] {name} joined from a different account than the one this name is bound to; its reports and title changes are refused and it does not update {name}'s record (ravenscall unbind {name} releases the name).");
+                    if (Plugin.EnablePlayerJoin.Value)
+                        Plugin.Narrate($"{name} has entered the world.", "player_join", name);
+                    return;
+                }
                 var rec = PlayerRegistry.Get(name);
                 rec.Online = true;
                 rec.SessionStart = DateTime.UtcNow.ToString("o");
@@ -516,10 +534,20 @@ namespace TheRavensCall
             // first, so this whole block (including the narration) runs exactly
             // once per real disconnect rather than twice.
             if (!Patch_PlayerJoin.GetJoinTime(uid, out DateTime joinTime)) return;
+            bool untrusted = Patch_PlayerJoin.IsUntrusted(uid);
             Patch_PlayerJoin.ClearJoinTime(uid);
 
             var span = DateTime.UtcNow - joinTime;
             string duration = span.TotalHours >= 1 ? $" (played {(int)span.TotalHours}h {span.Minutes}m)" : $" (played {span.Minutes}m)";
+
+            // A peer on another account than its name's (PlatformBinding):
+            // the leave line only; the record belongs to someone else.
+            if (untrusted)
+            {
+                if (Plugin.EnablePlayerLeave.Value)
+                    Plugin.Narrate($"{name} has left the world{duration}.", "player_leave", name, duration.Trim());
+                return;
+            }
 
             var rec = PlayerRegistry.Get(name);
             rec.Online = false;
@@ -587,8 +615,11 @@ namespace TheRavensCall
     {
         public static void CloseOrphanedSessions()
         {
+            // A peer on another account than its name's does not keep that
+            // name's record open (PlatformBinding, 1.8.0).
             var connected = new HashSet<string>(
-                Plugin.GetConnectedPlayers().Select(p => p.name), StringComparer.OrdinalIgnoreCase);
+                Plugin.GetConnectedPlayers().Where(p => !Patch_PlayerJoin.IsUntrusted(p.peerUid)).Select(p => p.name),
+                StringComparer.OrdinalIgnoreCase);
 
             foreach (var rec in PlayerRegistry.All.ToList())
             {
@@ -869,6 +900,7 @@ namespace TheRavensCall
             foreach (var p in Plugin.GetConnectedPlayers())
             {
                 if (Vector3.Distance(p.pos, position) > radius) continue;
+                if (Patch_PlayerJoin.IsUntrusted(p.peerUid)) continue; // PlatformBinding, 1.8.0
 
                 var rec = PlayerRegistry.Get(p.name);
                 rec.BossKillsCredited++;
@@ -2786,8 +2818,21 @@ namespace TheRavensCall
             // sends it through ZNet.RemoteCommand, the server checks the admin
             // list in RPC_RemoteCommand, and this action runs here. Without
             // the stub a client never knew the name at all (review 2026-09-15).
-            new Terminal.ConsoleCommand("ravenscall", "Usage: ravenscall season start [name] | ravenscall season end | ravenscall title <player> [<title>|clear]", args =>
+            new Terminal.ConsoleCommand("ravenscall", "Usage: ravenscall season start [name] | ravenscall season end | ravenscall title <player> [<title>|clear] | ravenscall unbind <player>", args =>
             {
+                if (args.Length >= 2 && args[1] == "unbind")
+                {
+                    // 1.8.0: release a name from the account it is bound to
+                    // (PlatformBinding), e.g. a player who moved from Steam
+                    // to Xbox. The next account to join under it takes it.
+                    var utoks = args.Args.Skip(2).Where(t => !string.IsNullOrEmpty(t)).ToList();
+                    if (utoks.Count < 1) { args.Context?.AddString("[TheRavensCall] Usage: ravenscall unbind <player>"); return; }
+                    string uname = string.Join(" ", utoks);
+                    args.Context?.AddString(PlatformBinding.Unbind(uname)
+                        ? $"[TheRavensCall] {uname} is no longer bound to an account; the next one to join under that name takes it."
+                        : $"[TheRavensCall] {uname} is not bound to an account.");
+                    return;
+                }
                 if (args.Length >= 2 && args[1] == "title")
                 {
                     // Admin path (1.7.0): no client mod needed — same rules as
@@ -2820,7 +2865,7 @@ namespace TheRavensCall
                     args.Context?.AddString($"[TheRavensCall] {rec.Name}: {reply.text}");
                     return;
                 }
-                if (args.Length < 2 || args[1] != "season") { args.Context?.AddString("[TheRavensCall] Usage: ravenscall season start [name] | ravenscall season end | ravenscall title <player> [<title>|clear]"); return; }
+                if (args.Length < 2 || args[1] != "season") { args.Context?.AddString("[TheRavensCall] Usage: ravenscall season start [name] | ravenscall season end | ravenscall title <player> [<title>|clear] | ravenscall unbind <player>"); return; }
                 if (args.Length >= 3 && args[2] == "start")
                 {
                     string sName = args.Length >= 4 ? args[3] : "Season_" + DateTime.UtcNow.ToString("yyyyMMdd");
@@ -2842,7 +2887,7 @@ namespace TheRavensCall
                 }
                 else
                 {
-                    args.Context?.AddString("[TheRavensCall] Usage: ravenscall season start [name] | ravenscall season end | ravenscall title <player> [<title>|clear]");
+                    args.Context?.AddString("[TheRavensCall] Usage: ravenscall season start [name] | ravenscall season end | ravenscall title <player> [<title>|clear] | ravenscall unbind <player>");
                 }
             }, onlyServer: true, remoteCommand: true);
         }
