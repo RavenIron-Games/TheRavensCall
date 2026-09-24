@@ -7,6 +7,23 @@
 
 ---
 
+## 🟢 [1.7.2] — NAME TBD
+
+*A cleanup release: how the DLL is built, and one docs fix. No code, config, API shape or dashboard changes — on a server it behaves exactly like 1.7.1.*
+
+### 🔧 Changed
+- **The DLL no longer carries an absolute build path that included the build machine's user name.** Every DLL through 1.7.1 named the folder it was built in as its debug-symbol path. The project now maps its source folders to neutral names at build time, so neither the DLL nor its debug symbols name a local folder, wherever the repository is checked out or copied. DLLs already published are unchanged.
+- `HexiumDist/plugins/TheRavensCall.dll` refreshed: a clean `dotnet build -c Release` of commit `TBD` (md5 `TBD`, TBD bytes). Two clean builds of the same commit are byte-identical in any git clone of the repository (Windows, Git's default line endings, the same .NET SDK).
+
+### 📝 Docs
+- `hosting/netlify/README.md`: the PowerShell line that makes a random token now runs on Windows PowerShell 5.1 as well as PowerShell 7 (the one before used a call only PowerShell 7 has).
+
+### Tested
+- `dotnet build -c Release`, 0 warnings, 0 errors; the built DLL names its debug-symbol path as `/_/obj/Release/TheRavensCall.pdb` and contains no local folder. Two clean builds of the same tree are byte-identical.
+- Not run in game: no code changed since 1.7.1.
+
+---
+
 ## 🟢 [1.7.1] — The Raven Missed Something
 
 *One wrong number, fixed. No config, API shape or dashboard changes.*
@@ -88,7 +105,6 @@
 
 ### Tested
 - The Linux boot of 1.5.0 passed on WSL2 Valheim 1.0.15 (`docs/TESTPLAN-linux-wsl2-2026-09-22.md`): the mod boots, serves, and counts a copy of Storm10's world to the object, and `HttpWebRequest` completes https requests with certificate validation on. 1.6.0's own push test plan (§8 of `docs/SCOPE-1.6.0.md`) ran locally the same day (`docs/TESTPLAN-local-1.6.0-2026-09-22.md`): steps 1–7 and 10 pass against a local receiver — Storm10 on Windows and the WSL2 Linux server (Valheim 1.0.15) both push; the change gate, the heartbeat, the backoff and recovery, the `401` and `409` refusals end to end (the receiver's `413` and `422` checked from a harness; the 15-minute retry and the hourly re-log not run), `429` handling and the hosted page's waiting, `304`, visibility and stale states all behave as scoped. Then the receiver was deployed to RavenIron's Netlify team and the Linux server pushed to it over https with certificate validation (§8 steps 8 and 9, the release gate); function durations measured at 4–130 ms warm. Not yet run on a rented host. Since 2026-09-22 a real Windows dedicated server on another host pushes to the deployed receiver over the internet (state, feed, a 1.1-million-object census) on the default interval and heartbeat.
-- Netlify credit use for the receiver is to be read from the team's usage page after 24 hours of real hosted traffic and recorded here; it was not yet measured when this release was cut.
 
 ### 🔧 Changed
 - `HexiumDist/plugins/TheRavensCall.dll` refreshed: a clean `dotnet build -c Release` of the 1.6.0 source (md5 `334d21ad2c0870933154cdf5d141bc15`, 274,944 bytes; two clean builds of the same commit are byte-identical). It differs from the build that ran the release gate and the first hosted server (md5 `1799895da19c894ab6d12d3e92a2acd2`, also 274,944 bytes) only in the embedded dashboard page, which carries the hosted-page ETag fix; no C# changed between the two.
