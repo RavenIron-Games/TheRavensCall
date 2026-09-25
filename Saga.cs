@@ -367,19 +367,32 @@ namespace TheRavensCall
         // name must belong to someone actually connected right now. A
         // modded client can lie about names in the RPC payload; it cannot
         // invent a connected player. ────────────────────────────────────
+        // An exact match wins over one that differs only in case (1.8.0):
+        // with a peer connected under a case variant of the listen host's
+        // name, the host's crow report and this server's own hooks must
+        // credit the same spelling, or CombatEventDedup (whose keys are
+        // case-sensitive) cannot collapse the pair. The host is yielded
+        // last, so a case-insensitive first match would be the peer.
         public static bool TryVerifyConnectedPlayer(string name, out string verifiedName, out Vector3 position)
         {
             verifiedName = null;
             position = Vector3.zero;
             if (string.IsNullOrEmpty(name)) return false;
+            bool found = false;
             foreach (var p in GetConnectedPlayers())
             {
-                if (!string.Equals(p.name, name, StringComparison.OrdinalIgnoreCase)) continue;
+                if (string.Equals(p.name, name, StringComparison.Ordinal))
+                {
+                    verifiedName = p.name;
+                    position = p.pos;
+                    return true;
+                }
+                if (found || !string.Equals(p.name, name, StringComparison.OrdinalIgnoreCase)) continue;
                 verifiedName = p.name;
                 position = p.pos;
-                return true;
+                found = true;
             }
-            return false;
+            return found;
         }
 
         // ── Second half of that trust boundary: a self-report must name the
@@ -595,7 +608,13 @@ namespace TheRavensCall
         // A peer already connected under the host's name (it joined in the
         // moments before the host's character spawned) is marked untrusted
         // first, as a later one is in Postfix, so it cannot write the host's
-        // record or close the session that starts now. ────────────────────
+        // record or close the session that starts now. Its own join was a
+        // trusted one and opened a session on the host's record, which
+        // TrustedJoin below would take for the host's quick rejoin (crediting
+        // the peer's minutes to the host's playtime and writing a false
+        // "(connection lost)" leave): that session is dropped here, with no
+        // credit and no line. Its JoinTimes entry stays, so its own leave
+        // still gets the leave line an untrusted peer gets. ───────────────
         internal static void HostJoin(long uid, string name)
         {
             if (_fired.Contains(uid)) return;
@@ -604,7 +623,11 @@ namespace TheRavensCall
                 if (peer == null || !peer.IsReady() || _untrusted.Contains(peer.m_uid)) continue;
                 if (!string.Equals(peer.m_playerName, name, StringComparison.OrdinalIgnoreCase)) continue;
                 _untrusted.Add(peer.m_uid);
-                Plugin.Log.LogWarning($"[TheRavensCall] {peer.m_playerName} is connected under the name of the player hosting this world; its self-reports and title changes are refused from now on and it does not update {name}'s record.");
+                var rec = PlayerRegistry.Get(name);
+                rec.Online = false;
+                rec.SessionStart = null;
+                rec.Dirty = true;
+                Plugin.Log.LogWarning($"[TheRavensCall] {peer.m_playerName} joined under the name of the player hosting this world before the host's character spawned: its session is discarded (no playtime, no leave line), its self-reports and title changes are refused from now on and it does not update {name}'s record. Its join bound the name {name} to that connection's account (ravenscall unbind {name} releases the name).");
             }
             _fired.Add(uid);
             JoinTimes[uid] = DateTime.UtcNow;
@@ -748,8 +771,8 @@ namespace TheRavensCall
         // under, kept for the leave.
         private static long _uid;
         private static string _name;
-        // The host's own WhereTheCrowFlies has reported this world session
-        // (see CrowReportsDamage).
+        // The host's own WhereTheCrowFlies has sent telemetry this world
+        // session (see CrowReportsDamageTaken).
         private static bool _crowReports;
 
         // A new world session (Patch_ZNetAwake). A host session the last one
@@ -814,19 +837,40 @@ namespace TheRavensCall
             catch (Exception ex) { Plugin.Log.LogWarning($"[TheRavensCall] Host leave error: {ex.Message}"); }
         }
 
+        // Called by the two receivers for a TELEMETRY report from the host
+        // (not a title request, which the crow sends even with its
+        // EnableReporting off), after its schema check and before the
+        // report is handled, so the flag is set before any damage batch of
+        // this world session is credited. In practice the crow's first
+        // telemetry report is the snapshot it sends at spawn.
         internal static void NoteCrowReport() => _crowReports = true;
 
-        // Patch_Damage runs in this process for every hit this process
-        // produces, so on a listen host it sees the host's own swings and
-        // every hit the host's character takes from something this process
-        // simulates. The host's WhereTheCrowFlies (1.3.0+) reports that same
-        // damage in its batches, so once it has reported this world session
-        // (its first report is the snapshot it sends at spawn) the host's
-        // damage comes from the batches alone. Without it the patch stays
-        // the host's only source, as before 1.8.0. Every other player's
-        // damage is left to the patch as before: WhereTheCrowFlies leaves
-        // out the hits a server process produced (its FromServerProcess).
-        internal static bool CrowReportsDamage(Player p) =>
+        // The host's damage, split by direction so that each hit counts
+        // once with any WhereTheCrowFlies version, or none:
+        //  - DEALT always comes from Patch_Damage's attacker branch.
+        //    Character.Damage runs in the process that produced the hit
+        //    (decomp Character.cs:2232-2239), so this process sees every hit
+        //    the host deals, on any target, whoever owns it. The receivers
+        //    drop the damage dealt in the host's own batches: a crow through
+        //    1.2.x counts only hits on targets this process owns.
+        //  - TAKEN comes from the host's crow once it has sent telemetry
+        //    this world session, and then Patch_Damage's victim branch skips
+        //    the host. A 1.3.0 crow counts every hit the host's character
+        //    takes where it applies the damage (Character.ApplyDamage: hits
+        //    from other players' games, burning, poison and spirit ticks
+        //    too); a crow through 1.2.x counts the same hits the victim
+        //    branch sees (its Character.Damage prefix on the host's own
+        //    character). Before that first report, or with no crow, the
+        //    victim branch stays the host's source, as before 1.8.0.
+        // Known limits: a crow whose EnableReporting is switched off
+        // mid-session leaves the host's damage taken uncounted for the rest
+        // of the world session (switched on, up to one 10 s batch counts
+        // twice); at a logout or quit up to 10 s of damage taken is still
+        // in the crow's unsent batch and is never counted, the same as for
+        // a client that disconnects. Every other player's damage is left to
+        // the patch as before: WhereTheCrowFlies leaves out the hits a
+        // server process produced (its FromServerProcess).
+        internal static bool CrowReportsDamageTaken(Player p) =>
             _crowReports && p != null && p == Player.m_localPlayer;
     }
 
@@ -944,9 +988,13 @@ namespace TheRavensCall
     // for any future/alternate topology where it does fire. Delegates to
     // CombatCredit so it can never disagree with the live RPC path below.
     // It does fire on a listen host, for every hit that process produces;
-    // there the host's own damage comes from its WhereTheCrowFlies batches
-    // instead once they arrive (HostSession.CrowReportsDamage), since
-    // CreditDamage has no dedup to collapse the two. ──────────────────
+    // there it is always the source of the host's damage DEALT, and of its
+    // damage TAKEN until the host's WhereTheCrowFlies sends telemetry
+    // (HostSession.CrowReportsDamageTaken), since CreditDamage has no dedup
+    // to collapse the two. A remote player on a connection the join marked
+    // untrusted (a name bound to another account, or the host's name) is
+    // credited nothing here, as attacker or victim, so its damage stays
+    // refused for the hits this process produces too (1.8.0). ─────────
     [HarmonyPatch(typeof(Character), nameof(Character.Damage))]
     public static class Patch_Damage
     {
@@ -956,12 +1004,27 @@ namespace TheRavensCall
             {
                 if (!Plugin.IsServer() || hit == null) return;
                 var attacker = Plugin.ResolveAttacker(hit);
-                if (attacker != null && __instance != attacker && !HostSession.CrowReportsDamage(attacker))
+                if (attacker != null && __instance != attacker && !IsUntrustedRemote(attacker))
                     CombatCredit.CreditDamage(attacker.GetPlayerName(), hit.GetTotalDamage(), 0f);
-                if (__instance is Player victim && !HostSession.CrowReportsDamage(victim))
+                if (__instance is Player victim && !HostSession.CrowReportsDamageTaken(victim) && !IsUntrustedRemote(victim))
                     CombatCredit.CreditDamage(victim.GetPlayerName(), 0f, hit.GetTotalDamage());
             }
             catch (Exception ex) { Plugin.Log.LogWarning($"[TheRavensCall] Damage tracking error: {ex.Message}"); }
+        }
+
+        // A player other than this process's own whose connection is
+        // untrusted (Patch_PlayerJoin.IsUntrusted), found by its character
+        // ZDO. Runs for every hit that involves a player, so a plain loop
+        // over ZNet's own peer list, no allocation. The listen host's own
+        // player has no peer and is never untrusted.
+        private static bool IsUntrustedRemote(Player p)
+        {
+            if (p == Player.m_localPlayer || ZNet.instance == null) return false;
+            ZDOID id = p.GetZDOID();
+            if (id == ZDOID.None) return false;
+            foreach (var peer in ZNet.instance.GetPeers())
+                if (peer != null && peer.m_characterID == id) return Patch_PlayerJoin.IsUntrusted(peer.m_uid);
+            return false;
         }
     }
 
@@ -1470,7 +1533,17 @@ namespace TheRavensCall
         // (a stack, since either can run inside the other): the delivering
         // peer's uid (0 = no ready peer), or a local call of this process.
         // A local invoke made inside a peer's RoutedRPC is on top of it.
-        private static readonly Stack<(long uid, bool local)> _delivering = new Stack<(long uid, bool local)>();
+        // One stack per thread: RPC_RoutedRPC runs on the main thread only
+        // (the network pump), but InvokeRoutedRPC is public and another mod
+        // may call it from any thread, and that call's LOCAL entry must
+        // never sit on top of a remote peer's report the main thread is
+        // handling (nor may two threads share a Stack, which is not
+        // thread-safe). A [ThreadStatic] initializer would only run for
+        // the first thread, so each accessor creates the thread's stack
+        // lazily, once.
+        [ThreadStatic] private static Stack<(long uid, bool local)> _delivering;
+        private static Stack<(long uid, bool local)> Delivering =>
+            _delivering ?? (_delivering = new Stack<(long uid, bool local)>());
         private static readonly Dictionary<long, float> _lastWarn = new Dictionary<long, float>();
 
         private static void Prefix(ZRpc rpc, out int __state)
@@ -1487,8 +1560,9 @@ namespace TheRavensCall
         // Returns the stack's depth with the new entry on it, for PopTo.
         internal static int Push(long uid, bool local)
         {
-            _delivering.Push((uid, local));
-            return _delivering.Count;
+            var stack = Delivering;
+            stack.Push((uid, local));
+            return stack.Count;
         }
 
         // Back to the depth below the entry Push returned `depth` for, so an
@@ -1498,7 +1572,8 @@ namespace TheRavensCall
         internal static void PopTo(int depth)
         {
             if (depth <= 0) return;
-            while (_delivering.Count >= depth) _delivering.Pop();
+            var stack = Delivering;
+            while (stack.Count >= depth) stack.Pop();
         }
 
         // True only when `claimed` is the uid of the ready peer whose
@@ -1506,18 +1581,21 @@ namespace TheRavensCall
         // peer), or, for a call this process made on itself, when it is a
         // listen host and `claimed` is the host uid (the reporter is then
         // the host, with no peer).
+        // No side effects: whether the host's crow sends telemetry is noted
+        // by the receivers (HostSession.NoteCrowReport), after they know
+        // what kind of report this is.
         public static bool TryResolveSender(long claimed, out Reporter reporter)
         {
             reporter = default;
-            if (_delivering.Count == 0 || ZNet.instance == null) return false;
-            var top = _delivering.Peek();
+            var stack = Delivering;
+            if (stack.Count == 0 || ZNet.instance == null) return false;
+            var top = stack.Peek();
             if (top.local)
             {
                 // Refused without a word otherwise: the "claimed to send as"
                 // warning below is for a real connection only.
                 if (claimed != ZNet.GetUID() || !Plugin.TryGetHostPlayer(out var host)) return false;
-                HostSession.NoteCrowReport();
-                reporter = new Reporter(null, true, claimed, host.name);
+                reporter = new Reporter(null, true, host.name);
                 return true;
             }
             long delivering = top.uid;
@@ -1538,7 +1616,7 @@ namespace TheRavensCall
             }
             var peer = ZNet.instance.GetPeer(claimed);
             if (peer == null || !peer.IsReady()) return false;
-            reporter = new Reporter(peer, false, claimed, peer.m_playerName);
+            reporter = new Reporter(peer, false, peer.m_playerName);
             return true;
         }
     }
@@ -1566,20 +1644,20 @@ namespace TheRavensCall
 
     // ── Who sent a report RoutedSenderGuard resolved (1.8.0): a remote peer
     // (Peer set), or the listen host's own WhereTheCrowFlies (IsHost, no
-    // Peer). Uid is the verified sender: the peer's uid or the host uid.
-    // Name is the peer's m_playerName or the host character's name. ──────
+    // Peer). Name is the peer's m_playerName or the host character's name.
+    // The verified sender uid is the handlers' `sender` itself: a resolved
+    // report's claimed sender is the delivering peer's uid or the host
+    // uid. ───────────────────────────────────────────────────────────────
     public readonly struct Reporter
     {
         public readonly ZNetPeer Peer;
         public readonly bool IsHost;
-        public readonly long Uid;
         public readonly string Name;
 
-        public Reporter(ZNetPeer peer, bool isHost, long uid, string name)
+        public Reporter(ZNetPeer peer, bool isHost, string name)
         {
             Peer = peer;
             IsHost = isHost;
-            Uid = uid;
             Name = name;
         }
     }
@@ -1734,6 +1812,11 @@ namespace TheRavensCall
                 int schema = pkg.ReadInt();
                 if (schema != SchemaVersion) return; // unknown future schema: ignore, never guess
 
+                // Every V1 report is telemetry (V1 has no title request), so
+                // from here on the host's damage taken comes from its crow
+                // (HostSession.CrowReportsDamageTaken).
+                if (reporter.IsHost) HostSession.NoteCrowReport();
+
                 byte eventType = pkg.ReadByte();
                 string prefabOrCause = Cap(pkg.ReadString(), 64);
                 string attackerName = Cap(pkg.ReadString(), 32);
@@ -1794,9 +1877,11 @@ namespace TheRavensCall
                     // WhereTheCrowFlies v1.0.0 (V1-only, pre-V2) client's
                     // packet is the only copy it'll ever send, so only skip
                     // when this player has been confirmed to also be sending
-                    // V2 (see V2DamageTracker).
+                    // V2 (see V2DamageTracker). A listen host's damage dealt
+                    // comes from Patch_Damage alone (HostSession), so only its
+                    // damage taken is credited from here.
                     case 3:
-                        if (!V2DamageTracker.RecentlySeen(verified)) CombatCredit.CreditDamage(verified, dmgDealt, dmgTaken);
+                        if (!V2DamageTracker.RecentlySeen(verified)) CombatCredit.CreditDamage(verified, reporter.IsHost ? 0f : dmgDealt, dmgTaken);
                         break;
                     case 4: CombatCredit.CreditFish(verified, prefabOrCause); break;
                     default:
@@ -1874,6 +1959,12 @@ namespace TheRavensCall
                 if (schema != SchemaVersion) return; // unknown future schema: ignore, never guess
 
                 byte eventType = pkg.ReadByte();
+                // Telemetry from the host's crow: from here on the host's
+                // damage taken comes from its batches (HostSession). A title
+                // request (13) is not telemetry: the crow sends it, and the
+                // title panel's list request, even with EnableReporting off,
+                // when no damage batch will ever come.
+                if (reporter.IsHost && eventType != 13) HostSession.NoteCrowReport();
                 switch (eventType)
                 {
                     case 1: HandleKill(sender, pkg); break;
@@ -1983,7 +2074,10 @@ namespace TheRavensCall
 
             if (!VerifySelf(reporter, playerName, out string verified)) return;
             V2DamageTracker.MarkSeen(verified); // tells V1's damage case this player's dual-sent V1 copy is redundant
-            float dmgDealt = Mathf.Clamp(dealtCreatures + dealtPlayers, 0f, 20000f);
+            // A listen host's damage dealt comes from Patch_Damage alone
+            // (see HostSession.CrowReportsDamageTaken); its taken, blocks and
+            // parries come from here like any player's.
+            float dmgDealt = reporter.IsHost ? 0f : Mathf.Clamp(dealtCreatures + dealtPlayers, 0f, 20000f);
             float dmgTaken = Mathf.Clamp(takenCreatures + takenPlayers + takenEnv, 0f, 20000f);
             CombatCredit.CreditDamage(verified, dmgDealt, dmgTaken);
             CombatCredit.CreditBlockDefense(verified, blocks, parries, Mathf.Clamp(dmgBlocked, 0f, 20000f));

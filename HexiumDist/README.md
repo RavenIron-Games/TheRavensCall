@@ -394,7 +394,7 @@ BepInEx/config/TheRavensCall/
 2. Place `TheRavensCall.dll` into `BepInEx/plugins/`.
 3. Launch server to generate configuration files.
 
-A world hosted from the game itself (a listen server) instead takes `TheRavensCall.dll` in the host's own game. Since 1.8.0 the host is tracked like any other player; for the host's own stats, skills, building, crafting and `/title`, add WhereTheCrowFlies 1.3.0+ to the host's game as well.
+A world hosted from the game itself (a listen server) instead takes `TheRavensCall.dll` in the host's own game. Since 1.8.0 the host is tracked like any other player. WhereTheCrowFlies in the host's game reports the host's own stats, skills, building, crafting and the rest, whatever its version; `/title` and the title panel on the host need WhereTheCrowFlies 1.3.0+.
 
 ### Client Setup (Players)
 1. Players install [WhereTheCrowFlies](https://valheim.thunderstore.io/package/RavenIron/WhereTheCrowFlies) on their Valheim game clients.
@@ -451,7 +451,7 @@ Yes. 1.6.0 has run on a Linux dedicated server on Valheim 1.0.15 (under WSL2), i
 Valheim 1.0. The 1.6.0 build and later have run on 1.0.15, on a Windows dedicated server and a Linux one. The older 0.22x builds are not supported: on them the `ravenscall` console command fails to register at load, and the world census throws on its first run.
 
 **Can I run it on a listen server hosted from the game?**
-Yes, installed in the host's game. Since 1.8.0 the host is a player like the others: it counts as online, gets boss credit and titles, and gets join and leave lines and playtime. Its stats, skills, building, crafting, harvesting and `/title` need WhereTheCrowFlies 1.3.0+ in the host's game too; without it the server still sees the kills, deaths, damage and catches the host's own game runs. A single-player world with the mod installed works the same way, with nobody else on. The mod is built and tested for dedicated servers; the listen-server host has not been run in a game yet.
+Yes, installed in the host's game. Since 1.8.0 the host is a player like the others: it counts as online, gets boss credit and titles, and gets join and leave lines and playtime. Its stats, skills, building, crafting and harvesting come from WhereTheCrowFlies in the host's game, any version; `/title` and the title panel there need WhereTheCrowFlies 1.3.0+. Without WhereTheCrowFlies on the host, the server still counts the host's kills, deaths, catches, boss credit and damage. A single-player world with the mod installed works the same way, with nobody else on. The mod is built and tested for dedicated servers; the listen-server host has not been run in a game yet.
 
 **How do I take a server off a hosted dashboard?**
 Send `DELETE /s/<id>/api` to the receiver with the write token in the `Authorization: Bearer` header; the stored copy is removed and the page reads "no data" again. Then remove the id from the receiver's registry and redeploy, so the tokens are dead too. Clearing `PushUrl` on the server stops new pushes at the next restart.

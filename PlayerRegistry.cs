@@ -381,10 +381,20 @@ namespace TheRavensCall
         // Load every existing player file at server startup so the registry
         // (and therefore the BarrkBOT export and /api/state) is complete
         // immediately, not just for players who happen to reconnect first.
+        // Runs at every world session's ZNet.Awake (Patch_ZNetAwake), and a
+        // listen host can load a second world in one process: it starts
+        // clean then, as a fresh process would. Records dirtied since the
+        // last poll tick's SaveDirty are written first (a logout to the menu
+        // runs no SaveAll; Plugin.OnDestroy only runs at quit). The players
+        // folder is one per install, not per world, so they land where they
+        // were read from. Without the clear, every file was "already taken"
+        // by its own record from the last world session and skipped.
         public static void LoadAll()
         {
             try
             {
+                SaveDirty();
+                _records.Clear();
                 Directory.CreateDirectory(PlayersDir);
                 foreach (string file in Directory.GetFiles(PlayersDir, "*.json"))
                 {
