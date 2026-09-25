@@ -118,7 +118,7 @@ namespace TheRavensCall
             EnableDeathMilestone = Config.Bind("Events", "EnableDeathMilestone", true, "Log/announce death milestones");
             EnableGearTier = Config.Bind("Events", "EnableGearTier", true, "Log/announce new gear tier reached");
             EnableTitleEarned = Config.Bind("Events", "EnableTitleEarned", true, "Log/announce when a title is earned");
-            SyncTitlesToNameplates = Config.Bind("Events", "SyncTitlesToNameplates", true, "Send every player's active title to the game clients, so players running WhereTheCrowFlies 1.3.0+ see each other's active title on a line under the name on the nameplate. Sent when a player joins and whenever an active title changes. Off = nothing is sent and the nameplates show plain names");
+            SyncTitlesToNameplates = Config.Bind("Events", "SyncTitlesToNameplates", true, "Send every player's active title to the game clients, so players running WhereTheCrowFlies 1.3.0+ see each other's active title on a line under the name on the nameplate. Sent when a player joins and whenever an active title changes. Off = nothing is sent and the nameplates show no TheRavensCall title line (other mods' lines, like Ragnarok's Wrath's, are not affected)");
             AnnounceTitleEarnedInGame = Config.Bind("Events", "AnnounceTitleEarnedInGame", true, "Show \"<player> has earned the title: <title>\" in the middle of every connected player's screen when a player earns a title for the first time (picking or clearing a title is not announced). Needs no client mod. Every title gets its line; players who earn the same title together share one line with every name. Lines go out one after another, 4 seconds apart, and after a boss kill they wait until the game's own boss message has faded. At most 10 lines wait (a title past that is not shown on screen) and a line that waited more than 50 seconds is dropped. The Chronicle/Discord line (EnableTitleEarned) is not affected");
             EnableRaid = Config.Bind("Events", "EnableRaid", true, "Record raid start and end in the Chronicle and the dashboard feed (raid_start / raid_end). Not posted to Discord. The raid banner and raid_active work either way.");
             ShowDayNumber = Config.Bind("Format", "ShowDayNumber", true, "Append day number to messages");
@@ -2361,7 +2361,8 @@ namespace TheRavensCall
     // accepted limit: a player joining under a name bound to another
     // account (PlatformBinding, "untrusted") can show that name's title too
     // (when the player who owns the name is or was online in the same
-    // session); the nameplate already shows the name itself.
+    // session, or an admin changed that name's title with `ravenscall
+    // title` during it); the nameplate already shows the name itself.
     // Sent at every join (the whole online table, to every client, the
     // joining one included) and wherever a player's active title changes:
     // SetTitle, ClearTitle (the admin's `ravenscall title` goes through
