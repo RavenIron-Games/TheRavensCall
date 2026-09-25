@@ -28,8 +28,8 @@ In Valheim's multiplayer architecture, the dedicated server acts as a world-stat
 To provide seamless, 100% accurate tracking without missing a single event, the system uses two coordinated mods:
 
 1. **The Raven's Call (Server Mod — This Mod)**
-   - Installed on the **Dedicated Server** (or listen-server host).
-   - Listens for telemetry routed RPCs (`RavensCall_EventReport_V2` and `RavensCall_CombatReport_V1`) from connected clients.
+   - Installed on the **Dedicated Server** (or listen-server host). Since 1.8.0 a listen-server host is tracked as a player like the others.
+   - Listens for telemetry routed RPCs (`RavensCall_EventReport_V2` and `RavensCall_CombatReport_V1`) from connected clients, and on a listen server from the host's own client.
    - Verifies incoming reports against connected players to ensure authentic data.
    - Maintains the persistent multi-player database (`BepInEx/config/TheRavensCall/players/`).
    - Serves the live web dashboard on port `2112`.
@@ -394,6 +394,8 @@ BepInEx/config/TheRavensCall/
 2. Place `TheRavensCall.dll` into `BepInEx/plugins/`.
 3. Launch server to generate configuration files.
 
+A world hosted from the game itself (a listen server) instead takes `TheRavensCall.dll` in the host's own game. Since 1.8.0 the host is tracked like any other player; for the host's own stats, skills, building, crafting and `/title`, add WhereTheCrowFlies 1.3.0+ to the host's game as well.
+
 ### Client Setup (Players)
 1. Players install [WhereTheCrowFlies](https://valheim.thunderstore.io/package/RavenIron/WhereTheCrowFlies) on their Valheim game clients.
 2. Combat, deaths, boss encounters, and stats will automatically transmit to The Raven's Call.
@@ -449,7 +451,7 @@ Yes. 1.6.0 has run on a Linux dedicated server on Valheim 1.0.15 (under WSL2), i
 Valheim 1.0. The 1.6.0 build and later have run on 1.0.15, on a Windows dedicated server and a Linux one. The older 0.22x builds are not supported: on them the `ravenscall` console command fails to register at load, and the world census throws on its first run.
 
 **Can I run it on a listen server hosted from the game?**
-It is built and tested for dedicated servers. It loads on a listen-server host, but that setup has not been tested.
+Yes, installed in the host's game. Since 1.8.0 the host is a player like the others: it counts as online, gets boss credit and titles, and gets join and leave lines and playtime. Its stats, skills, building, crafting, harvesting and `/title` need WhereTheCrowFlies 1.3.0+ in the host's game too; without it the server still sees the kills, deaths, damage and catches the host's own game runs. A single-player world with the mod installed works the same way, with nobody else on. The mod is built and tested for dedicated servers; the listen-server host has not been run in a game yet.
 
 **How do I take a server off a hosted dashboard?**
 Send `DELETE /s/<id>/api` to the receiver with the write token in the `Authorization: Bearer` header; the stored copy is removed and the page reads "no data" again. Then remove the id from the receiver's registry and redeploy, so the tokens are dead too. Clearing `PushUrl` on the server stops new pushes at the next restart.

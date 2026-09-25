@@ -190,6 +190,45 @@ namespace TheRavensCall
 
         public static bool IsServer() => ZNet.instance != null && ZNet.instance.IsServer();
 
+        // ── The listen-server host (1.8.0), the contract shared with
+        // WhereTheCrowFlies 1.3.0: this process is the server, not a
+        // dedicated one, and has a player of its own. A single-player world
+        // with this mod installed is the same case with nobody else on. The
+        // host plays inside the server process, so it has no ZNetPeer; its
+        // uid is ZNet.GetUID(), which is also this process's routed-RPC id
+        // (both are ZDOMan.GetSessionID(): ZNet.cs:396 and :2163, 1.0.15). It
+        // is the machine running the server, so name binding (PlatformBinding)
+        // never applies to it and it is never untrusted. A dedicated server
+        // has no local player; a pure client is no server. ─────────────────
+        internal static bool IsListenHost() =>
+            ZNet.instance != null && ZNet.instance.IsServer() && !ZNet.instance.IsDedicated() && Player.m_localPlayer != null;
+
+        // The host as a connected player, in GetConnectedPlayers' shape, when
+        // its name is storable. Between a death and the respawn the game has
+        // no local player (Game._RequestRespawn destroys it and the next one
+        // spawns once the spawn area has loaded, Game.cs:655-668 and
+        // :760-770), while a dead peer stays in ZNet's list; so the host
+        // stays connected too while its session is open (HostSession), at
+        // its reference position and with no player id, like a peer whose
+        // character ZDO is gone.
+        internal static bool TryGetHostPlayer(out (string name, Vector3 pos, long peerUid, long playerID) host)
+        {
+            host = default;
+            var znet = ZNet.instance;
+            if (znet == null || !znet.IsServer() || znet.IsDedicated()) return false;
+            var local = Player.m_localPlayer;
+            if (local != null)
+            {
+                string name = local.GetPlayerName();
+                if (PlatformBinding.IsStorableName(name))
+                {
+                    host = (name, local.transform.position, ZNet.GetUID(), local.GetPlayerID());
+                    return true;
+                }
+            }
+            return HostSession.TryGetOpen(znet.GetReferencePosition(), out host);
+        }
+
         // ── Narrate: writes to Chronicle only (used for join/leave/world-event/
         // lore/season lines, matching the original design where these were
         // considered too frequent/low-stakes for a Discord post) ──────────────
@@ -300,6 +339,12 @@ namespace TheRavensCall
         // ZDO isn't resolvable yet. Added in 1.5.0 for WorldCensus, which
         // matches it against ZDO.GetLong(ZDOVars.s_creator) to name builders
         // while they're connected (see WorldCensus.cs).
+        // 1.8.0: a listen host's own player comes last, with peerUid = the
+        // host uid, which no ZNetPeer has (RPC_PeerInfo turns away a uid
+        // ZNet.IsConnected already knows, and that counts the host's own,
+        // ZNet.cs:1238 and :1287). Nothing here may look a peerUid up with
+        // ZNet.GetPeer; the join table, IsUntrusted and HasOpenSession are
+        // keyed by uid alone and take the host's too.
         public static IEnumerable<(string name, Vector3 pos, long peerUid, long playerID)> GetConnectedPlayers()
         {
             if (ZNet.instance == null) yield break;
@@ -315,6 +360,7 @@ namespace TheRavensCall
                 long playerID = zdo != null ? zdo.GetLong(ZDOVars.s_playerID, 0L) : 0L;
                 yield return (peer.m_playerName, pos, peer.m_uid, playerID);
             }
+            if (TryGetHostPlayer(out var host)) yield return host;
         }
 
         // ── Trust boundary for CombatReportReceiver: a reported attacker
@@ -352,6 +398,15 @@ namespace TheRavensCall
             return string.Equals(reporter.m_playerName, reportedName, StringComparison.OrdinalIgnoreCase)
                 && !Patch_PlayerJoin.IsUntrusted(reporter.m_uid)
                 && PlatformBinding.Check(reporter, allowBind: false);
+        }
+
+        // The same check for whoever RoutedSenderGuard resolved (1.8.0): a
+        // peer exactly as above; the listen host by its own character's name
+        // alone (no binding, never untrusted, see IsListenHost).
+        internal static bool IsSelfReport(Reporter reporter, string reportedName)
+        {
+            if (!reporter.IsHost) return IsSelfReport(reporter.Peer, reportedName);
+            return !string.IsNullOrEmpty(reportedName) && string.Equals(reporter.Name, reportedName, StringComparison.OrdinalIgnoreCase);
         }
 
         public static HitData GetLastHit(Character c)
@@ -415,6 +470,10 @@ namespace TheRavensCall
             {
                 if (!ZNet.instance.IsServer()) return;
                 Plugin.WasServer = true;
+                // A new world session: a listen host's next first spawn is
+                // its join (1.8.0). First, so nothing below (the state cache
+                // prime) sees a host session an earlier one left open.
+                HostSession.Reset();
                 EventFeed.Init();
                 WorldCensus.Init();
                 PlayerRegistry.LoadAll();
@@ -498,7 +557,12 @@ namespace TheRavensCall
                 JoinTimes[peer.m_uid] = DateTime.UtcNow;
 
                 string name = string.IsNullOrEmpty(peer.m_playerName) ? "A Viking" : peer.m_playerName;
-                if (!PlatformBinding.Check(peer, allowBind: true))
+                // A peer under the listen host's own name (1.8.0) is not the
+                // host, who plays in this process: it is treated like a name
+                // bound to another account, and checked before PlatformBinding
+                // so it never binds the host's name to its own account.
+                bool hostsName = HostSession.HoldsName(name);
+                if (hostsName || !PlatformBinding.Check(peer, allowBind: true))
                 {
                     _untrusted.Add(peer.m_uid);
                     if (!PlatformBinding.IsStorableName(name))
@@ -512,61 +576,95 @@ namespace TheRavensCall
                         TitleSync.SendOnlineTable();
                         return;
                     }
-                    Plugin.Log.LogWarning($"[TheRavensCall] {name} joined from a different account than the one this name is bound to, or with no usable account id; its self-reports and title changes are refused and it does not update {name}'s record (ravenscall unbind {name} releases the name).");
+                    Plugin.Log.LogWarning(hostsName
+                        ? $"[TheRavensCall] {name} joined under the name of the player hosting this world; its self-reports and title changes are refused and it does not update {name}'s record."
+                        : $"[TheRavensCall] {name} joined from a different account than the one this name is bound to, or with no usable account id; its self-reports and title changes are refused and it does not update {name}'s record (ravenscall unbind {name} releases the name).");
                     if (Plugin.EnablePlayerJoin.Value)
                         Plugin.Narrate($"{name} has entered the world.", "player_join", name);
                     TitleSync.SendOnlineTable();
                     return;
                 }
-                var rec = PlayerRegistry.Get(name);
-
-                // 1.8.0: a quick rejoin. When a game crashes or a connection
-                // drops, the old peer stays connected until ZRpc's timeout
-                // (90 s on a crossplay server), and 1.0.15 then removes it
-                // without any leave hook. A rejoin inside that window used to
-                // overwrite SessionStart, so the whole earlier session never
-                // reached playtime_seconds_lifetime and got no leave line
-                // (review 2026-09-24). Close it here instead, and retire the
-                // earlier peers' join times under this name (and any whose
-                // peer is already gone), so a late leave hook for them cannot
-                // close the session that starts now.
-                bool closedEarlier = false;
-                if (rec.Online && !string.IsNullOrEmpty(rec.SessionStart) &&
-                    DateTime.TryParse(rec.SessionStart, null, System.Globalization.DateTimeStyles.RoundtripKind, out DateTime earlierStart))
-                {
-                    rec.PlaytimeSecondsLifetime += Math.Max(0, (long)(DateTime.UtcNow - earlierStart.ToUniversalTime()).TotalSeconds);
-                    closedEarlier = true;
-                }
-                foreach (long uid in JoinTimes.Keys.ToList())
-                {
-                    if (uid == peer.m_uid || _untrusted.Contains(uid)) continue;
-                    var other = ZNet.instance.GetPeer(uid);
-                    if (other == null || string.Equals(other.m_playerName, name, StringComparison.OrdinalIgnoreCase))
-                    { JoinTimes.Remove(uid); _fired.Remove(uid); }
-                }
-                if (closedEarlier && Plugin.EnablePlayerLeave.Value)
-                    Plugin.Narrate($"{name} has left the world (connection lost).", "player_leave", name, "(connection lost)");
-
-                rec.Online = true;
-                rec.SessionStart = DateTime.UtcNow.ToString("o");
-                rec.LastSeen = rec.SessionStart;
-                // Session-scoped counters reset on every (re)join — without
-                // this they silently accumulate for the server's whole
-                // uptime instead of resetting per session like the name implies.
-                rec.SessionKills = 0;
-                rec.SessionDmgDone = 0f;
-                rec.SessionDmgTaken = 0f;
-                rec.Dirty = true;
-
-                if (Plugin.EnablePlayerJoin.Value)
-                    Plugin.Narrate($"{name} has entered the world.", "player_join", name);
-                // Every client, the joining one included, gets the whole
-                // online table: RPC_PeerInfo adds the new peer to
-                // ZRoutedRpc's peer list as its last step
-                // (m_routedRpc.AddPeer, 1.0.15), before this postfix runs.
-                TitleSync.SendOnlineTable();
+                TrustedJoin(peer.m_uid, name);
             }
             catch (Exception ex) { Plugin.Log.LogWarning($"[TheRavensCall] PlayerJoin error: {ex.Message}"); }
+        }
+
+        // ── The listen host's own join (1.8.0), from HostSession at its
+        // character's first spawn in a world session: the trusted path a
+        // peer's join takes, with no PlatformBinding (see Plugin.IsListenHost).
+        // A peer already connected under the host's name (it joined in the
+        // moments before the host's character spawned) is marked untrusted
+        // first, as a later one is in Postfix, so it cannot write the host's
+        // record or close the session that starts now. ────────────────────
+        internal static void HostJoin(long uid, string name)
+        {
+            if (_fired.Contains(uid)) return;
+            foreach (var peer in ZNet.instance.GetPeers())
+            {
+                if (peer == null || !peer.IsReady() || _untrusted.Contains(peer.m_uid)) continue;
+                if (!string.Equals(peer.m_playerName, name, StringComparison.OrdinalIgnoreCase)) continue;
+                _untrusted.Add(peer.m_uid);
+                Plugin.Log.LogWarning($"[TheRavensCall] {peer.m_playerName} is connected under the name of the player hosting this world; its self-reports and title changes are refused from now on and it does not update {name}'s record.");
+            }
+            _fired.Add(uid);
+            JoinTimes[uid] = DateTime.UtcNow;
+            TrustedJoin(uid, name);
+        }
+
+        // Shared by a trusted peer's join and the host's: the record, the
+        // quick rejoin, the join line and the title table, keyed by uid.
+        private static void TrustedJoin(long joinUid, string name)
+        {
+            var rec = PlayerRegistry.Get(name);
+
+            // 1.8.0: a quick rejoin. When a game crashes or a connection
+            // drops, the old peer stays connected until ZRpc's timeout
+            // (90 s on a crossplay server), and 1.0.15 then removes it
+            // without any leave hook. A rejoin inside that window used to
+            // overwrite SessionStart, so the whole earlier session never
+            // reached playtime_seconds_lifetime and got no leave line
+            // (review 2026-09-24). Close it here instead, and retire the
+            // earlier peers' join times under this name (and any whose
+            // peer is already gone), so a late leave hook for them cannot
+            // close the session that starts now. The listen host's open
+            // session has no peer to find and is never retired here.
+            bool closedEarlier = false;
+            if (rec.Online && !string.IsNullOrEmpty(rec.SessionStart) &&
+                DateTime.TryParse(rec.SessionStart, null, System.Globalization.DateTimeStyles.RoundtripKind, out DateTime earlierStart))
+            {
+                rec.PlaytimeSecondsLifetime += Math.Max(0, (long)(DateTime.UtcNow - earlierStart.ToUniversalTime()).TotalSeconds);
+                closedEarlier = true;
+            }
+            foreach (long uid in JoinTimes.Keys.ToList())
+            {
+                if (uid == joinUid || _untrusted.Contains(uid) || HostSession.IsOpen(uid)) continue;
+                var other = ZNet.instance.GetPeer(uid);
+                if (other == null || string.Equals(other.m_playerName, name, StringComparison.OrdinalIgnoreCase))
+                { JoinTimes.Remove(uid); _fired.Remove(uid); }
+            }
+            if (closedEarlier && Plugin.EnablePlayerLeave.Value)
+                Plugin.Narrate($"{name} has left the world (connection lost).", "player_leave", name, "(connection lost)");
+
+            rec.Online = true;
+            rec.SessionStart = DateTime.UtcNow.ToString("o");
+            rec.LastSeen = rec.SessionStart;
+            // Session-scoped counters reset on every (re)join — without
+            // this they silently accumulate for the server's whole
+            // uptime instead of resetting per session like the name implies.
+            rec.SessionKills = 0;
+            rec.SessionDmgDone = 0f;
+            rec.SessionDmgTaken = 0f;
+            rec.Dirty = true;
+
+            if (Plugin.EnablePlayerJoin.Value)
+                Plugin.Narrate($"{name} has entered the world.", "player_join", name);
+            // Every client, the joining one included, gets the whole
+            // online table: RPC_PeerInfo adds the new peer to
+            // ZRoutedRpc's peer list as its last step
+            // (m_routedRpc.AddPeer, 1.0.15), before the join postfix runs.
+            // The host's own client gets it in this process (Everybody
+            // runs locally too).
+            TitleSync.SendOnlineTable();
         }
     }
 
@@ -631,6 +729,134 @@ namespace TheRavensCall
         {
             try { if (Plugin.IsServer() && peer?.m_rpc != null) Patch_PlayerLeave.FireLeave(peer.m_rpc); } catch { }
         }
+    }
+
+    // ── A listen host's own session (1.8.0). The host plays inside the
+    // server process and is no ZNetPeer, so RPC_PeerInfo and RPC_Disconnect
+    // never run for it. Its session opens when its own character first
+    // spawns in a world session and closes when it leaves the world, through
+    // the same join and leave code a peer's goes through, keyed by the host
+    // uid (ZNet.GetUID()). Everything here is gated on Plugin.IsListenHost
+    // or on a host session being open, so a dedicated server never gets
+    // one. ───────────────────────────────────────────────────────────────
+    internal static class HostSession
+    {
+        // This world session's first spawn has been seen (a respawn after a
+        // death is not a join).
+        private static bool _spawned;
+        // The open host session: its uid (0 = none) and the name it opened
+        // under, kept for the leave.
+        private static long _uid;
+        private static string _name;
+        // The host's own WhereTheCrowFlies has reported this world session
+        // (see CrowReportsDamage).
+        private static bool _crowReports;
+
+        // A new world session (Patch_ZNetAwake). A host session the last one
+        // never closed is dropped from the join table; its record is closed
+        // by PlayerRegistry.CloseSessionsLeftOpen right after, like any
+        // session left open.
+        internal static void Reset()
+        {
+            if (_uid != 0L) Patch_PlayerJoin.ClearJoinTime(_uid);
+            _spawned = false;
+            _uid = 0L;
+            _name = null;
+            _crowReports = false;
+        }
+
+        internal static bool IsOpen(long uid) => _uid != 0L && uid == _uid;
+
+        // A remote peer under this name is not the host (Patch_PlayerJoin).
+        internal static bool HoldsName(string name) =>
+            _uid != 0L && string.Equals(_name, name, StringComparison.OrdinalIgnoreCase);
+
+        // Plugin.TryGetHostPlayer's stand-in while the host has no local
+        // player (between a death and the respawn).
+        internal static bool TryGetOpen(Vector3 refPos, out (string name, Vector3 pos, long peerUid, long playerID) host)
+        {
+            host = default;
+            if (_uid == 0L) return false;
+            host = (_name, refPos, _uid, 0L);
+            return true;
+        }
+
+        internal static void OnSpawned(Player player)
+        {
+            try
+            {
+                if (_spawned || player == null || player != Player.m_localPlayer || !Plugin.IsListenHost()) return;
+                _spawned = true;
+                string name = player.GetPlayerName();
+                if (!PlatformBinding.IsStorableName(name))
+                {
+                    Plugin.Log.LogWarning($"[TheRavensCall] The player hosting this world has a name containing control or invalid characters ({Companion.Esc(name)}); it is not tracked and its reports are refused.");
+                    return;
+                }
+                _uid = ZNet.GetUID();
+                _name = name;
+                Patch_PlayerJoin.HostJoin(_uid, _name);
+            }
+            catch (Exception ex) { Plugin.Log.LogWarning($"[TheRavensCall] Host join error: {ex.Message}"); }
+        }
+
+        // Once, whichever exit runs: the open session is taken before the
+        // leave fires, and FireLeaveFor's own join-time check backs it up.
+        internal static void Leave()
+        {
+            try
+            {
+                if (_uid == 0L) return;
+                long uid = _uid;
+                _uid = 0L;
+                Patch_PlayerLeave.FireLeaveFor(uid, _name);
+            }
+            catch (Exception ex) { Plugin.Log.LogWarning($"[TheRavensCall] Host leave error: {ex.Message}"); }
+        }
+
+        internal static void NoteCrowReport() => _crowReports = true;
+
+        // Patch_Damage runs in this process for every hit this process
+        // produces, so on a listen host it sees the host's own swings and
+        // every hit the host's character takes from something this process
+        // simulates. The host's WhereTheCrowFlies (1.3.0+) reports that same
+        // damage in its batches, so once it has reported this world session
+        // (its first report is the snapshot it sends at spawn) the host's
+        // damage comes from the batches alone. Without it the patch stays
+        // the host's only source, as before 1.8.0. Every other player's
+        // damage is left to the patch as before: WhereTheCrowFlies leaves
+        // out the hits a server process produced (its FromServerProcess).
+        internal static bool CrowReportsDamage(Player p) =>
+            _crowReports && p != null && p == Player.m_localPlayer;
+    }
+
+    // Game.SpawnPlayer (private) is the only caller of Player.OnSpawned, and
+    // calls it after SetLocalPlayer and LoadPlayerData (Game.cs:493-500), so
+    // the local player and its name are set. It runs again for every respawn
+    // after a death (UpdateRespawn, Game.cs:760-770), hence HostSession's
+    // once-per-world-session flag. A dedicated server has no local player
+    // and a pure client is no server, so neither passes Plugin.IsListenHost.
+    [HarmonyPatch(typeof(Player), nameof(Player.OnSpawned))]
+    public static class Patch_HostJoin
+    {
+        private static void Postfix(Player __instance) => HostSession.OnSpawned(__instance);
+    }
+
+    // Game.Shutdown (private) is where the host's two ways out of the world
+    // meet: logout to the main menu (Game.Logout -> ContinueLogout ->
+    // Shutdown, Game.cs:355-379) and quit to desktop (Menu.QuitGame ->
+    // Application.Quit -> Game.OnApplicationQuit -> Shutdown, Menu.cs:527-531
+    // and Game.cs:398-404). A prefix runs before ZNetScene.Shutdown resets
+    // every ZNetView (the host's character included) and before
+    // ZNet.Shutdown -> StopAll sends every peer its disconnect
+    // (Game.cs:420-421, ZNet.cs:661-697), and on a quit before
+    // Plugin.OnDestroy writes the session summary (Unity sends
+    // OnApplicationQuit before it destroys anything). So the host's leave
+    // line comes first, then each peer's from the SendDisconnect loop.
+    [HarmonyPatch(typeof(Game), nameof(Game.Shutdown))]
+    public static class Patch_HostLeave
+    {
+        private static void Prefix() => HostSession.Leave();
     }
 
 
@@ -716,7 +942,11 @@ namespace TheRavensCall
     // ── Dead on a dedicated server (Character.Damage is owner-side
     // simulation — see the Architecture note up top) but kept as insurance
     // for any future/alternate topology where it does fire. Delegates to
-    // CombatCredit so it can never disagree with the live RPC path below. ──
+    // CombatCredit so it can never disagree with the live RPC path below.
+    // It does fire on a listen host, for every hit that process produces;
+    // there the host's own damage comes from its WhereTheCrowFlies batches
+    // instead once they arrive (HostSession.CrowReportsDamage), since
+    // CreditDamage has no dedup to collapse the two. ──────────────────
     [HarmonyPatch(typeof(Character), nameof(Character.Damage))]
     public static class Patch_Damage
     {
@@ -726,9 +956,9 @@ namespace TheRavensCall
             {
                 if (!Plugin.IsServer() || hit == null) return;
                 var attacker = Plugin.ResolveAttacker(hit);
-                if (attacker != null && __instance != attacker)
+                if (attacker != null && __instance != attacker && !HostSession.CrowReportsDamage(attacker))
                     CombatCredit.CreditDamage(attacker.GetPlayerName(), hit.GetTotalDamage(), 0f);
-                if (__instance is Player victim)
+                if (__instance is Player victim && !HostSession.CrowReportsDamage(victim))
                     CombatCredit.CreditDamage(victim.GetPlayerName(), 0f, hit.GetTotalDamage());
             }
             catch (Exception ex) { Plugin.Log.LogWarning($"[TheRavensCall] Damage tracking error: {ex.Message}"); }
@@ -1223,38 +1453,74 @@ namespace TheRavensCall
     // (review 2026-09-24, reopening must-fix #2 of 2026-09-15). This
     // remembers the uid of the peer whose connection is delivering the
     // current RoutedRPC; the receivers accept a report only when the claimed
-    // sender is that uid. A routed RPC this process invokes on itself never
-    // passes through RPC_RoutedRPC and is refused, as before (the server is
-    // not in its own peer list). Server-side only; clients are unaffected. ──
+    // sender is that uid. Server-side only; clients are unaffected.
+    // 1.8.0: a routed RPC this process invokes on itself never passes
+    // through RPC_RoutedRPC: InvokeRoutedRPC runs the handler in place when
+    // the target is this process's own id or everybody, with this process's
+    // own id as the sender (ZRoutedRpc.cs:120-133). RoutedLocalDispatch marks
+    // such a call explicitly, and TryResolveSender takes it as the listen
+    // host's own report (the host's WhereTheCrowFlies, whose no-target
+    // InvokeRoutedRPC targets this process on a server, :102-112) and
+    // refuses it anywhere else, as before. A remote peer can only ever push
+    // a peer entry, so it can never pass as the host. ──────────────────
     [HarmonyPatch(typeof(ZRoutedRpc), nameof(ZRoutedRpc.RPC_RoutedRPC))]
     public static class RoutedSenderGuard
     {
-        // One entry per RPC_RoutedRPC on the call stack (a stack, in case a
-        // handler ever delivers another one inline); 0 = no ready peer.
-        private static readonly Stack<long> _delivering = new Stack<long>();
+        // One entry per RPC_RoutedRPC or InvokeRoutedRPC on the call stack
+        // (a stack, since either can run inside the other): the delivering
+        // peer's uid (0 = no ready peer), or a local call of this process.
+        // A local invoke made inside a peer's RoutedRPC is on top of it.
+        private static readonly Stack<(long uid, bool local)> _delivering = new Stack<(long uid, bool local)>();
         private static readonly Dictionary<long, float> _lastWarn = new Dictionary<long, float>();
 
-        private static void Prefix(ZRpc rpc)
+        private static void Prefix(ZRpc rpc, out int __state)
         {
             long uid = 0L;
             try { uid = ZNet.instance?.GetPeer(rpc)?.m_uid ?? 0L; } catch { }
-            _delivering.Push(uid);
+            __state = Push(uid, false);
         }
 
         // A finalizer, not a postfix, so the entry is popped even when a
         // handler throws out of HandleRoutedRPC.
-        private static void Finalizer()
+        private static void Finalizer(int __state) => PopTo(__state);
+
+        // Returns the stack's depth with the new entry on it, for PopTo.
+        internal static int Push(long uid, bool local)
         {
-            if (_delivering.Count > 0) _delivering.Pop();
+            _delivering.Push((uid, local));
+            return _delivering.Count;
+        }
+
+        // Back to the depth below the entry Push returned `depth` for, so an
+        // entry an inner frame left behind goes too. 0 = that Push never ran
+        // (another patch's prefix threw before it; the finalizer still
+        // runs), so nothing is popped.
+        internal static void PopTo(int depth)
+        {
+            if (depth <= 0) return;
+            while (_delivering.Count >= depth) _delivering.Pop();
         }
 
         // True only when `claimed` is the uid of the ready peer whose
-        // connection delivered this RoutedRPC; `peer` is then that peer.
-        public static bool TryResolveSender(long claimed, out ZNetPeer peer)
+        // connection delivered this RoutedRPC (the reporter is then that
+        // peer), or, for a call this process made on itself, when it is a
+        // listen host and `claimed` is the host uid (the reporter is then
+        // the host, with no peer).
+        public static bool TryResolveSender(long claimed, out Reporter reporter)
         {
-            peer = null;
+            reporter = default;
             if (_delivering.Count == 0 || ZNet.instance == null) return false;
-            long delivering = _delivering.Peek();
+            var top = _delivering.Peek();
+            if (top.local)
+            {
+                // Refused without a word otherwise: the "claimed to send as"
+                // warning below is for a real connection only.
+                if (claimed != ZNet.GetUID() || !Plugin.TryGetHostPlayer(out var host)) return false;
+                HostSession.NoteCrowReport();
+                reporter = new Reporter(null, true, claimed, host.name);
+                return true;
+            }
+            long delivering = top.uid;
             if (delivering == 0L) return false;
             if (claimed != delivering)
             {
@@ -1270,8 +1536,51 @@ namespace TheRavensCall
                 }
                 return false;
             }
-            peer = ZNet.instance.GetPeer(claimed);
-            return peer != null && peer.IsReady();
+            var peer = ZNet.instance.GetPeer(claimed);
+            if (peer == null || !peer.IsReady()) return false;
+            reporter = new Reporter(peer, false, claimed, peer.m_playerName);
+            return true;
+        }
+    }
+
+    // ── Marks every routed RPC this process invokes as LOCAL on
+    // RoutedSenderGuard's stack for as long as the call runs (1.8.0). The
+    // overload every other InvokeRoutedRPC funnels into (ZRoutedRpc.cs:97-105
+    // -> :120). Marked always, not only when the target makes it local:
+    // the only handler that can run inside this call is the in-place
+    // HandleRoutedRPC for a target of this process's own id or everybody
+    // (:130-133); for any other target RouteRPC only hands the package to
+    // the peers' sockets (:140-173, ZRpc.cs:274-295), so an unused mark is
+    // never read. Deciding here would need the private m_id, and the sender
+    // a local call carries is always that id anyway (:124), which
+    // TryResolveSender checks. The finalizer pops even when a handler
+    // throws, and pops back to its own depth, so the stack stays balanced
+    // whatever throws inside. ────────────────────────────────────────────
+    [HarmonyPatch(typeof(ZRoutedRpc), nameof(ZRoutedRpc.InvokeRoutedRPC), new[] { typeof(long), typeof(ZDOID), typeof(string), typeof(object[]) })]
+    public static class RoutedLocalDispatch
+    {
+        private static void Prefix(out int __state) => __state = RoutedSenderGuard.Push(0L, true);
+
+        private static void Finalizer(int __state) => RoutedSenderGuard.PopTo(__state);
+    }
+
+    // ── Who sent a report RoutedSenderGuard resolved (1.8.0): a remote peer
+    // (Peer set), or the listen host's own WhereTheCrowFlies (IsHost, no
+    // Peer). Uid is the verified sender: the peer's uid or the host uid.
+    // Name is the peer's m_playerName or the host character's name. ──────
+    public readonly struct Reporter
+    {
+        public readonly ZNetPeer Peer;
+        public readonly bool IsHost;
+        public readonly long Uid;
+        public readonly string Name;
+
+        public Reporter(ZNetPeer peer, bool isHost, long uid, string name)
+        {
+            Peer = peer;
+            IsHost = isHost;
+            Uid = uid;
+            Name = name;
         }
     }
 
@@ -1279,7 +1588,8 @@ namespace TheRavensCall
     // client can invoke a routed RPC as fast as it wants; nothing upstream
     // rate-limits that for us. Keyed on the verified peer uid (see
     // RoutedSenderGuard), so a client can no longer rotate made-up sender
-    // ids past the cap or grow this table with them (1.8.0). ─────────────
+    // ids past the cap or grow this table with them (1.8.0). A listen
+    // host's own reports are keyed on the host uid. ─────────────────────
     internal static class CombatReportRateLimiter
     {
         private const int MaxPerSecond = 30;
@@ -1410,9 +1720,10 @@ namespace TheRavensCall
 
                 // Reporter identity is the peer whose connection delivered
                 // this packet, never the payload and never the client-chosen
-                // routed sender id alone (RoutedSenderGuard, 1.8.0). From
+                // routed sender id alone (RoutedSenderGuard, 1.8.0), or a
+                // listen host's own crow, dispatched in this process. From
                 // here on `sender` is that verified uid.
-                if (!RoutedSenderGuard.TryResolveSender(sender, out var reporterPeer)) return;
+                if (!RoutedSenderGuard.TryResolveSender(sender, out var reporter)) return;
 
                 if (CombatReportRateLimiter.Exceeded(sender))
                 {
@@ -1436,17 +1747,17 @@ namespace TheRavensCall
                 // killer can be another player. Before this check, any
                 // connected player could credit or overwrite any other online
                 // player's record (review 2026-09-15).
-                if (eventType != 1 && !Plugin.IsSelfReport(reporterPeer, attackerName))
+                if (eventType != 1 && !Plugin.IsSelfReport(reporter, attackerName))
                 {
                     if (Plugin.LogCombatReports.Value)
-                        Plugin.Log.LogWarning($"[TheRavensCall] combat report dropped — '{attackerName}' is not the reporter ({reporterPeer.m_playerName})");
+                        Plugin.Log.LogWarning($"[TheRavensCall] combat report dropped — '{attackerName}' is not the reporter ({reporter.Name})");
                     return;
                 }
 
                 if (!Plugin.TryVerifyConnectedPlayer(attackerName, out string verified, out _))
                 {
                     if (Plugin.LogCombatReports.Value)
-                        Plugin.Log.LogInfo($"[TheRavensCall] combat report dropped — '{attackerName}' not connected (reporter {reporterPeer.m_playerName})");
+                        Plugin.Log.LogInfo($"[TheRavensCall] combat report dropped — '{attackerName}' not connected (reporter {reporter.Name})");
                     return;
                 }
 
@@ -1548,8 +1859,10 @@ namespace TheRavensCall
                 // (review 2026-09-15), and neither is the client-chosen
                 // routed sender id (RoutedSenderGuard, 1.8.0). From here on
                 // `sender` is the verified uid of the delivering connection,
-                // so the rate limits and the title reply's target are too.
-                if (!RoutedSenderGuard.TryResolveSender(sender, out var reporterPeer)) return;
+                // so the rate limits and the title reply's target are too;
+                // for a listen host's own crow it is the host uid, and the
+                // title reply to it runs in this process.
+                if (!RoutedSenderGuard.TryResolveSender(sender, out var reporter)) return;
 
                 if (CombatReportRateLimiter.Exceeded(sender))
                 {
@@ -1564,18 +1877,18 @@ namespace TheRavensCall
                 switch (eventType)
                 {
                     case 1: HandleKill(sender, pkg); break;
-                    case 2: HandleDeath(sender, reporterPeer, pkg); break;
-                    case 3: HandleDamageDefenseBatch(reporterPeer, pkg); break;
-                    case 4: HandleFishCatch(reporterPeer, pkg); break;
-                    case 5: HandleBuilding(reporterPeer, pkg); break;
-                    case 6: HandleCrafting(reporterPeer, pkg); break;
-                    case 7: HandleHarvesting(reporterPeer, pkg); break;
-                    case 8: HandleConsumables(reporterPeer, pkg); break;
-                    case 9: HandleWorldEvent(reporterPeer, pkg); break;
-                    case 10: HandleStatSyncDelta(reporterPeer, pkg); break;
-                    case 11: HandleStatSnapshot(reporterPeer, pkg); break;
-                    case 12: HandleSkillSnapshot(reporterPeer, pkg); break;
-                    case 13: HandleTitleRequest(sender, reporterPeer, pkg); break;
+                    case 2: HandleDeath(sender, reporter, pkg); break;
+                    case 3: HandleDamageDefenseBatch(reporter, pkg); break;
+                    case 4: HandleFishCatch(reporter, pkg); break;
+                    case 5: HandleBuilding(reporter, pkg); break;
+                    case 6: HandleCrafting(reporter, pkg); break;
+                    case 7: HandleHarvesting(reporter, pkg); break;
+                    case 8: HandleConsumables(reporter, pkg); break;
+                    case 9: HandleWorldEvent(reporter, pkg); break;
+                    case 10: HandleStatSyncDelta(reporter, pkg); break;
+                    case 11: HandleStatSnapshot(reporter, pkg); break;
+                    case 12: HandleSkillSnapshot(reporter, pkg); break;
+                    case 13: HandleTitleRequest(sender, reporter, pkg); break;
                     default:
                         if (Plugin.LogCombatReports.Value) Plugin.Log.LogWarning($"[TheRavensCall] event report: unknown eventType {eventType}");
                         break;
@@ -1604,13 +1917,13 @@ namespace TheRavensCall
         // some connected player's. Kill keeps the connected-name check
         // because the creature's ZDO owner reports it and the killer can
         // legitimately be someone else (review 2026-09-15).
-        private static bool VerifySelf(ZNetPeer reporter, string reportedName, out string verified)
+        private static bool VerifySelf(Reporter reporter, string reportedName, out string verified)
         {
             verified = null;
             if (!Plugin.IsSelfReport(reporter, reportedName))
             {
                 if (Plugin.LogCombatReports.Value)
-                    Plugin.Log.LogWarning($"[TheRavensCall] event report dropped — '{reportedName}' is not the reporter ({reporter?.m_playerName})");
+                    Plugin.Log.LogWarning($"[TheRavensCall] event report dropped — '{reportedName}' is not the reporter ({reporter.Name})");
                 return false;
             }
             return Verify(reportedName, out verified);
@@ -1636,7 +1949,7 @@ namespace TheRavensCall
             CombatCredit.CreditCreatureKill(verified, victimPrefab, position);
         }
 
-        private static void HandleDeath(long sender, ZNetPeer reporter, ZPackage pkg)
+        private static void HandleDeath(long sender, Reporter reporter, ZPackage pkg)
         {
             string victimName = Cap(pkg.ReadString(), 32);
             string cause = Cap(pkg.ReadString(), 64);
@@ -1653,7 +1966,7 @@ namespace TheRavensCall
             CombatCredit.CreditPlayerDeath(verified, position, cause);
         }
 
-        private static void HandleDamageDefenseBatch(ZNetPeer reporter, ZPackage pkg)
+        private static void HandleDamageDefenseBatch(Reporter reporter, ZPackage pkg)
         {
             string playerName = Cap(pkg.ReadString(), 32);
             pkg.ReadVector3(); // position
@@ -1676,7 +1989,7 @@ namespace TheRavensCall
             CombatCredit.CreditBlockDefense(verified, blocks, parries, Mathf.Clamp(dmgBlocked, 0f, 20000f));
         }
 
-        private static void HandleFishCatch(ZNetPeer reporter, ZPackage pkg)
+        private static void HandleFishCatch(Reporter reporter, ZPackage pkg)
         {
             string playerName = Cap(pkg.ReadString(), 32);
             string fishPrefab = Cap(pkg.ReadString(), 64);
@@ -1689,7 +2002,7 @@ namespace TheRavensCall
             CombatCredit.CreditFish(verified, fishPrefab);
         }
 
-        private static void HandleBuilding(ZNetPeer reporter, ZPackage pkg)
+        private static void HandleBuilding(Reporter reporter, ZPackage pkg)
         {
             string playerName = Cap(pkg.ReadString(), 32);
             pkg.ReadString();  // piecePrefab
@@ -1701,7 +2014,7 @@ namespace TheRavensCall
             CombatCredit.CreditBuilding(verified, action);
         }
 
-        private static void HandleCrafting(ZNetPeer reporter, ZPackage pkg)
+        private static void HandleCrafting(Reporter reporter, ZPackage pkg)
         {
             string playerName = Cap(pkg.ReadString(), 32);
             pkg.ReadString();  // itemPrefab
@@ -1715,7 +2028,7 @@ namespace TheRavensCall
             CombatCredit.CreditCrafting(verified, action, amount);
         }
 
-        private static void HandleHarvesting(ZNetPeer reporter, ZPackage pkg)
+        private static void HandleHarvesting(Reporter reporter, ZPackage pkg)
         {
             string playerName = Cap(pkg.ReadString(), 32);
             string resourceName = Cap(pkg.ReadString(), 64);
@@ -1727,7 +2040,7 @@ namespace TheRavensCall
             CombatCredit.CreditHarvest(verified, resourceName, amount);
         }
 
-        private static void HandleConsumables(ZNetPeer reporter, ZPackage pkg)
+        private static void HandleConsumables(Reporter reporter, ZPackage pkg)
         {
             string playerName = Cap(pkg.ReadString(), 32);
             pkg.ReadString();  // itemPrefab
@@ -1741,7 +2054,7 @@ namespace TheRavensCall
             CombatCredit.CreditConsumable(verified);
         }
 
-        private static void HandleWorldEvent(ZNetPeer reporter, ZPackage pkg)
+        private static void HandleWorldEvent(Reporter reporter, ZPackage pkg)
         {
             string playerName = Cap(pkg.ReadString(), 32);
             string eventName = Cap(pkg.ReadString(), 32);
@@ -1755,7 +2068,7 @@ namespace TheRavensCall
 
         // Applied incrementally — see the class header note on why both this
         // and HandleStatSnapshot feed VanillaStats.
-        private static void HandleStatSyncDelta(ZNetPeer reporter, ZPackage pkg)
+        private static void HandleStatSyncDelta(Reporter reporter, ZPackage pkg)
         {
             string playerName = Cap(pkg.ReadString(), 32);
             pkg.ReadVector3(); // position
@@ -1776,7 +2089,7 @@ namespace TheRavensCall
             CombatCredit.ApplyVanillaStatDeltas(verified, deltas);
         }
 
-        private static void HandleStatSnapshot(ZNetPeer reporter, ZPackage pkg)
+        private static void HandleStatSnapshot(Reporter reporter, ZPackage pkg)
         {
             string playerName = Cap(pkg.ReadString(), 32);
             pkg.ReadVector3(); // position
@@ -1795,7 +2108,7 @@ namespace TheRavensCall
             CombatCredit.ApplyVanillaStats(verified, stats);
         }
 
-        private static void HandleSkillSnapshot(ZNetPeer reporter, ZPackage pkg)
+        private static void HandleSkillSnapshot(Reporter reporter, ZPackage pkg)
         {
             string playerName = Cap(pkg.ReadString(), 32);
             pkg.ReadVector3(); // position
@@ -1828,7 +2141,7 @@ namespace TheRavensCall
         // Set/Clear rules themselves live on TitleSystem so the admin's
         // `ravenscall title` console subcommand (Patch_Terminal, below)
         // applies the exact same rules instead of a second copy of them.
-        private static void HandleTitleRequest(long sender, ZNetPeer reporter, ZPackage pkg)
+        private static void HandleTitleRequest(long sender, Reporter reporter, ZPackage pkg)
         {
             string playerName = Cap(pkg.ReadString(), 32);
             byte op = pkg.ReadByte();
@@ -2396,9 +2709,10 @@ namespace TheRavensCall
         private static PlayerRecord FindRecord(string name) =>
             PlayerRegistry.All.FirstOrDefault(r => string.Equals(r.Name, name, StringComparison.OrdinalIgnoreCase));
 
-        // One entry per connected player (the list /api/state counts), each
-        // name once, "" entries included so a stale cache heals. A peer on
-        // another account than its name's is left out.
+        // One entry per connected player (the list /api/state counts, a
+        // listen host's own player included), each name once, "" entries
+        // included so a stale cache heals. A peer on another account than
+        // its name's is left out.
         public static void SendOnlineTable()
         {
             try
@@ -2412,18 +2726,6 @@ namespace TheRavensCall
                     if (Patch_PlayerJoin.IsUntrusted(p.peerUid) || !seen.Add(p.name)) continue;
                     var rec = FindRecord(p.name);
                     entries.Add(new KeyValuePair<string, string>(rec?.Name ?? p.name, rec?.ActiveTitle ?? ""));
-                }
-                // A listen host's own player is no peer, so the list above
-                // never has it; without this entry the remote players would
-                // see no title on the host until the host's title changed.
-                if (!ZNet.instance.IsDedicated() && Player.m_localPlayer != null && entries.Count < MaxEntries)
-                {
-                    string host = Player.m_localPlayer.GetPlayerName();
-                    if (!string.IsNullOrEmpty(host) && seen.Add(host))
-                    {
-                        var rec = FindRecord(host);
-                        entries.Add(new KeyValuePair<string, string>(rec?.Name ?? host, rec?.ActiveTitle ?? ""));
-                    }
                 }
                 var pkg = new ZPackage();
                 pkg.Write(SchemaVersion);
