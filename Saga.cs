@@ -605,11 +605,13 @@ namespace TheRavensCall
         // ── The listen host's own join (1.8.0), from HostSession at its
         // character's first spawn in a world session: the trusted path a
         // peer's join takes, with no PlatformBinding (see Plugin.IsListenHost).
-        // A peer already connected under the host's name (it joined in the
-        // moments before the host's character spawned) is marked untrusted
-        // first, as a later one is in Postfix, so it cannot write the host's
-        // record or close the session that starts now. Its own join was a
-        // trusted one and opened a session on the host's record, which
+        // A peer that joined under the host's name before the host's
+        // character spawned is already untrusted (HostSession.HoldsName reads
+        // the host's profile then). The loop below is a backstop for a peer
+        // that still got a trusted join under that name (no profile name
+        // yet): it is marked untrusted, as a later one is in Postfix, so it
+        // cannot write the host's record or close the session that starts
+        // now. Its trusted join opened a session on the host's record, which
         // TrustedJoin below would take for the host's quick rejoin (crediting
         // the peer's minutes to the host's playtime and writing a false
         // "(connection lost)" leave): that session is dropped here, with no
@@ -627,7 +629,7 @@ namespace TheRavensCall
                 rec.Online = false;
                 rec.SessionStart = null;
                 rec.Dirty = true;
-                Plugin.Log.LogWarning($"[TheRavensCall] {peer.m_playerName} joined under the name of the player hosting this world before the host's character spawned: its session is discarded (no playtime, no leave line), its self-reports and title changes are refused from now on and it does not update {name}'s record. Its join bound the name {name} to that connection's account (ravenscall unbind {name} releases the name).");
+                Plugin.Log.LogWarning($"[TheRavensCall] {peer.m_playerName} joined under the name of the player hosting this world before the host's character spawned: the session it opened on {name}'s record is discarded (no playtime is credited for it), its self-reports and title changes are refused from now on and it does not update {name}'s record. Its join bound the name {name} to that connection's account (ravenscall unbind {name} releases the name).");
             }
             _fired.Add(uid);
             JoinTimes[uid] = DateTime.UtcNow;
@@ -791,8 +793,18 @@ namespace TheRavensCall
         internal static bool IsOpen(long uid) => _uid != 0L && uid == _uid;
 
         // A remote peer under this name is not the host (Patch_PlayerJoin).
-        internal static bool HoldsName(string name) =>
-            _uid != 0L && string.Equals(_name, name, StringComparison.OrdinalIgnoreCase);
+        // Before the host's character first spawns, the listen server
+        // already takes connections: the name is then the one on the
+        // profile Game.Awake loaded (Game.cs:259-270), which SpawnPlayer
+        // gives the character (PlayerProfile.LoadPlayerData,
+        // PlayerProfile.cs:201). A dedicated server hosts no one.
+        internal static bool HoldsName(string name)
+        {
+            if (_uid != 0L) return string.Equals(_name, name, StringComparison.OrdinalIgnoreCase);
+            if (_spawned || ZNet.instance == null || !ZNet.instance.IsServer() || ZNet.instance.IsDedicated()) return false;
+            string hostName = Game.instance?.GetPlayerProfile()?.GetName();
+            return !string.IsNullOrEmpty(hostName) && string.Equals(hostName, name, StringComparison.OrdinalIgnoreCase);
+        }
 
         // Plugin.TryGetHostPlayer's stand-in while the host has no local
         // player (between a death and the respawn).
@@ -842,7 +854,9 @@ namespace TheRavensCall
         // EnableReporting off), after its schema check and before the
         // report is handled, so the flag is set before any damage batch of
         // this world session is credited. In practice the crow's first
-        // telemetry report is the snapshot it sends at spawn.
+        // telemetry report is the snapshot it sends at spawn. A crow older
+        // than 1.3.0 also sends its periodic stat and skill snapshot with
+        // EnableReporting off (see CrowReportsDamageTaken's known limits).
         internal static void NoteCrowReport() => _crowReports = true;
 
         // The host's damage, split by direction so that each hit counts
@@ -865,7 +879,10 @@ namespace TheRavensCall
         // Known limits: a crow whose EnableReporting is switched off
         // mid-session leaves the host's damage taken uncounted for the rest
         // of the world session (switched on, up to one 10 s batch counts
-        // twice); at a logout or quit up to 10 s of damage taken is still
+        // twice); a crow older than 1.3.0 still sends its periodic stat and
+        // skill snapshot with EnableReporting off, which sets the flag, so
+        // its host's damage taken goes uncounted from that first snapshot
+        // on (1.3.0 sends nothing with it off); at a logout or quit up to 10 s of damage taken is still
         // in the crow's unsent batch and is never counted, the same as for
         // a client that disconnects. Every other player's damage is left to
         // the patch as before: WhereTheCrowFlies leaves out the hits a
