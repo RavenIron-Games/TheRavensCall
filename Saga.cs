@@ -119,7 +119,7 @@ namespace TheRavensCall
             EnableGearTier = Config.Bind("Events", "EnableGearTier", true, "Log/announce new gear tier reached");
             EnableTitleEarned = Config.Bind("Events", "EnableTitleEarned", true, "Log/announce when a title is earned");
             SyncTitlesToNameplates = Config.Bind("Events", "SyncTitlesToNameplates", true, "Send every player's active title to the game clients, so players running WhereTheCrowFlies 1.3.0+ see each other's active title on a line under the name on the nameplate. Sent when a player joins and whenever an active title changes. Off = nothing is sent and the nameplates show plain names");
-            AnnounceTitleEarnedInGame = Config.Bind("Events", "AnnounceTitleEarnedInGame", true, "Show \"<player> has earned the title: <title>\" in the middle of every connected player's screen when a player earns a title for the first time (picking or clearing a title is not announced). Needs no client mod. At most one per player every 10 seconds (a second title inside that window is not shown on screen); lines for different players go out 4 seconds apart so none hides another. The Chronicle/Discord line (EnableTitleEarned) is not affected");
+            AnnounceTitleEarnedInGame = Config.Bind("Events", "AnnounceTitleEarnedInGame", true, "Show \"<player> has earned the title: <title>\" in the middle of every connected player's screen when a player earns a title for the first time (picking or clearing a title is not announced). Needs no client mod. Every title gets its line; players who earn the same title together share one line with every name. Lines go out one after another, 4 seconds apart, and after a boss kill they wait until the game's own boss message has faded. At most 10 lines wait (a title past that is not shown on screen) and a line that waited more than 50 seconds is dropped. The Chronicle/Discord line (EnableTitleEarned) is not affected");
             EnableRaid = Config.Bind("Events", "EnableRaid", true, "Record raid start and end in the Chronicle and the dashboard feed (raid_start / raid_end). Not posted to Discord. The raid banner and raid_active work either way.");
             ShowDayNumber = Config.Bind("Format", "ShowDayNumber", true, "Append day number to messages");
             ShowOnlineCount = Config.Bind("Format", "ShowOnlineCount", true, "Append online count to messages");
@@ -446,6 +446,9 @@ namespace TheRavensCall
                 // other server system here initializes at.
                 ZRoutedRpc.instance.Register<ZPackage>("RavensCall_CombatReport_V1", CombatReportReceiver.Handle);
                 ZRoutedRpc.instance.Register<ZPackage>("RavensCall_EventReport_V2", EventReportReceiver.Handle);
+                // No on-screen title line waits over from an earlier world
+                // session (a listen host hosting twice in one process).
+                TitleSync.Reset();
                 if (Plugin.LogServerStartStop.Value)
                     Chronicle.Write("SERVER", "startup", "TheRavensCall is listening.", null);
                 Plugin.Log.LogInfo("[TheRavensCall] Server systems initialized.");
@@ -649,7 +652,8 @@ namespace TheRavensCall
             catch (Exception ex) { Plugin.Log.LogWarning($"[TheRavensCall] Lore tick error: {ex.Message}"); }
 
             // Every frame, not on the poll timer: the on-screen title lines
-            // wait here only for the 4 s gap between them (TitleSync).
+            // wait here only for the 4 s gap between them, or for a boss's
+            // own death line to fade (TitleSync).
             TitleSync.Tick();
 
             _timer += Time.deltaTime;
@@ -952,6 +956,9 @@ namespace TheRavensCall
             // metres of jitter per packet (review 2026-09-15). A real boss
             // cannot die twice within 3 s and 64 m.
             if (CombatEventDedup.AlreadyProcessed("boss", "", prefab, position, BossDedupBucketMeters)) return;
+            // Before any title of this kill is earned: its on-screen lines
+            // wait until the game's own boss death line has faded.
+            TitleSync.HoldForBossMessage();
 
             string bossDisplayName = TitleSystem.GetBossDisplayName(prefab);
             string bossKey = BossKeys.Resolve(prefab);
@@ -2204,7 +2211,7 @@ namespace TheRavensCall
             // The on-screen line (1.8.0): the plain name, never titleDisplay
             // (it already carries the active title) or titleMsg (a template
             // may carry Discord formatting). Its own switch, not
-            // EnableTitleEarned; burst rules on TitleSync.AnnounceEarned.
+            // EnableTitleEarned; queue rules on TitleSync.AnnounceEarned.
             TitleSync.AnnounceEarned(playerName, title);
             PlayerRegistry.Save(rec);
             if (activated) TitleSync.SendOne(rec.Name, title);
@@ -2352,8 +2359,9 @@ namespace TheRavensCall
     // Keyed by name because the records are (case-insensitively), and the
     // join hook runs before the joining player's character exists. Known,
     // accepted limit: a player joining under a name bound to another
-    // account (PlatformBinding, "untrusted") shows that name's title too;
-    // the nameplate already shows the name itself.
+    // account (PlatformBinding, "untrusted") can show that name's title too
+    // (when the player who owns the name is or was online in the same
+    // session); the nameplate already shows the name itself.
     // Sent at every join (the whole online table, to every client, the
     // joining one included) and wherever a player's active title changes:
     // SetTitle, ClearTitle (the admin's `ravenscall title` goes through
@@ -2382,6 +2390,11 @@ namespace TheRavensCall
             catch (Exception ex) { Plugin.Log.LogWarning($"[TheRavensCall] Title sync failed: {ex.Message}"); }
         }
 
+        // A lookup that never creates a record (PlayerRegistry.Get would),
+        // the same one the admin's `ravenscall title` uses.
+        private static PlayerRecord FindRecord(string name) =>
+            PlayerRegistry.All.FirstOrDefault(r => string.Equals(r.Name, name, StringComparison.OrdinalIgnoreCase));
+
         // One entry per connected player (the list /api/state counts), each
         // name once, "" entries included so a stale cache heals. A peer on
         // another account than its name's is left out.
@@ -2396,10 +2409,20 @@ namespace TheRavensCall
                 {
                     if (entries.Count >= MaxEntries) break;
                     if (Patch_PlayerJoin.IsUntrusted(p.peerUid) || !seen.Add(p.name)) continue;
-                    // A lookup that never creates a record (PlayerRegistry.Get
-                    // would), the same one the admin's `ravenscall title` uses.
-                    var rec = PlayerRegistry.All.FirstOrDefault(r => string.Equals(r.Name, p.name, StringComparison.OrdinalIgnoreCase));
+                    var rec = FindRecord(p.name);
                     entries.Add(new KeyValuePair<string, string>(rec?.Name ?? p.name, rec?.ActiveTitle ?? ""));
+                }
+                // A listen host's own player is no peer, so the list above
+                // never has it; without this entry the remote players would
+                // see no title on the host until the host's title changed.
+                if (!ZNet.instance.IsDedicated() && Player.m_localPlayer != null && entries.Count < MaxEntries)
+                {
+                    string host = Player.m_localPlayer.GetPlayerName();
+                    if (!string.IsNullOrEmpty(host) && seen.Add(host))
+                    {
+                        var rec = FindRecord(host);
+                        entries.Add(new KeyValuePair<string, string>(rec?.Name ?? host, rec?.ActiveTitle ?? ""));
+                    }
                 }
                 var pkg = new ZPackage();
                 pkg.Write(SchemaVersion);
@@ -2412,41 +2435,91 @@ namespace TheRavensCall
 
         // ── The on-screen line: vanilla's own routed "ShowMessage" (MessageHud
         // registers it on every client; type 2 = Center), so it needs no
-        // client mod. Titles can come in a burst for one player: one boss
-        // kill can earn the boss's title, "Slayer of Gods" and a boss-count
-        // title together (a third boss kill that is also a new boss earns
-        // two), and two kill reports can cross two creature milestones
-        // within a second. So at most one line per player per 10 s; a later
-        // one inside that window is skipped on screen, while its Chronicle/
-        // Discord line goes out as before. A Center message also replaces
-        // the one before it at once (MessageHud.ShowMessage sets the text,
-        // then fades it out over 4 s), so a boss kill that gives three
-        // players their first boss title would show only the last name:
-        // lines wait in a short queue and go out 4 s apart (Tick, every
-        // frame from Patch_ZNetUpdate). A line that waited over 30 s, or
-        // one past 8 waiting, is dropped. ────────────────────────────────
-        private const float AnnounceCooldownSeconds = 10f;
+        // client mod. A Center message replaces the one before it at once
+        // (MessageHud.ShowMessage sets the text, then fades it out over 4 s),
+        // so the lines wait in a short queue and go out one after another,
+        // 4 s apart (Tick, every frame from Patch_ZNetUpdate). Every title
+        // gets its line. Titles come in bursts: one boss kill credits
+        // everyone in radius and can earn each of them the boss's title,
+        // "Slayer of Gods" and a boss-count title together. All the
+        // EarnTitle calls of one credit loop run in the same frame and only
+        // Tick sends, so players who earn the same title together share one
+        // line ("A, B and C have earned the title: T", at most 10 names); a
+        // player's different titles each get a line of their own. After a
+        // credited boss kill the queue first waits for the game's own boss
+        // death line to fade (HoldForBossMessage). At most 10 lines wait: a
+        // title past that is not shown on screen, and a line that waited
+        // over 50 s is dropped; either way its Chronicle/Discord line goes
+        // out as before. ─────────────────────────────────────────────────
         private const float AnnounceGapSeconds = 4f;
-        private const float AnnounceMaxWaitSeconds = 30f;
-        private const int MaxQueuedAnnouncements = 8;
+        // MessageHud.ShowMessage fades a Center line out over 4 s
+        // (CrossFadeAlpha(0f, 4f), 1.0.15); the hold adds a margin for the
+        // boss's line on its way through the server.
+        private const float CenterMessageFadeSeconds = 4f;
+        private const float BossMessageHoldSeconds = CenterMessageFadeSeconds + 0.5f;
+        private const float AnnounceMaxWaitSeconds = 50f;
+        private const int MaxQueuedAnnouncements = 10;
+        private const int MaxNamesPerLine = 10;
         private const int CenterMessage = 2; // MessageHud.MessageType.Center
-        private static readonly Dictionary<string, float> _lastAnnounced = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
-        private static readonly Queue<KeyValuePair<float, string>> _announcements = new Queue<KeyValuePair<float, string>>();
+
+        // One waiting line: one title and every player who earned it
+        // before the line went out.
+        private sealed class AnnounceLine
+        {
+            public float EnqueuedAt;
+            public string Title;
+            public List<string> Names;
+        }
+
+        private static readonly Queue<AnnounceLine> _announcements = new Queue<AnnounceLine>();
         private static float _nextAnnounceAt;
 
+        // A new world session (Patch_ZNetAwake, server side): nothing waits
+        // over from the one before, and the first line is not held back.
+        internal static void Reset()
+        {
+            _announcements.Clear();
+            _nextAnnounceAt = 0f;
+        }
+
+        // Valheim's own boss death line (BaseAI.OnDeath ->
+        // MessageHud.MessageAll, Center, 1.0.15) leaves the client that owns
+        // the boss right behind that client's kill report, so it reaches
+        // every other client just after a line sent now and replaces it.
+        // CombatCredit.CreditBossKill calls this before the kill's titles
+        // are earned, so they go out once that line has faded.
+        internal static void HoldForBossMessage()
+        {
+            float until = Time.realtimeSinceStartup + BossMessageHoldSeconds;
+            if (_nextAnnounceAt < until) _nextAnnounceAt = until;
+        }
+
+        // Only queues, never sends: Tick does, so the names one credit loop
+        // adds in one frame end up on one line.
         public static void AnnounceEarned(string playerName, string title)
         {
             try
             {
                 if (!Plugin.AnnounceTitleEarnedInGame.Value || !Plugin.IsServer()) return;
                 if (string.IsNullOrEmpty(playerName) || string.IsNullOrEmpty(title)) return;
-                float now = Time.realtimeSinceStartup;
-                foreach (var stale in _lastAnnounced.Where(kv => now - kv.Value >= AnnounceCooldownSeconds).Select(kv => kv.Key).ToList())
-                    _lastAnnounced.Remove(stale);
-                if (_lastAnnounced.ContainsKey(playerName) || _announcements.Count >= MaxQueuedAnnouncements) return;
-                _lastAnnounced[playerName] = now;
-                _announcements.Enqueue(new KeyValuePair<float, string>(now, $"{Plain(playerName)} has earned the title: {Plain(title)}"));
-                Tick();
+                var line = _announcements.FirstOrDefault(l => string.Equals(l.Title, title, StringComparison.OrdinalIgnoreCase));
+                if (line != null)
+                {
+                    if (line.Names.Contains(playerName, StringComparer.OrdinalIgnoreCase)) return;
+                    if (line.Names.Count >= MaxNamesPerLine)
+                    {
+                        Plugin.Log.LogInfo($"[TheRavensCall] {playerName} is not named on screen for the title '{title}': its line already names {MaxNamesPerLine} players.");
+                        return;
+                    }
+                    line.Names.Add(playerName);
+                    return;
+                }
+                if (_announcements.Count >= MaxQueuedAnnouncements)
+                {
+                    Plugin.Log.LogInfo($"[TheRavensCall] {playerName}'s title '{title}' is not shown on screen: {MaxQueuedAnnouncements} on-screen lines are already waiting.");
+                    return;
+                }
+                _announcements.Enqueue(new AnnounceLine { EnqueuedAt = Time.realtimeSinceStartup, Title = title, Names = new List<string> { playerName } });
             }
             catch (Exception ex) { Plugin.Log.LogWarning($"[TheRavensCall] Title announcement failed: {ex.Message}"); }
         }
@@ -2455,25 +2528,42 @@ namespace TheRavensCall
         {
             try
             {
+                if (!Plugin.AnnounceTitleEarnedInGame.Value) { _announcements.Clear(); return; }
                 if (_announcements.Count == 0) return;
                 float now = Time.realtimeSinceStartup;
-                if (now < _nextAnnounceAt) return;
+                while (_announcements.Count > 0 && now - _announcements.Peek().EnqueuedAt > AnnounceMaxWaitSeconds)
+                {
+                    var stale = _announcements.Dequeue();
+                    Plugin.Log.LogInfo($"[TheRavensCall] The on-screen line for the title '{stale.Title}' is dropped: it waited more than {AnnounceMaxWaitSeconds:0} s.");
+                }
+                if (_announcements.Count == 0 || now < _nextAnnounceAt || ZRoutedRpc.instance == null) return;
                 var next = _announcements.Dequeue();
-                if (now - next.Key > AnnounceMaxWaitSeconds || ZRoutedRpc.instance == null) return;
                 _nextAnnounceAt = now + AnnounceGapSeconds;
-                ZRoutedRpc.instance.InvokeRoutedRPC(ZRoutedRpc.Everybody, "ShowMessage", CenterMessage, next.Value);
+                ZRoutedRpc.instance.InvokeRoutedRPC(ZRoutedRpc.Everybody, "ShowMessage", CenterMessage, LineText(next));
             }
             catch (Exception ex) { Plugin.Log.LogWarning($"[TheRavensCall] Title announcement failed: {ex.Message}"); }
         }
 
+        // "A has earned", "A and B have earned", "A, B and C have earned".
+        private static string LineText(AnnounceLine line)
+        {
+            var names = line.Names.Select(Plain).ToList();
+            int n = names.Count;
+            string who = n == 1 ? names[0] : string.Join(", ", names.Take(n - 1)) + " and " + names[n - 1];
+            return $"{who} {(n == 1 ? "has" : "have")} earned the title: {Plain(line.Title)}";
+        }
+
         // MessageHud localizes the line ($word is a token) and draws it as
-        // TextMeshPro rich text (<...> is a tag). The titles are this mod's
-        // own; the name comes from the player's client.
+        // TextMeshPro rich text: <...> is a tag, and a backslash starts an
+        // escape (TMP_Text turns a literal \n, \r, \t or \uXXXX into the real
+        // character). TextMeshPro also breaks a line on U+2028 and U+2029,
+        // which char.IsControl (category Cc only) misses. The titles are this
+        // mod's own; the name comes from the player's client.
         private static string Plain(string s)
         {
             var sb = new System.Text.StringBuilder(s.Length);
             foreach (char c in s)
-                if (!char.IsControl(c) && c != '<' && c != '>' && c != '$') sb.Append(c);
+                if (!char.IsControl(c) && c != '<' && c != '>' && c != '$' && c != '\\' && c != '\u2028' && c != '\u2029') sb.Append(c);
             return sb.ToString().Trim();
         }
     }
