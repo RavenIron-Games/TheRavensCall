@@ -57,6 +57,8 @@ namespace TheRavensCall
         public static ConfigEntry<bool> EnableDeathMilestone;
         public static ConfigEntry<bool> EnableGearTier;
         public static ConfigEntry<bool> EnableTitleEarned;
+        public static ConfigEntry<bool> SyncTitlesToNameplates;
+        public static ConfigEntry<bool> AnnounceTitleEarnedInGame;
         public static ConfigEntry<bool> EnableRaid;
         public static ConfigEntry<bool> ShowDayNumber;
         public static ConfigEntry<bool> ShowOnlineCount;
@@ -116,6 +118,8 @@ namespace TheRavensCall
             EnableDeathMilestone = Config.Bind("Events", "EnableDeathMilestone", true, "Log/announce death milestones");
             EnableGearTier = Config.Bind("Events", "EnableGearTier", true, "Log/announce new gear tier reached");
             EnableTitleEarned = Config.Bind("Events", "EnableTitleEarned", true, "Log/announce when a title is earned");
+            SyncTitlesToNameplates = Config.Bind("Events", "SyncTitlesToNameplates", true, "Send every player's active title to the game clients, so players running WhereTheCrowFlies 1.3.0+ see each other's active title on a line under the name on the nameplate. Sent when a player joins and whenever an active title changes. Off = nothing is sent and the nameplates show plain names");
+            AnnounceTitleEarnedInGame = Config.Bind("Events", "AnnounceTitleEarnedInGame", true, "Show \"<player> has earned the title: <title>\" in the middle of every connected player's screen when a player earns a title for the first time (picking or clearing a title is not announced). Needs no client mod. At most one per player every 10 seconds (a second title inside that window is not shown on screen); lines for different players go out 4 seconds apart so none hides another. The Chronicle/Discord line (EnableTitleEarned) is not affected");
             EnableRaid = Config.Bind("Events", "EnableRaid", true, "Record raid start and end in the Chronicle and the dashboard feed (raid_start / raid_end). Not posted to Discord. The raid banner and raid_active work either way.");
             ShowDayNumber = Config.Bind("Format", "ShowDayNumber", true, "Append day number to messages");
             ShowOnlineCount = Config.Bind("Format", "ShowOnlineCount", true, "Append online count to messages");
@@ -500,11 +504,15 @@ namespace TheRavensCall
                         // files cannot hold the name as sent (see
                         // PlatformBinding), so it gets no record and no line.
                         Plugin.Log.LogWarning($"[TheRavensCall] A player joined with a name containing control or invalid characters ({Companion.Esc(name)}); it is not tracked and its reports are refused.");
+                        // Still a connected client: it gets the other
+                        // players' titles (it is never an entry itself).
+                        TitleSync.SendOnlineTable();
                         return;
                     }
                     Plugin.Log.LogWarning($"[TheRavensCall] {name} joined from a different account than the one this name is bound to, or with no usable account id; its self-reports and title changes are refused and it does not update {name}'s record (ravenscall unbind {name} releases the name).");
                     if (Plugin.EnablePlayerJoin.Value)
                         Plugin.Narrate($"{name} has entered the world.", "player_join", name);
+                    TitleSync.SendOnlineTable();
                     return;
                 }
                 var rec = PlayerRegistry.Get(name);
@@ -549,6 +557,11 @@ namespace TheRavensCall
 
                 if (Plugin.EnablePlayerJoin.Value)
                     Plugin.Narrate($"{name} has entered the world.", "player_join", name);
+                // Every client, the joining one included, gets the whole
+                // online table: RPC_PeerInfo adds the new peer to
+                // ZRoutedRpc's peer list as its last step
+                // (m_routedRpc.AddPeer, 1.0.15), before this postfix runs.
+                TitleSync.SendOnlineTable();
             }
             catch (Exception ex) { Plugin.Log.LogWarning($"[TheRavensCall] PlayerJoin error: {ex.Message}"); }
         }
@@ -634,6 +647,10 @@ namespace TheRavensCall
 
             try { LoreSystem.Tick(Time.deltaTime); }
             catch (Exception ex) { Plugin.Log.LogWarning($"[TheRavensCall] Lore tick error: {ex.Message}"); }
+
+            // Every frame, not on the poll timer: the on-screen title lines
+            // wait here only for the 4 s gap between them (TitleSync).
+            TitleSync.Tick();
 
             _timer += Time.deltaTime;
             if (_timer < Mathf.Max(1f, Plugin.StatsPushIntervalSeconds.Value)) return;
@@ -2174,7 +2191,8 @@ namespace TheRavensCall
             // 2026-09-22).
             bool first = rec.EarnedTitles.Count == 0;
             rec.EarnedTitles.Add(title);
-            if (first && string.IsNullOrEmpty(rec.ActiveTitle)) rec.ActiveTitle = title;
+            bool activated = first && string.IsNullOrEmpty(rec.ActiveTitle);
+            if (activated) rec.ActiveTitle = title;
             rec.Dirty = true;
 
             string titleDisplay = GetDisplayName(playerName);
@@ -2183,7 +2201,13 @@ namespace TheRavensCall
                 { "name", titleDisplay }, { "title", title },
             }, $"{titleDisplay} has earned the title: {title}!");
             if (Plugin.EnableTitleEarned.Value) Plugin.FireEvent("title_earned", playerName, titleMsg, title);
+            // The on-screen line (1.8.0): the plain name, never titleDisplay
+            // (it already carries the active title) or titleMsg (a template
+            // may carry Discord formatting). Its own switch, not
+            // EnableTitleEarned; burst rules on TitleSync.AnnounceEarned.
+            TitleSync.AnnounceEarned(playerName, title);
             PlayerRegistry.Save(rec);
+            if (activated) TitleSync.SendOne(rec.Name, title);
         }
 
         // ── Title picker (1.7.0) ────────────────────────────────────────
@@ -2224,6 +2248,7 @@ namespace TheRavensCall
             rec.Dirty = true;
             Plugin.Log.LogInfo($"[TheRavensCall] {playerName} chose the title '{stored}'");
             PlayerRegistry.Save(rec);
+            TitleSync.SendOne(rec.Name, stored);
             return (1, $"Title set: {stored}. You are now {playerName} the {stored}.");
         }
 
@@ -2235,6 +2260,7 @@ namespace TheRavensCall
             rec.Dirty = true;
             Plugin.Log.LogInfo($"[TheRavensCall] {playerName} set no title");
             PlayerRegistry.Save(rec);
+            TitleSync.SendOne(rec.Name, "");
             // Stays cleared: EarnTitle only self-activates a player's first
             // title, so a later milestone lands in titles_earned without
             // becoming active (review 2026-09-22).
@@ -2302,6 +2328,153 @@ namespace TheRavensCall
 
             for (int i = 0; i < BossKillMilestones.Length; i++)
                 if (rec.BossKillsCredited == BossKillMilestones[i]) EarnTitle(playerName, BossKillTitles[i], rec);
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // TITLE SYNC (1.8.0) — active titles on other players' nameplates, and
+    // the on-screen line when a title is earned
+    // ═════════════════════════════════════════════════════════════════════════
+    // RavensCall_TitleSync_V1 goes to everybody (ZRoutedRpc.Everybody): it
+    // also runs locally, so a listen host's own WhereTheCrowFlies gets it,
+    // and a receiver with no handler for it (a vanilla client, a crow before
+    // 1.3.0, this dedicated server itself) drops it without a log line
+    // (ZRoutedRpc.HandleRoutedRPC, 1.0.15). This mod only sends it and never
+    // registers it, like RavensCall_TitleReply_V1. WhereTheCrowFlies 1.3.0+
+    // keeps a name -> title cache from it and draws the title on a line
+    // under the name. Schema 1, one ZPackage:
+    //   int    schemaVersion   1
+    //   int    count           entries that follow, 0..256
+    //   count x:
+    //     string playerName    the record's Name
+    //     string title         the ACTIVE title; "" = none (the receiver
+    //                          removes the name)
+    // Keyed by name because the records are (case-insensitively), and the
+    // join hook runs before the joining player's character exists. Known,
+    // accepted limit: a player joining under a name bound to another
+    // account (PlatformBinding, "untrusted") shows that name's title too;
+    // the nameplate already shows the name itself.
+    // Sent at every join (the whole online table, to every client, the
+    // joining one included) and wherever a player's active title changes:
+    // SetTitle, ClearTitle (the admin's `ravenscall title` goes through
+    // both) and a player's first title activating itself in EarnTitle.
+    internal static class TitleSync
+    {
+        internal const string RpcName = "RavensCall_TitleSync_V1";
+        private const int SchemaVersion = 1;
+        private const int MaxEntries = 256;
+
+        private static bool CanSync() =>
+            Plugin.SyncTitlesToNameplates.Value && Plugin.IsServer() && ZRoutedRpc.instance != null;
+
+        public static void SendOne(string name, string activeTitle)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(name) || !CanSync()) return;
+                var pkg = new ZPackage();
+                pkg.Write(SchemaVersion);
+                pkg.Write(1);
+                pkg.Write(name);
+                pkg.Write(activeTitle ?? "");
+                ZRoutedRpc.instance.InvokeRoutedRPC(ZRoutedRpc.Everybody, RpcName, pkg);
+            }
+            catch (Exception ex) { Plugin.Log.LogWarning($"[TheRavensCall] Title sync failed: {ex.Message}"); }
+        }
+
+        // One entry per connected player (the list /api/state counts), each
+        // name once, "" entries included so a stale cache heals. A peer on
+        // another account than its name's is left out.
+        public static void SendOnlineTable()
+        {
+            try
+            {
+                if (!CanSync()) return;
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var entries = new List<KeyValuePair<string, string>>();
+                foreach (var p in Plugin.GetConnectedPlayers())
+                {
+                    if (entries.Count >= MaxEntries) break;
+                    if (Patch_PlayerJoin.IsUntrusted(p.peerUid) || !seen.Add(p.name)) continue;
+                    // A lookup that never creates a record (PlayerRegistry.Get
+                    // would), the same one the admin's `ravenscall title` uses.
+                    var rec = PlayerRegistry.All.FirstOrDefault(r => string.Equals(r.Name, p.name, StringComparison.OrdinalIgnoreCase));
+                    entries.Add(new KeyValuePair<string, string>(rec?.Name ?? p.name, rec?.ActiveTitle ?? ""));
+                }
+                var pkg = new ZPackage();
+                pkg.Write(SchemaVersion);
+                pkg.Write(entries.Count);
+                foreach (var e in entries) { pkg.Write(e.Key); pkg.Write(e.Value); }
+                ZRoutedRpc.instance.InvokeRoutedRPC(ZRoutedRpc.Everybody, RpcName, pkg);
+            }
+            catch (Exception ex) { Plugin.Log.LogWarning($"[TheRavensCall] Title sync failed: {ex.Message}"); }
+        }
+
+        // ── The on-screen line: vanilla's own routed "ShowMessage" (MessageHud
+        // registers it on every client; type 2 = Center), so it needs no
+        // client mod. Titles can come in a burst for one player: one boss
+        // kill can earn the boss's title, "Slayer of Gods" and a boss-count
+        // title together (a third boss kill that is also a new boss earns
+        // two), and two kill reports can cross two creature milestones
+        // within a second. So at most one line per player per 10 s; a later
+        // one inside that window is skipped on screen, while its Chronicle/
+        // Discord line goes out as before. A Center message also replaces
+        // the one before it at once (MessageHud.ShowMessage sets the text,
+        // then fades it out over 4 s), so a boss kill that gives three
+        // players their first boss title would show only the last name:
+        // lines wait in a short queue and go out 4 s apart (Tick, every
+        // frame from Patch_ZNetUpdate). A line that waited over 30 s, or
+        // one past 8 waiting, is dropped. ────────────────────────────────
+        private const float AnnounceCooldownSeconds = 10f;
+        private const float AnnounceGapSeconds = 4f;
+        private const float AnnounceMaxWaitSeconds = 30f;
+        private const int MaxQueuedAnnouncements = 8;
+        private const int CenterMessage = 2; // MessageHud.MessageType.Center
+        private static readonly Dictionary<string, float> _lastAnnounced = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Queue<KeyValuePair<float, string>> _announcements = new Queue<KeyValuePair<float, string>>();
+        private static float _nextAnnounceAt;
+
+        public static void AnnounceEarned(string playerName, string title)
+        {
+            try
+            {
+                if (!Plugin.AnnounceTitleEarnedInGame.Value || !Plugin.IsServer()) return;
+                if (string.IsNullOrEmpty(playerName) || string.IsNullOrEmpty(title)) return;
+                float now = Time.realtimeSinceStartup;
+                foreach (var stale in _lastAnnounced.Where(kv => now - kv.Value >= AnnounceCooldownSeconds).Select(kv => kv.Key).ToList())
+                    _lastAnnounced.Remove(stale);
+                if (_lastAnnounced.ContainsKey(playerName) || _announcements.Count >= MaxQueuedAnnouncements) return;
+                _lastAnnounced[playerName] = now;
+                _announcements.Enqueue(new KeyValuePair<float, string>(now, $"{Plain(playerName)} has earned the title: {Plain(title)}"));
+                Tick();
+            }
+            catch (Exception ex) { Plugin.Log.LogWarning($"[TheRavensCall] Title announcement failed: {ex.Message}"); }
+        }
+
+        internal static void Tick()
+        {
+            try
+            {
+                if (_announcements.Count == 0) return;
+                float now = Time.realtimeSinceStartup;
+                if (now < _nextAnnounceAt) return;
+                var next = _announcements.Dequeue();
+                if (now - next.Key > AnnounceMaxWaitSeconds || ZRoutedRpc.instance == null) return;
+                _nextAnnounceAt = now + AnnounceGapSeconds;
+                ZRoutedRpc.instance.InvokeRoutedRPC(ZRoutedRpc.Everybody, "ShowMessage", CenterMessage, next.Value);
+            }
+            catch (Exception ex) { Plugin.Log.LogWarning($"[TheRavensCall] Title announcement failed: {ex.Message}"); }
+        }
+
+        // MessageHud localizes the line ($word is a token) and draws it as
+        // TextMeshPro rich text (<...> is a tag). The titles are this mod's
+        // own; the name comes from the player's client.
+        private static string Plain(string s)
+        {
+            var sb = new System.Text.StringBuilder(s.Length);
+            foreach (char c in s)
+                if (!char.IsControl(c) && c != '<' && c != '>' && c != '$') sb.Append(c);
+            return sb.ToString().Trim();
         }
     }
 

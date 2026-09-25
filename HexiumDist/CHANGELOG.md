@@ -9,7 +9,13 @@
 
 ## 🟢 [1.8.0] — NAME TBD
 
-*Security and bookkeeping fixes from a code review, plus a cleaner build. No config keys, BarrkBOT export shape or dashboard page changes (a dashboard opened from disk or another address now needs `HttpApiToken`, see below); one new admin command and one new file under `BepInEx/config/TheRavensCall/`.*
+*Titles reach the game itself: a player's active title on their nameplate (with WhereTheCrowFlies 1.3.0) and an on-screen line for everyone when a title is earned. Plus security and bookkeeping fixes from a code review, and a cleaner build. Two new config keys; no BarrkBOT export shape or dashboard page changes (a dashboard opened from disk or another address now needs `HttpApiToken`, see below); one new admin command and one new file under `BepInEx/config/TheRavensCall/`.*
+
+### Added
+- **Titles on the nameplate**, with `WhereTheCrowFlies` 1.3.0+. A player's active title now shows in the game, on its own line directly under their name on the nameplate Valheim shows over a nearby player. The server sends every connected player's active title to the game clients whenever someone joins, and again whenever a title is picked, cleared (by the player or with `ravenscall title`) or a player's first title activates itself; `WhereTheCrowFlies` 1.3.0+ draws it. It is needed on the client of each player who should SEE the titles, not on the player wearing one. Valheim never shows your own nameplate, so your title shows to the others, not to you. A player without `WhereTheCrowFlies` 1.3.0+ sees plain names and nothing breaks: a game client with no handler for the message ignores it without a log line. New config key `SyncTitlesToNameplates` (`[Events]`, default `true`); off, nothing is sent. It travels over a new broadcast RPC, `RavensCall_TitleSync_V1` (from the server to every client: character names and their active titles, `""` for none).
+- **An on-screen line when a title is earned.** When a player earns a title for the first time (every title is earned once), every connected player sees `<player> has earned the title: <title>` in the middle of the screen. It uses Valheim's own on-screen message, so it needs no client mod at all. Picking or clearing a title is not announced. New config key `AnnounceTitleEarnedInGame` (`[Events]`, default `true`), separate from `EnableTitleEarned`, which still controls the Chronicle and Discord line. One boss kill can earn up to three titles at once, so the screen shows at most one line per player every 10 seconds (the others still reach the Chronicle and Discord); lines for different players go out 4 seconds apart, so a boss kill that gives a whole group a title shows every name, not just the last.
+- **Next to Ragnarok's Wrath.** Ragnarok's Wrath puts its own title on a line under the name. Both show: The Raven's Call's title directly under the name, Ragnarok's Wrath's below it, in a different color. The two mods share nothing but the nameplate.
+- **Known limit:** titles are matched by character name. A player who joins under a name bound to another account (see the name binding under Security) shows that name's title too. The nameplate already shows that name, so the title tells no one anything new.
 
 ### 🛡️ Security
 - **A modified client could report as another player.** Every client report carries a sender id that the client itself writes, and Valheim hands it on without checking it against the connection it came in on. So a modified client naming another player's id passed the "this report is about yourself" check as that player: it could overwrite their game stats, post a death for them to Discord and their death history, or change or clear their title. The server now accepts a report only when its sender id is the connection that actually delivered it, for kills, deaths, damage, fishing, building, crafting, harvesting, food, world events, stat and skill snapshots and title requests alike. The 30-reports-a-second limit now counts per real connection too, so made-up sender ids no longer get around it.
@@ -32,6 +38,7 @@
 
 ### Tested
 - `dotnet build -c Release`, 0 warnings, 0 errors; the built DLL names its debug-symbol path as `/_/obj/Release/TheRavensCall.pdb` and contains no local folder. Two clean builds of the same tree are byte-identical.
+- **Not run in a game yet:** the nameplate titles and the on-screen line. The nameplate needs two players, since nobody sees their own.
 
 ---
 

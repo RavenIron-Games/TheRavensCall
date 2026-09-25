@@ -35,11 +35,13 @@ To provide seamless, 100% accurate tracking without missing a single event, the 
    - Serves the live web dashboard on port `2112`.
    - Generates the timer-refreshed `BarrkBOT_data1.json` (players) and `BarrkBOT_data2.json` (game data) exports for Discord bots.
    - Rotates the daily JSONL Chronicle audit log and posts real-time Discord webhook embeds.
+   - Since 1.8.0, sends every player's active title to the game clients (`RavensCall_TitleSync_V1`) and shows an on-screen line to everyone when a title is earned.
 
 2. **[WhereTheCrowFlies](https://valheim.thunderstore.io/package/RavenIron/WhereTheCrowFlies) (Client Companion Mod)**
    - Installed on **Player Game Clients**.
    - Lightweight, zero-overhead client mod that hooks local simulation events (kills, deaths with cause resolution, damage dealt/taken, bosses slain, fish caught, and every vanilla stat, ~205 on Valheim 1.0).
    - Batches continuous telemetry into efficient 10-second updates and transmits them via routed RPC to The Raven's Call.
+   - Since WhereTheCrowFlies 1.3.0 (with The Raven's Call 1.8.0+), draws other players' active titles on a line under their names.
    - **Safe Everywhere**: When connecting to vanilla or unmodded servers, client RPC calls silently discard with zero errors, zero latency, and zero log noise.
 
 > [!IMPORTANT]
@@ -91,12 +93,13 @@ Every death, every kill, every fallen god, every shoreline first walked — The 
 
 ## 📯 Where the News Goes
 
-The Raven's Call routes incoming telemetry across four server-driven channels:
+The Raven's Call routes incoming telemetry across five server-driven channels:
 
 1. **Discord**, via webhook — player-attributable events post as rich, colored embeds the moment they occur.
 2. **The Chronicle** — a JSON-lines log on disk, one line per event, rotating daily for server history and audit trails.
 3. **The Web Dashboard** — a live, standalone web page accessible in any browser for admins and players.
 4. **The BarrkBOT Export** — a clean JSON file, refreshed on a timer, built specifically to be read by Discord bots.
+5. **The game itself** — since 1.8.0, a title earned for the first time is announced in the middle of every connected player's screen (no client mod needed), and active titles show under players' names for those running WhereTheCrowFlies 1.3.0+ (see [Titles & Milestones](#-titles--milestones)).
 
 ---
 
@@ -299,7 +302,9 @@ Rotates daily at UTC midnight. Enable or disable with `EnableChronicleLog`. Prov
 
 Players unlock titles by slaying creature families (100, 500, 1000 kills) and defeating Valheim's world bosses (*Stag Breaker*, *Bane of the Swamp*, *The Ashen*, etc.). Felling all seven gods awards the legendary title *Slayer of Gods*. Unlocked titles are added to `titles_earned` in the export data; a player's very first title also becomes `active_title`, and after that the player chooses which one is active (see below).
 
-**Choosing your title.** Since 1.7.0 a player picks which earned title the server uses — in its Discord/Chronicle narration and on the dashboard/export — rather than always the first one earned. Nothing changes on the in-game nameplate. With `WhereTheCrowFlies` 1.2.0+: `/title` lists what you've earned, `/title Wolf Hunter` sets it (only to a title you've already earned), `/title clear` shows no title, and stays that way: titles you earn later are listed but not shown until you pick one (only your very first title ever activates itself). The same `WhereTheCrowFlies` 1.2.0 also has a `/titles` panel — a small window that lists your earned titles as buttons (or opens with the key you've set in its config) instead of typing the title's name; it asks the server on open and refreshes after every click. An admin can do the same for anyone, online or not, with `ravenscall title <player> [<title>|clear]` — from the server console with no client mod needed, or from an admin's game client that has WhereTheCrowFlies 1.1.3+ installed. Either way the change shows up on the dashboard and export at the next poll.
+**Choosing your title.** Since 1.7.0 a player picks which earned title the server uses — in its Discord/Chronicle narration and on the dashboard/export — rather than always the first one earned; since 1.8.0 it also shows on the in-game nameplate (see below). With `WhereTheCrowFlies` 1.2.0+: `/title` lists what you've earned, `/title Wolf Hunter` sets it (only to a title you've already earned), `/title clear` shows no title, and stays that way: titles you earn later are listed but not shown until you pick one (only your very first title ever activates itself). The same `WhereTheCrowFlies` 1.2.0 also has a `/titles` panel — a small window that lists your earned titles as buttons (or opens with the key you've set in its config) instead of typing the title's name; it asks the server on open and refreshes after every click. An admin can do the same for anyone, online or not, with `ravenscall title <player> [<title>|clear]` — from the server console with no client mod needed, or from an admin's game client that has WhereTheCrowFlies 1.1.3+ installed. Either way the change shows up on the dashboard and export at the next poll.
+
+**In the game (since 1.8.0).** A player's active title shows on its own line directly under their name, on the nameplate Valheim shows over a nearby player. The server sends every connected player's active title to the game clients whenever someone joins and whenever a title is picked, cleared or first activates itself; [WhereTheCrowFlies](https://valheim.thunderstore.io/package/RavenIron/WhereTheCrowFlies) 1.3.0+ draws it, and it is needed on the client of each player who should *see* the titles. Valheim never shows your own nameplate, so your title is for the others: it takes a second player to see it. Players without WhereTheCrowFlies 1.3.0+ see plain names, and nothing breaks. With Ragnarok's Wrath installed as well, both titles show: this one directly under the name, Ragnarok's Wrath's own title below it in a different color. And when a player earns a title for the first time, every connected player sees `<player> has earned the title: <title>` in the middle of the screen; that uses Valheim's own on-screen message and needs no client mod. Picking or clearing a title is not announced. One boss kill can earn up to three titles, so the screen shows at most one line per player every 10 seconds (every title still reaches the Chronicle and Discord), and lines for different players go out 4 seconds apart. `SyncTitlesToNameplates` and `AnnounceTitleEarnedInGame` under `[Events]` turn either off. Titles are matched by character name, so a player who joins under a name bound to another account (see `ravenscall unbind` below) shows that name's title too.
 
 ---
 
@@ -333,6 +338,8 @@ Configuration is located at `BepInEx/config/com.raveniron.theravenscall.cfg`:
 | **Combat** | `AcceptClientReports` | `true` | Accepts telemetry RPC reports from *WhereTheCrowFlies* client mods. Set to `false` it also disables the player's `/title` picker (the admin's `ravenscall title` still works). |
 | **Combat** | `LogCombatReports` | `false` | Enables verbose console logging for incoming combat reports. |
 | **Events** | `EnablePlayerDeath` ... `EnableTitleEarned` | `true` | Independently toggles narration/Chronicle for each event type. |
+| **Events** | `SyncTitlesToNameplates` | `true` | Since 1.8.0. Sends every player's active title to the game clients (at each join and at each title change), so players running *WhereTheCrowFlies* 1.3.0+ see each other's active title on a line under the name. `false`: nothing is sent and nameplates show plain names. |
+| **Events** | `AnnounceTitleEarnedInGame` | `true` | Since 1.8.0. Shows `<player> has earned the title: <title>` in the middle of every connected player's screen when a title is earned for the first time. Needs no client mod. At most one line per player every 10 seconds; lines for different players go out 4 seconds apart. Separate from `EnableTitleEarned`, which gates the Chronicle and Discord line. |
 | **Events** | `EnableRaid` | `true` | Records raid start and end in the Chronicle and the dashboard feed (`raid_start`/`raid_end`). Not posted to Discord. The raid banner and `raid_active` in the API work either way — this only gates the narration. |
 | **Format** | `ShowDayNumber` / `ShowOnlineCount` | `true` | Appends `[Day N]` and `(N online)` to each event's line in the server log (Discord and the Chronicle get the plain message; the Chronicle and `/api/activity` rows carry the day and the count as their own `day` and `online_count` fields, however these two are set). The count is the connected players: since 1.7.1 a leave line no longer counts the player who just left, a player whose game crashed still counts until the server drops the dead connection (up to 30 s, or up to 90 s on a crossplay server), and the part is left off when nobody is online. |
 | **Format** | `MessagePrefix` | `⚔ ` | Prefix on each event's line in the server log (Discord and the Chronicle get the message without it). |
@@ -390,13 +397,17 @@ BepInEx/config/TheRavensCall/
 ### Client Setup (Players)
 1. Players install [WhereTheCrowFlies](https://valheim.thunderstore.io/package/RavenIron/WhereTheCrowFlies) on their Valheim game clients.
 2. Combat, deaths, boss encounters, and stats will automatically transmit to The Raven's Call.
+3. With WhereTheCrowFlies 1.3.0+ and The Raven's Call 1.8.0+, players also see each other's active titles under their names.
 
 ---
 
 ## ❓ FAQ
 
 **Do players have to install anything?**
-No. The server mod works on its own. But a dedicated server never sees combat: kills, deaths, damage, fish and the ~205 vanilla stats reach the server only from [WhereTheCrowFlies](https://valheim.thunderstore.io/package/RavenIron/WhereTheCrowFlies) on a player's client. Without it a player still shows up with joins, leaves, biome discoveries and playtime, and the world census still credits them with the structures they have standing; but their kills, deaths, and their build, craft and harvest counters stay at zero.
+No. The server mod works on its own. But a dedicated server never sees combat: kills, deaths, damage, fish and the ~205 vanilla stats reach the server only from [WhereTheCrowFlies](https://valheim.thunderstore.io/package/RavenIron/WhereTheCrowFlies) on a player's client. Without it a player still shows up with joins, leaves, biome discoveries and playtime, and the world census still credits them with the structures they have standing; but their kills, deaths, and their build, craft and harvest counters stay at zero. Seeing other players' titles under their names also takes WhereTheCrowFlies (1.3.0+), on the client of the player looking; the on-screen line for an earned title needs nothing.
+
+**Why can't I see my own title over my head?**
+Valheim never shows your own nameplate, only other players' when they are near. Your title shows to the other players who run WhereTheCrowFlies 1.3.0+; ask one of them, or check `/title` (it names your active title).
 
 **Why are a player's kills and deaths zero, or far too low?**
 See above: that player is not running WhereTheCrowFlies. Once they install it, their vanilla stats arrive as an absolute snapshot, so everything they earned before the mod existed is backfilled rather than starting from zero.
