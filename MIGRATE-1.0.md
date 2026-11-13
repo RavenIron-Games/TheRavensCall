@@ -110,7 +110,7 @@
 > 1.0 in a way that would make a dedicated server run those.
 >
 > **Deviations / notes.** No fold script in the repo; the zip was made with the shared deterministic packer (same
-> five entries as 1.2.1). A byte-identical copy of this project sits in `PAUSED/TheRavensCall/` from before it was
+> five entries as 1.2.1). A byte-identical copy of this project sits in `PAUSED/TheRavensCall-OLD-1.2.1/` from before it was
 > un-paused; it is now stale (its csproj still carries the `PAUSED/`-depth paths).
 >
 > **Open.** Live pairing test with WhereTheCrowFlies 1.1.1: one client session, then confirm `BarrkBOT_data1.json`

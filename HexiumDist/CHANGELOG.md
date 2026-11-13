@@ -7,6 +7,21 @@
 
 ---
 
+## 🟢 [1.7.2] — Rebuilt for Valheim 1.0.21
+
+*A compatibility release. No config, API shape or dashboard changes.*
+
+### Changed
+- **Rebuilt and checked against Valheim 1.0.21 (network version 41).** Every game call and Harmony patch target the mod uses still binds on the 1.0.21 client and dedicated-server assemblies. The `ZNet.RPC_PeerInfo` join hook, the `Character.OnDeath` kill hook and the `ravenscall` console command (`Terminal.InitTerminal`) were re-read against the 1.0.21 code: only the network version and the cheat-flag plumbing changed there, not what the hooks see. The player-stat counters that WhereTheCrowFlies sends are unchanged (205 counters, still under the receiver's 1024-pair cap).
+- **Website link** is now <https://ravenirongames.com/>.
+- **BepInEx dependency** is now BepInExPack_Valheim 5.4.2360.
+- The DLL no longer carries an absolute build path that included the build machine's user name (DLLs already published are unchanged).
+
+### Tested
+- `dotnet build -c Release`, 0 errors; reference check clean against the Valheim 1.0.21 client and server assemblies; boot check on a 1.0.21 dedicated server.
+
+---
+
 ## 🟢 [1.7.1] — The Raven Missed Something
 
 *One wrong number, fixed. No config, API shape or dashboard changes.*

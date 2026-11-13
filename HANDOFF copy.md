@@ -3,7 +3,7 @@
 **Version: v1.0.1**  
 **Companion Mod for: TheRavensCall (Dedicated Server Mod)**  
 **Author / Publisher: RavenIron**  
-**Repository / Workspace: `/home/rohan/WubarrkCODING/WhereTheCrowFlies`**  
+**Repository / Workspace: `/home/rohan/WubarrkCODING/ValheimMods/WhereTheCrowFlies`**  
 **Build Target: .NET Framework 4.7.2 / BepInEx 5.4.2333 / Valheim**
 
 ---

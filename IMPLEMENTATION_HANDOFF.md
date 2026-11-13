@@ -218,7 +218,7 @@ not behavior — but it is what makes "keep the dead patches" safe forever.
 Lives in an existing Wubarrk client mod that players already install through
 the AzuAntiCheat whitelist. Recommendation: **Fatty** (actively developed;
 already has a BarrkBOT-adjacent work order in
-`/home/rohan/WubarrkCODING/Fatty/FEAST_EXPORT.md`, so its next session is
+`/home/rohan/WubarrkCODING/ValheimMods/Fatty/FEAST_EXPORT.md`, so its next session is
 already expected). ~80 lines:
 
 1. **`Character.OnDeath` prefix, client-side** — fires authoritatively on the
@@ -268,7 +268,7 @@ In `/home/rohan/WubarrkCODING/WindowsDEV/Discord-BarrkBOT/v5.7 - Final`:
 ## 6. Build, deploy, verify
 
 ```bash
-cd /home/rohan/WubarrkCODING/TheRavensCall
+cd /home/rohan/WubarrkCODING/ValheimMods/TheRavensCall
 /home/rohan/.dotnet/dotnet build -c Release        # dll lands in bin/
 # refresh HexiumDist/plugins/, manifest.json, CHANGELOG.md, re-zip
 ```
