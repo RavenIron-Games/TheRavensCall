@@ -1,121 +1,278 @@
-<div align="center">
-
+<!-- README schema v2 -->
 # 🐦‍⬛ The Raven's Call
 
-![Valheim Mod](https://img.shields.io/badge/Valheim-Server_Admin_Tool-orange.svg)
-[![Deployment](https://img.shields.io/badge/Install-Server_Mod-critical.svg)]()
-[![Companion](https://img.shields.io/badge/Client_Companion-WhereTheCrowFlies-blue.svg)]()
-[![Framework](https://img.shields.io/badge/Requires-BepInEx-red.svg)]()
-[![Publisher](https://img.shields.io/badge/RavenIron-Release-8B6F1F.svg)]()
-[![Version](https://img.shields.io/badge/Version-1.7.2-lightgrey.svg)]()
+![THE RAVEN'S CALL](https://img.shields.io/badge/THE_RAVEN%27S_CALL-YOUR_SERVER_REMEMBERS_EVERYTHING-c9a227?style=for-the-badge&labelColor=1b1b1b)
+![VERSION](https://img.shields.io/badge/VERSION-1.7.2-8b1e1e?style=for-the-badge&labelColor=1b1b1b)
+![SERVER SIDE](https://img.shields.io/badge/SERVER--SIDE-PLAYERS_ADD_WHERETHECROWFLIES-1f4e79?style=for-the-badge&labelColor=1b1b1b)
 
-**RavenIron's server admin & analytics engine: aggregates player telemetry from *WhereTheCrowFlies*, chronicles realm history, and feeds live web dashboards and Discord AI bots.**
+> *Odin kept two ravens. Huginn flew out each dawn to see what moved in Midgard; Muninn stayed close to hold what had already happened. The Raven's Call is Muninn, perched on your dedicated server, keeping the chronicle of every fallen god and every Viking's saga. Its companion, **[WhereTheCrowFlies](https://valheim.thunderstore.io/package/RavenIron/WhereTheCrowFlies)**, is Huginn, flying beside your players and carrying the news home.*
 
-</div>
+### Every death, every fallen god, every first step into the Mistlands: written down, and told to your Discord, your browser and your bot.
 
----
+The Raven's Call is RavenIron's server admin and analytics mod. It keeps a record of every player who has ever joined your realm: kills, deaths, bosses, skills, titles, playtime, what they built and harvested, and a census of what stands in the world. It narrates the big moments to Discord, writes a daily Chronicle, serves a live web dashboard and writes a JSON export made for Discord bots.
 
-> *Odin kept two ravens. Huginn flew out each dawn to see what moved in Midgard; Muninn stayed close to hold what had already happened. Together they were his whole knowledge of the nine worlds, whispered into his ear each evening.*
->
-> *The Raven's Call is Muninn, perched upon your dedicated server holding the chronicle of every fallen god, player milestone, and Viking saga. Out in the field, its companion client mod **[WhereTheCrowFlies](https://valheim.thunderstore.io/package/RavenIron/WhereTheCrowFlies)** is Huginn, flying alongside your players to gather combat, kills, deaths, and telemetry from the living edge of Midgard and send it home.*
+It runs on the server alone. A dedicated server never sees combat, so each player adds the small client mod **WhereTheCrowFlies**, which reports their kills, deaths, damage and stats home. Without it a player still shows up, with less in their record.
 
 ---
 
-## ⚠️ How It Works: Server Mod + Client Companion
+![NEW IN 1.7.2](https://img.shields.io/badge/NEW_IN_1.7.2-VALHEIM_1.0.21-8b1e1e?style=for-the-badge&labelColor=1b1b1b)
 
-In Valheim's multiplayer architecture, the dedicated server acts as a world-state relay. **Combat resolution, damage calculations, creature deaths, and player statistics execute exclusively on the game client that owns the local simulation zone.** A dedicated server on its own never executes `Character.Damage` or `Character.OnDeath` for player combat.
+**This version is The Raven's Call built for Valheim 1.0.21.**
 
-To provide seamless, 100% accurate tracking without missing a single event, the system uses two coordinated mods:
-
-1. **The Raven's Call (Server Mod — This Mod)**
-   - Installed on the **Dedicated Server** (or listen-server host).
-   - Listens for telemetry routed RPCs (`RavensCall_EventReport_V2` and `RavensCall_CombatReport_V1`) from connected clients.
-   - Verifies incoming reports against connected players to ensure authentic data.
-   - Maintains the persistent multi-player database (`BepInEx/config/TheRavensCall/players/`).
-   - Serves the live web dashboard on port `2112`.
-   - Generates the timer-refreshed `BarrkBOT_data1.json` (players) and `BarrkBOT_data2.json` (game data) exports for Discord bots.
-   - Rotates the daily JSONL Chronicle audit log and posts real-time Discord webhook embeds.
-
-2. **[WhereTheCrowFlies](https://valheim.thunderstore.io/package/RavenIron/WhereTheCrowFlies) (Client Companion Mod)**
-   - Installed on **Player Game Clients**.
-   - Lightweight, zero-overhead client mod that hooks local simulation events (kills, deaths with cause resolution, damage dealt/taken, bosses slain, fish caught, and every vanilla stat, ~205 on Valheim 1.0).
-   - Batches continuous telemetry into efficient 10-second updates and transmits them via routed RPC to The Raven's Call.
-   - **Safe Everywhere**: When connecting to vanilla or unmodded servers, client RPC calls silently discard with zero errors, zero latency, and zero log noise.
-
-> [!IMPORTANT]
-> **Admins:** Install `TheRavensCall.dll` on your dedicated server.  
-> **Players:** Install `WhereTheCrowFlies.dll` on game clients so their combat, deaths, boss encounters, and stats are reported to the server's ledger!
+| You | It |
+|---|---|
+| **Update the server and your players together** | Valheim 1.0.21 uses network version 41: the server and every player's game must be on it to meet |
+| **Keep your settings and records** | nothing else changes: the same settings, the same API, the same dashboard |
 
 ---
+
+![BEFORE YOU INSTALL](https://img.shields.io/badge/BEFORE_YOU_INSTALL-READ_THIS-b8860b?style=for-the-badge&labelColor=1b1b1b)
+
+| | If… | Then… |
+|---|---|---|
+| 🖥️ | you run a **dedicated server** | install The Raven's Call on the server only. It is built and tested for dedicated servers; it loads on a listen-server host, but that has not been tested. |
+| 🐦‍⬛ | you want **kills, deaths, damage, fish and stats** | each player installs [WhereTheCrowFlies](https://valheim.thunderstore.io/package/RavenIron/WhereTheCrowFlies). Without it a player still gets joins, leaves, playtime, biome discoveries and their census count, but their kills, deaths and build, craft and harvest counters stay at zero. |
+| 🔐 | you open the **dashboard** to other machines | it answers only the server machine itself unless you change that. The API has no login and hands every player's stats, skills, titles and death positions to anyone who can reach it: set `HttpApiToken` and keep the port behind a firewall. |
+| ☁️ | you **push to a hosted dashboard** | whoever holds the read token sees every player's stats and death positions, and the position of every portal, bed and ward, in effect where the bases are. Raven Iron's own receiver is for its own servers: deploy your own. With `PushUrl` empty, the default, nothing leaves the server. |
+| 📄 | you once put **your own `theravenscall.html`** in `BepInEx/config/TheRavensCall/` or next to the DLL | delete it. The page ships inside the mod, and an old loose copy overrides it and cannot read the current API. The server log names the file. |
+
+---
+
+![I](https://img.shields.io/badge/I-THE_LEDGER-c9a227?style=for-the-badge&labelColor=1b1b1b)
+
+**Every Viking's whole saga, kept on the server.**
+
+| | |
+|---|---|
+| 🔹 **Deaths** | the cause, named: a creature, a boss, another player, fire, frost, poison, spirit, drowning or a fall; and each player's last ten deaths, with the killer, the biome and the place |
+| 🔹 **Boss kills** | credited to everyone who stood near the kill, not only the one who struck last |
+| 🔹 **Milestones** | kills at 1, 10, 100, 500, 1000 and beyond; deaths at 1, 5, 10, 25, 50, 100 and beyond |
+| 🔹 **Biome discoveries** | per player, so a first step into the Mistlands is announced once, ever |
+| 🔹 **Raids** | from the moment one starts to the moment it ends |
+| 🔹 **Combat** | damage dealt and taken, blocks, parries and damage blocked |
+| 🔹 **Every vanilla stat** | all of the player's own in-game Stats screen, about 205 counters, from jumps and portals to distance travelled |
+| 🔹 **Skills** | the level and progress of every skill a player has raised |
+| 🔹 **The work** | fish caught · building placed, removed and repaired · items crafted, upgraded and repaired · resources harvested, per type · food and potions · bosses summoned · guardian powers used |
+| 🔹 **Playtime** | lifetime, kept across restarts |
 
 <details>
-<summary>📜 <b>Contents</b></summary>
+<summary>📖 <b>Read the saga</b> — why the server needs a crow</summary>
 
-- [🪶 What It Tracks](#-what-it-tracks)
-- [📯 Where the News Goes](#-where-the-news-goes)
-- [🤖 BarrkBOT & Discord AI Bot Integration](#-barrkbot--discord-ai-bot-integration)
-  - [The Export File](#the-export-file)
-  - [Per-Player Schema](#per-player-schema)
-  - [Reading It From a Bot](#reading-it-from-a-bot)
-  - [The Discord Webhook (Narration)](#the-discord-webhook-narration)
-- [🖥️ The Web Dashboard](#-the-web-dashboard)
-- [☁️ Hosted Servers (Nitrado, G-Portal)](#-hosted-servers-nitrado-g-portal)
-- [📖 The Chronicle](#-the-chronicle)
-- [🏆 Titles & Milestones](#-titles--milestones)
-- [🗓️ Seasons & Titles](#-seasons--titles)
-- [⚙️ Configuration](#-configuration)
-- [📁 Where Everything Lives](#-where-everything-lives)
-- [📦 Installation & Dependencies](#-installation--dependencies)
-- [❓ FAQ](#-faq)
+**A dedicated server only relays the world.** Combat, damage and deaths are worked out on the game of the player who owns that part of the world, so a server on its own never sees a kill. WhereTheCrowFlies hooks those moments on each player's game and sends them to the server every ten seconds. The Raven's Call checks each report against the players actually connected before it credits anything.
+
+**Nothing earned before is lost.** The vanilla stats and skills arrive as a full snapshot, not as changes, so the moment a player's game reports, everything they had earned before the mod was installed is filled in. A lost packet cannot make them drift.
+
+**Without the crow** a player still shows up with joins, leaves, playtime and biome discoveries, and the census still counts what they have built. On a vanilla or unmodded server, WhereTheCrowFlies stays silent: no errors, no delay, nothing in the log.
+
+**Gear tier** is in every record, but stays at zero on a dedicated server today.
 
 </details>
 
 ---
 
-## 🪶 What It Tracks
+![II](https://img.shields.io/badge/II-WHERE_THE_NEWS_GOES-1f4e79?style=for-the-badge&labelColor=1b1b1b)
 
-Every death, every kill, every fallen god, every shoreline first walked — The Raven's Call aggregates full-spectrum player telemetry sent by *WhereTheCrowFlies*:
+**One event, told five ways.**
 
-- **Deaths**, with rich root-cause resolution — named creatures, bosses, PvP opponents, fire, frost, poison, spirit damage, drowning, or falls — and a rolling history of the last 10 deaths per player (killer, biome, position; the item-loss list is always empty on a dedicated server, see `docs/API.md`).
-- **Boss kills**, credited to everyone within a configurable radius of the kill — no one who stood and fought goes unrecognized.
-- **Kill and death milestones** — 1, 10, 100, 500, 1000 kills; 1, 5, 10, 25, 50, 100 deaths, and beyond.
-- **Biome discovery**, tracked per player so "first time in the Mistlands" only fires once, ever, per Viking.
-- **Raids**, tracked from the moment one starts to the moment it ends — the dashboard's raid banner and the export's `raid_active`/`raid_type` reflect a real raid in progress, not just one restored from a saved world.
-- **Gear tier** is in the schema (`gear_tier`) but always reads `0` on a dedicated server today — advancing equipment needs a client report that doesn't exist yet.
-- **Titles**, earned through creature-family kill counts, boss kills, and the number of gods felled — up to and including *Slayer of Gods* for felling all seven.
-- **Damage dealt & taken**, tracked both for current sessions and lifetime cumulative combat, plus blocks, parries, and damage blocked.
-- **Every vanilla stat on your own in-game Stats screen** — kills, hits, deaths, jumps, cheats, world loads, PvP hits/kills, arrows shot, portals, distance traveled, and the rest of Valheim's ~205 built-in counters (105 before 1.0) — reported as an absolute snapshot, so it backfills whatever a player had already earned before installing the mod instead of starting from zero.
-- **Skill levels & progress**, for every skill a player has actually raised (Swords, Bows, Sneak, Jump, and the rest).
-- **Fish caught**, structures built/removed/repaired, items crafted/upgraded/repaired, resources harvested per type, food & potions consumed, bosses summoned, and guardian powers used.
-- **World census** — since 1.5.0, the server counts portals, beds, wards, ships, carts, chests and crafting stations standing in the world on a timer, how many of them players placed and by whom, and a per-player total of everything they have standing right now.
+| | |
+|---|---|
+| 🔹 **Discord** | deaths, boss kills, kill and death milestones, biome discoveries and titles post the moment they happen, as coloured embeds |
+| 🔹 **The Chronicle** | every event as one JSON line on disk, a new file each day: a permanent, grep-friendly history |
+| 🔹 **The dashboard** | a live page in any browser, with a feed of the latest events |
+| 🔹 **The bot export** | one JSON file of every player, refreshed every ten seconds, made to be read by a Discord bot |
+| 🔹 **The server log** | each line with the day and how many are online, if you like |
 
-## 📯 Where the News Goes
+<details>
+<summary>📖 <b>Read the saga</b> — what goes where, and in what voice</summary>
 
-The Raven's Call routes incoming telemetry across four server-driven channels:
+**Discord gets the big moments.** Joins, leaves, raids, season starts and ends, lore lines, boss world-event messages and the server's start and stop go to the Chronicle, the dashboard feed and the server log, never to Discord. Each kind of player event can be switched off on its own.
 
-1. **Discord**, via webhook — player-attributable events post as rich, colored embeds the moment they occur.
-2. **The Chronicle** — a JSON-lines log on disk, one line per event, rotating daily for server history and audit trails.
-3. **The Web Dashboard** — a live, standalone web page accessible in any browser for admins and players.
-4. **The BarrkBOT Export** — a clean JSON file, refreshed on a timer, built specifically to be read by Discord bots.
+**The narration has a Norse voice.** Each event is told from a set of flavour templates, picked at random. Turn `EnableNarrativeMode` off for plain fixed lines.
+
+**Your own words, too.** Write a message per boss in the `WorldEvents` settings, and it is recorded after that boss falls. Fill `lore.txt` with lines of lore, set an interval, and the raven recites one at random. A few lines of Norse myth are there to start with.
+
+**The online count is honest.** It counts the players actually in the world: a player who just left is not counted, and neither is one still at the password prompt. A player whose game crashed counts until the server drops the dead connection, up to half a minute, or a minute and a half on a crossplay server.
+
+</details>
 
 ---
 
-## 🤖 BarrkBOT & Discord AI Bot Integration
+![III](https://img.shields.io/badge/III-THE_DASHBOARD-5b2c83?style=for-the-badge&labelColor=1b1b1b)
 
-The Raven's Call is designed from the ground up to **give Discord bots everything they need to answer real questions about server players, without the bot ever touching the game itself.**
+**The whole realm on one page, served by the server itself.**
 
-### The Export File
+| | |
+|---|---|
+| 🔹 **World overview** | who is online now (or who was seen last), an all-time leaderboard by kills, deaths, boss kills or playtime, the server's combined boss progress, and the latest deaths |
+| 🔹 **Season and feed** | the running season's standings, and the latest events, newest first, filterable by type |
+| 🔹 **World panel** | what stands in the world, a Builders leaderboard, a portal directory, and the beds and wards |
+| 🔹 **Every player, six tabs** | Combat, Death, Progression, Crafting, Build and Raw, for everyone who has ever joined |
+| 🔹 **API token** | enter it once in the page's settings (the gear, top right), and the browser keeps it |
 
-Every `StatsPushIntervalSeconds` (default **10 seconds**), the mod writes:
+<details>
+<summary>📖 <b>Read the saga</b> — what a server can and cannot show</summary>
 
-```
-BepInEx/config/TheRavensCall/BarrkBOT_data1.json   ← every player's full record
-BepInEx/config/TheRavensCall/BarrkBOT_data2.json   ← static game data (items, recipes, buildables)
-```
+**It lives at `http://localhost:2112` on the server machine,** and the page ships inside the mod. To reach it from another PC, see the Toolbox below.
 
-Two files, sitting on the server's disk, each overwritten in place. If your Discord bot accesses the game server over FTP/SFTP, these live in a standard location requiring no new ports or special credentials. (The same player data is also available live over HTTP — see [The Web Dashboard](#-the-web-dashboard)).
+**No health, inventory or position for a player who is online.** A dedicated server never has them: they live on the player's own game. The dashboard shows each player's stored record instead: totals, titles, skills, milestones, the death history and everything WhereTheCrowFlies reported. The only positions it keeps are where players died.
 
-**Top-level shape:**
+**With a token set,** the page opens its settings panel for you the first time it is refused. The feed and season panels say "Needs the API token (Settings)." until you enter it.
+
+**Just the files?** `EnableHttpServer = false` turns the page and the API off. The bot export, the Chronicle, Discord and the hosted push keep running.
+
+</details>
+
+---
+
+![IV](https://img.shields.io/badge/IV-TITLES-8b1e1e?style=for-the-badge&labelColor=1b1b1b)
+
+**Earn a name, then choose which one the raven calls you by.**
+
+| | |
+|---|---|
+| 🔹 **Creature titles** | 100, 500 and 1000 kills of a creature family, from *Boar Hunter* to *Alpha of Alphas* |
+| 🔹 **Boss titles** | one for each god felled: *Stag Breaker*, *Bane of the Swamp*, *The Ashen* and the rest |
+| 🔹 **Boss count** | *Boss Hunter*, *World Breaker* and *God Ender* as the boss kills add up |
+| 🔹 **Slayer of Gods** | for felling all seven |
+| 🔹 **`/title`** | lists what you have earned; `/title Wolf Hunter` picks one; `/title clear` shows none |
+| 🔹 **`/titles`** | a small window with your titles as buttons: click instead of typing |
+| 🔹 **Admins** | `ravenscall title <player>` lists, sets or clears anyone's title, online or not |
+
+<details>
+<summary>📖 <b>Read the saga</b> — where a title shows, and where it does not</summary>
+
+**The title is the server's name for you:** in its Discord and Chronicle narration, on the dashboard and in the bot export. Nothing changes on the in-game nameplate.
+
+**Your first title wears itself.** After that you choose: titles you earn later are added to your list and wait there until you pick one. A cleared title stays cleared.
+
+**Only earned titles.** Neither a player nor an admin can set a title that player has not earned. The player commands need WhereTheCrowFlies on that player's game and `AcceptClientReports` on. The admin command works from the server console with no client mod, or from an admin's game with WhereTheCrowFlies. A change shows on the dashboard and the export at the next refresh.
+
+</details>
+
+---
+
+![V](https://img.shields.io/badge/V-SEASONS-2e5e3a?style=for-the-badge&labelColor=1b1b1b)
+
+**Wipes and eras, each with its own winners.**
+
+| | |
+|---|---|
+| 🔹 **`ravenscall season start [name]`** | opens a season; the dashboard ranks players by what they do from now on |
+| 🔹 **`ravenscall season end`** | closes it, archives its Chronicle into its own folder and writes the season's summary |
+| 🔹 **Season names in the log** | `AppendSeasonNameToMessages` puts the season's name in front of each server log line |
+
+<details>
+<summary>📖 <b>Read the saga</b> — how a season runs</summary>
+
+**Run it from the server console,** or from an admin's game with WhereTheCrowFlies installed (F5 console): the server checks its admin list first. Leave the name off and the season is called `Season_` plus today's date. The name becomes the Chronicle's season folder, so trailing periods and spaces are trimmed.
+
+**One season at a time.** `season start` refuses while a season is running and names it: end it first.
+
+**Standings are deltas.** At the start the server notes each player's counters, so the season panel shows what was done during the season, not lifetime totals.
+
+</details>
+
+---
+
+![VI](https://img.shields.io/badge/VI-THE_WORLD_CENSUS-b8860b?style=for-the-badge&labelColor=1b1b1b)
+
+**What stands in the world, and who put it there.**
+
+| | |
+|---|---|
+| 🔹 **The count** | portals, beds, wards, ships, carts, chests and crafting stations, player-built against the total |
+| 🔹 **Builders** | every player ranked by what they have standing right now |
+| 🔹 **Portal directory** | each portal's tag, kind, builder, whether it is connected, and where it stands |
+| 🔹 **On every player** | the Build tab shows what that player has standing in the world |
+
+<details>
+<summary>📖 <b>Read the saga</b> — what it costs the server</summary>
+
+**A short hitch every few minutes.** The census walks the loaded world's objects on a timer, every 5 minutes by default (`CensusIntervalMinutes`). A real server with about 1.1 million objects finishes in under half a second. Set it to `0` to turn it off; the dashboard then says so in one line.
+
+</details>
+
+---
+
+![VII](https://img.shields.io/badge/VII-FOR_YOUR_DISCORD_BOT-2e5e3a?style=for-the-badge&labelColor=1b1b1b)
+
+**Everything a bot needs to answer questions about your players, without touching the game.**
+
+| | |
+|---|---|
+| 🔹 **`BarrkBOT_data1.json`** | every player's full record, rewritten every ten seconds |
+| 🔹 **`BarrkBOT_data2.json`** | the game's items, recipes and buildables, written once per boot |
+| 🔹 **Over FTP or HTTP** | the files sit in the server's config folder; the same player data is live at `/api/state` |
+| 🔹 **Keyed by name** | `players` is keyed by each player's exact in-game name, ready for a leaderboard |
+
+<details>
+<summary>📖 <b>Read the saga</b> — made for BarrkBOT, open to any bot</summary>
+
+**Two plain files, no new ports.** A bot that already reaches the server over FTP or SFTP needs nothing else. Deleting `BarrkBOT_data1.json` does no harm: it is back on the next refresh. Renaming either file breaks a bot that looks for it. The Toolbox has the file's shape and a short example.
+
+</details>
+
+---
+
+![VIII](https://img.shields.io/badge/VIII-RENTED_HOSTS-1f4e79?style=for-the-badge&labelColor=1b1b1b)
+
+**On Nitrado or G-Portal, with no port to open, the dashboard still reaches you.**
+
+| | |
+|---|---|
+| 🔹 **Push, not listen** | the server sends its data out over HTTPS to a small receiver site, which serves the same dashboard at a public address |
+| 🔹 **Your own receiver** | deploy your private copy of `hosting/netlify/` from the [GitHub repo](https://github.com/RavenIron-Games/TheRavensCall) |
+| 🔹 **Off by default** | with `PushUrl` empty the server stays entirely local |
+| 🔹 **Shows when it went quiet** | the hosted page says how long ago the server last reported, and greys out when it falls silent |
+
+<details>
+<summary>📖 <b>Read the saga</b> — what hosting publishes, and where it has run</summary>
+
+**A rented server gives you the game's ports, a web panel and FTP:** no shell, and no way to open the dashboard's port. The push needs only outbound HTTPS, the same way out the Discord webhook already uses.
+
+**What leaves the box.** A read-token holder sees the roster with every player's stats, skills, titles and death positions; the feed and season standings; and the census, with the rough position of every portal, bed and ward. Only for that server, and only with that server's token.
+
+**One small difference.** On the hosted page, fish and resource names are shown as tidied-up game names instead of their real ones.
+
+**Where it has run.** A Windows and a Linux dedicated server have pushed to a receiver over HTTPS, and a real Windows server pushes to Raven Iron's receiver at `https://trc.ravenirongames.com`. It has not yet been run on a rented host.
+
+</details>
+
+---
+
+![THE TOOLBOX](https://img.shields.io/badge/THE_TOOLBOX-QUICK_START_%C2%B7_COMMANDS_%C2%B7_HOW--TO-1b1b1b?style=for-the-badge&labelColor=8b1e1e)
+
+**First ten minutes:** install on the server with your mod manager (or put `TheRavensCall.dll` in `BepInEx/plugins/`) → start the server once → open `http://localhost:2112` on the server machine → ask your players to install WhereTheCrowFlies → paste a Discord webhook into `WebhookUrl` if you want the news posted.
+
+| Command | | Address | |
+|---|---|---|---|
+| `/title` | your earned titles | `http://localhost:2112` | the dashboard |
+| `/title <name>` · `/title clear` | pick one · show none | `/api/state` | every player (the same JSON as `BarrkBOT_data1.json`) |
+| `/titles` | the title window | `/api/activity` | the event feed and season standings |
+| `ravenscall season start [name]` | open a season (admin) | `/api/census` | the world census |
+| `ravenscall season end` | close it (admin) | `/api/gamedata` | items, recipes and buildables |
+| `ravenscall title <player>` | that player's titles (admin); add a title to set it, or `clear` | `/api/health` | always open, no token |
+
+The player commands come with WhereTheCrowFlies. The `ravenscall` commands run in the server console, or from an admin's game with WhereTheCrowFlies installed.
+
+<details>
+<summary>🌐 <b>Open the dashboard from another PC</b></summary>
+
+The server answers only itself by default. Set `HttpBindAllInterfaces = true` together with `HttpApiToken` (a long random value), restart, and keep port `2112` (`HttpServerPort`) behind a firewall. With a token set, `/api/state`, `/api/gamedata`, `/api/activity`, `/api/census` and `/api/pins` need `?token=<value>` or an `X-Api-Token` header; the page and `/api/health` stay open. In the browser, enter the token once in the page's settings (the gear, top right).
+
+</details>
+
+<details>
+<summary>🪝 <b>Post the news to Discord</b></summary>
+
+Make a webhook in your Discord channel's settings and paste its address into `WebhookUrl` under `[Discord]` in `BepInEx/config/com.raveniron.theravenscall.cfg`. Deaths, boss kills, kill and death milestones, biome discoveries and titles then post as embeds. With `WebhookUrl` empty nothing is posted, and everything else works the same.
+
+</details>
+
+<details>
+<summary>🤖 <b>Read the export from a bot</b></summary>
+
+The files are `BepInEx/config/TheRavensCall/BarrkBOT_data1.json` (players) and `BarrkBOT_data2.json` (game data). The players file looks like this:
 
 ```json
 {
@@ -126,93 +283,31 @@ Two files, sitting on the server's disk, each overwritten in place. If your Disc
   "raid_active": false,
   "raid_type": "",
   "players": {
-    "Thorium Wubarrk": { "...": "see below" },
-    "Asfa W": { "...": "see below" }
+    "Thorium Wubarrk": {
+      "name": "Thorium Wubarrk",
+      "kills_narrative": 341,
+      "deaths_narrative": 12,
+      "active_title": "Wolf Hunter",
+      "...": "..."
+    }
   }
 }
 ```
 
-`players` is an object keyed by the player's exact in-game display name, matching standard bot player-stats stores and leaderboards.
+| Field | What it is |
+|---|---|
+| `kills_narrative` · `kills_observed_lifetime` | the kill count titles and milestones use · every verified kill |
+| `deaths_narrative` · `deaths_lifetime` | the same pair for deaths |
+| `active_title` · `titles_earned` | the title the player shows · every title they have |
+| `bosses_defeated` | short keys: `eikthyr`, `elder`, `bonemass`, `moder`, `yagluth`, `queen`, `fader` |
+| `session_kills` · `damage_dealt_session` · `damage_taken_session` · `blocks_session` · `parries_session` · `damage_blocked_session` | reset each time the player connects |
+| `playtime_seconds_lifetime` | kept across restarts; divide by 3600 for hours |
+| `vanilla_stats` | the player's own Stats screen, keyed by Valheim's names; empty until their game has reported once |
+| `skill_levels` · `skill_progress` | 0–100 and 0–1 per skill; a skill missing from both has never been raised |
+| `death_history` | the last ten deaths: time, killer, place and biome |
+| `builds_*` · `items_*` · `resources_harvested` · `consumables_eaten` · `bosses_summoned` · `guardian_powers_used` · `caught_fish` · `biomes_discovered` · `creature_kills` | lifetime counters and lists |
 
-### Per-Player Schema
-
-Every player's record is verified against active server connections:
-
-```json
-{
-  "name": "Thorium Wubarrk",
-  "first_seen": "2026-01-04T18:30:00.000Z",
-  "last_seen": "2026-08-17T04:11:52.000Z",
-  "online": true,
-  "session_start": "2026-08-17T02:00:00.000Z",
-  "playtime_seconds_lifetime": 412884,
-
-  "kills_narrative": 341,
-  "deaths_narrative": 12,
-  "gear_tier": 0,
-  "active_title": "Wolf Hunter",
-  "titles_earned": ["Boar Hunter", "Wolf Hunter", "Stag Breaker"],
-  "biomes_discovered": ["Meadows", "BlackForest", "Swamp", "Mountain"],
-  "boss_kills_credited": 4,
-  "creature_kills": { "Boar": 118, "Wolf": 54, "Draugr": 31 },
-
-  "session_kills": 9,
-  "damage_dealt_session": 4120.5,
-  "damage_taken_session": 860.0,
-  "kills_observed_lifetime": 355,
-  "deaths_lifetime": 12,
-
-  "bosses_defeated": ["eikthyr", "elder", "bonemass", "moder"],
-  "caught_fish": ["$item_fish1", "$item_fish3"],
-
-  "death_history": [
-    {
-      "timestamp": "2026-08-17T02:04:11.000Z",
-      "killer": "Fuling Berserker",
-      "location": { "x": 1204.5, "y": 38.2, "z": -880.1 },
-      "biome": "Plains",
-      "items": [{ "name": "Bronze Sword", "qty": 1 }]
-    }
-  ],
-
-  "vanilla_stats": { "Deaths": 3, "Cheats": 289, "WorldLoads": 3342, "EnemyHits": 266, "EnemyKills": 123, "PlayerHits": 0, "PlayerKills": 0, "HitsTakenEnemies": 403, "ArrowsShot": 0, "BossKills": 0, "Jumps": 324, "PortalsUsed": 5, "DistanceTraveled": 38018.4 },
-  "skill_levels": { "Swords": 34.0, "Jump": 12.0, "Run": 8.0 },
-  "skill_progress": { "Swords": 0.42, "Jump": 0.10, "Run": 0.75 },
-
-  "blocks_session": 4,
-  "parries_session": 1,
-  "damage_blocked_session": 210.0,
-  "builds_placed": 118,
-  "builds_removed": 6,
-  "builds_repaired": 2,
-  "items_crafted": 54,
-  "items_upgraded": 11,
-  "items_repaired": 3,
-  "resources_harvested": { "Wood": 812, "Stone": 240, "Raspberry": 40 },
-  "consumables_eaten": 76,
-  "bosses_summoned": 4,
-  "guardian_powers_used": 9
-}
-```
-
-**Field Reference:**
-
-| Field | Description | Details |
-| :--- | :--- | :--- |
-| `kills_narrative` / `kills_observed_lifetime` | Milestone/title kill count vs. raw lifetime kill count. | Narrative count gates titles and milestones; observed tracks all verified kills. |
-| `deaths_narrative` / `deaths_lifetime` | Narrative death count vs. lifetime death count. | Ideal for server leaderboards and death counters. |
-| `active_title` / `titles_earned` | Currently displayed title vs. all unlocked titles. | Players can unlock many titles and equip their preferred epithet. |
-| `bosses_defeated` | Defeated boss keys. | Canonical short keys: `eikthyr`, `elder`, `bonemass`, `moder`, `yagluth`, `queen`, `fader`. |
-| `session_kills` / `damage_dealt_session` / `damage_taken_session` | Session-scoped combat stats. | Resets to zero on each new player connection. |
-| `blocks_session` / `parries_session` / `damage_blocked_session` | Session-scoped defense stats. | Resets to zero on each new player connection. |
-| `playtime_seconds_lifetime` | Total accumulated play time. | Persists across server restarts. Divide by 3600 for hours. |
-| `vanilla_stats` | Every counter on the player's own in-game Stats screen — kills, hits, deaths, jumps, cheats, world loads, PvP hits/kills, arrows shot, portals, distance traveled, and the rest of Valheim's ~205 built-in `PlayerStatType` counters (105 before 1.0). | Keyed by Valheim's own enum names. Reported by the *WhereTheCrowFlies* client mod as an absolute snapshot (not deltas), so it backfills a player's true lifetime totals — including whatever they'd already earned before this mod was installed — the moment their client syncs, and can't drift from a dropped packet. Empty until a player's client has synced at least once. |
-| `skill_levels` / `skill_progress` | Skill level (0-100) and progress-to-next-level (0-1) per skill, e.g. `Swords`, `Bows`, `Jump`, `Sneak`. | Same absolute-snapshot reporting as `vanilla_stats`. A skill absent from both means the player has never raised it, not that it's at zero. |
-| `builds_*` / `items_*` / `resources_harvested` / `consumables_eaten` / `bosses_summoned` / `guardian_powers_used` | Lifetime activity counters — construction, crafting/upgrading/repairing, foraging/farming/sap totals per resource, food & potions consumed, bosses summoned at altars, and Forsaken guardian powers activated. | Aggregate counts only, not full histories — same bounded-footprint approach as `death_history`. |
-
-### Reading It From a Bot
-
-A minimal Node.js read example:
+A minimal read in Node.js:
 
 ```js
 import { readFileSync } from 'node:fs';
@@ -226,238 +321,131 @@ if (player) {
 }
 ```
 
-### The Discord Webhook (Narration)
+The full field list is in `docs/API.md` in the [GitHub repo](https://github.com/RavenIron-Games/TheRavensCall).
 
-Set `WebhookUrl` under `[Discord]` in `BepInEx/config/com.raveniron.theravenscall.cfg` to post real-time event embeds (deaths, boss kills, kill and death milestones, biome discoveries, titles earned) directly into your Discord channel.
+</details>
 
----
+<details>
+<summary>☁️ <b>Host the dashboard for a rented server</b></summary>
 
-## 🖥️ The Web Dashboard
+Raven Iron's receiver is for its own servers only, so deploy your own private copy of `hosting/netlify/` from the [GitHub repo](https://github.com/RavenIron-Games/TheRavensCall); its README has the receiver's side.
 
-A full player-stats dashboard served directly by the mod's built-in HTTP server:
+1. **Make two tokens:** run `openssl rand -hex 24` twice, one for `HttpApiToken` (unless you already have one of 24 characters or more) and one for `PushToken`.
+2. **Set** `HttpApiToken` (24 characters or more) under `[Companion]`, and `PushUrl`, `PushToken` and `PushServerId` under `[Push]`, in `com.raveniron.theravenscall.cfg`. The id is 1 to 32 characters of `a-z`, `0-9` and `-`.
+3. **Register the id** with both tokens' sha256 hashes in the receiver's `TRC_SERVERS` environment variable, then **redeploy** the receiver: a change in the Netlify UI does nothing until the site is redeployed.
+4. **Open** `https://<your receiver>/s/<id>/`. Raven Iron's own runs at `https://trc.ravenirongames.com`.
 
-- Open `http://localhost:2112` on the server machine. Since 1.2.4 the server listens on localhost only unless `HttpBindAllInterfaces = true`; the API hands every known player's stats, skills, titles and death coordinates to anyone who can reach the port, so open it to the network only behind a firewall or with `HttpApiToken` set.
-- **Since 1.4.0, a world overview sits above the roster**: who's online now (or the last player seen, if nobody is), an all-time leaderboard sortable by kills, deaths, boss kills or playtime, the server's combined boss progress, and the most recent deaths across everyone — all read from `/api/state` (the deaths card also uses the feed below once it holds a death). Above it sit two panels fed by the new `/api/activity` endpoint: the **active season's standings**, and a **recent-events feed** (joins, leaves, deaths, boss kills, kill and death milestones, raids, titles, biome discoveries, lore and world events, season starts/ends, server start/stop — newest first, filterable by type); against a 1.3.0 server both panels stay hidden (one request, no retries), with `EventFeedCapacity = 0` the feed shows its empty state and the season panel works as normal, and the roster works either way.
-- **Since 1.5.0, a World panel** joins the season and feed panels: a group strip showing how many portals, beds, wards, ships, carts, chests and crafting stations stand in the world (player-built vs. total for each), a sortable **Builders** table ranking players by what they've placed, a **portal directory** (tag, kind, builder, connected, position), and closed-by-default **Beds** and **Wards** tables. It's fed by the new `/api/census` endpoint, polled every 60 seconds on its own schedule, and driven by the server's `[Census] CensusIntervalMinutes` count (below) — against a server with the census turned off the panel shows one line saying so, and against a pre-1.5.0 server it stays hidden. The player detail view's Build tab also gains a line for what that player has standing in the world right now.
-- Shows **every player** who has ever joined the realm across six tabs — **Combat, Death, Progression, Crafting, Build, Raw** — covering online status, lifetime kills and deaths (the crow-reported totals once a player runs WhereTheCrowFlies), titles, biomes, skills, boss kills, death history, fish caught, and the harvest, craft and build counters. A dedicated server has no live vitals, inventories or positions to show, and since 1.3.0 the API does not pretend otherwise.
-- Includes JSON API endpoints: `/api/state`, `/api/gamedata`, `/api/activity`, `/api/census`, and `/api/health`. With `HttpApiToken` set, `/api/state`, `/api/gamedata`, `/api/activity`, `/api/census` and `/api/pins` need `?token=<value>` (or an `X-Api-Token` header); `/api/health` and the page itself stay open. Since 1.3.0 the bundled page holds the token in its own settings panel (gear icon, top right) — enter it there and it's kept in the browser and sent as an `X-Api-Token` header on every request; a 401 opens that panel automatically the first time (the feed/season panels show a one-line "Needs the API token (Settings)." notice instead of loading empty).
-- Can be toggled off with `EnableHttpServer = false` if only file export is desired.
-- **Since 1.6.0, a server on a rented host can publish this same dashboard to a hosted URL** — see [Hosted Servers (Nitrado, G-Portal)](#-hosted-servers-nitrado-g-portal) below. The hosted page shows the same roster, feed and World panel as `localhost:2112`, plus how long ago the game server last reported ("server reported Ns ago" / "server silent since …", greying out once it's gone quiet) and a "Registered, waiting for `<id>` to report" state before its first push lands; fish and resource names fall back to prettified tokens there instead of their real names — the one visible difference from `localhost:2112`.
-- **Upgrading from 1.2.x:** delete any `theravenscall.html` you placed in `BepInEx/config/TheRavensCall/` or next to the DLL. A copy from before 1.3.0 still overrides the bundled page, cannot read the 1.3.0 `/api/state` shape, and makes the server log one warning per run naming the file.
+**How often.** The push rides the same tick as the export, so it rounds up to a multiple of `StatsPushIntervalSeconds` (10 s by default): `PushIntervalSeconds = 15` pushes every 20 s. `PushHeartbeatMinutes` pushes everything even when nothing changed, so the page knows the server is alive.
 
----
+**Changed the API token?** Restart the server and register the new hash: the pushed hash only changes at a restart.
 
-## ☁️ Hosted Servers (Nitrado, G-Portal)
+</details>
 
-On a rented game server the admin gets the game's ports, a web panel and FTP — no shell, no extra services, no way to open the dashboard's port. So `http://localhost:2112` is unreachable from anywhere on a Nitrado or G-Portal box. Since 1.6.0 the mod can instead **push** its data out over HTTPS to a small receiver site you deploy from `hosting/netlify/` (RavenIron runs one for its own servers only), which keeps the latest copy and serves the same dashboard page from a public URL. With `PushUrl` empty (the default) nothing changes — the server behaves exactly like 1.5.0, entirely local.
+<details>
+<summary>🚨 <b>The hosted page shows nothing</b></summary>
 
-> [!IMPORTANT]
-> **What hosting publishes.** A read-token holder sees everything the three pushed routes serve: every known player's stats, skills, titles and death coordinates (`/api/state`); the event feed and season standings (`/api/activity`); and the census, which lists every portal, bed and ward in the loaded world with its rounded x/z — in effect where the bases are. Until 1.6.0 all of that stayed on a machine the admin controls; hosting moves the latest copy to a third party's storage behind one shared token. **Leaving `PushUrl` empty keeps a server entirely local, exactly as before.**
+Read the BepInEx log; on a rented host, pull it over FTP. A working push logs one `Push enabled: server_id='…'` line at boot, then stays quiet.
 
-### Setup
+- `Push disabled:` names the setting that is missing or malformed.
+- `Push failed:` means the receiver could not be reached; the mod keeps retrying.
+- `Push rejected:` names one of four refusals, each retried every 15 minutes:
+    - **401**: the push token was rejected. Check `PushToken` and `PushServerId` against the receiver's registry.
+    - **409**: the receiver has a different `HttpApiToken` hash for this id. Re-register `read_token_sha256` and redeploy.
+    - **422**: the receiver refused the bundle. Set `HttpApiToken` to 24 characters or more.
+    - **413**: the bundle is over the receiver's 2 MB limit.
 
-RavenIron's own receiver isn't open to other servers; if you want a hosted dashboard for your own server, deploy your own private copy of `hosting/netlify/` from the [GitHub repo](https://github.com/RavenIron-Games/TheRavensCall) — steps 3 and 4 below are then done in your own Netlify account against your own domain.
+Until the first push lands the page reads "Registered, waiting for `<id>` to report"; "server silent since …" means no push has arrived for three heartbeats.
 
-1. **Generate both tokens** — `openssl rand -hex 24`, run twice: once for `HttpApiToken` (if you don't already have one at least 24 characters long) and once for `PushToken`.
-2. **Set `HttpApiToken` (24+ characters), `PushUrl`, `PushToken` and `PushServerId`** under `[Companion]`/`[Push]` in `com.raveniron.theravenscall.cfg`.
-3. **Register the id** with both tokens' sha256 hashes in the receiver's `TRC_SERVERS` environment variable, then redeploy the receiver — a change in the Netlify UI does nothing until the site is redeployed.
-4. **Open `https://trc.ravenirongames.com/s/<id>/`** (that is Raven Iron Games' receiver — use whatever address the receiver you push to is deployed at).
-5. **To unpublish**, send `DELETE /s/<id>/api` with the write token in the `Authorization: Bearer` header. It removes the stored envelopes and answers `{"deleted":true}`; how an admin takes a server back offline. Deleting the id from the registry takes the dashboard offline on the next request too, but the stored copy stays until the `DELETE` runs.
+</details>
 
-### Cadence
+<details>
+<summary>🗑️ <b>Take a server off a hosted dashboard</b></summary>
 
-The push runs from the same poll tick as everything else, so the effective cadence rounds up to the next multiple of `StatsPushIntervalSeconds` (default 10 s): `PushIntervalSeconds = 15` pushes every 20 s, and a `StatsPushIntervalSeconds` of 120 caps the push at 120 s no matter what `PushIntervalSeconds` is set to. The effective heartbeat is `max(PushHeartbeatMinutes × 60, effective interval)`.
+Send `DELETE /s/<id>/api` to the receiver with the write token in the `Authorization: Bearer` header. It answers `{"deleted":true}`, removes the stored copy, and the page reads "no data" again. Then remove the id from the receiver's registry and redeploy, so the tokens are dead too. Clearing `PushUrl` on the server stops new pushes at its next restart.
 
-### When the push is refused
+</details>
 
-A rented server's admin has no shell and can't reach `/api/health` — the BepInEx log pulled over FTP is the only place a broken push can be seen. Four refusals are named there, each retrying every 15 minutes:
+<details>
+<summary>📦 <b>Move or rebuild the server</b></summary>
 
-- `401` — "PushToken rejected — check [Push] PushToken and PushServerId against the receiver's registry"
-- `409` — "the receiver has a different HttpApiToken hash registered for '\<id>' — re-register read_token_sha256 and redeploy"
-- `422` — "the receiver refused the bundle — set [Companion] HttpApiToken (24+ characters)"
-- `413` — "bundle over the receiver's 2 MB limit"
+Copy the folder `BepInEx/config/TheRavensCall/` and the settings file `BepInEx/config/com.raveniron.theravenscall.cfg`. The folder holds:
 
-### Where this has actually run
+| | |
+|---|---|
+| `players/` | one record per player |
+| `Chronicle/` | the daily Chronicle files, and each season's folder |
+| `seasons.json` · `season_baseline.json` | the seasons, and each player's counters at the running season's start |
+| `event_feed.json` | the dashboard feed, so it survives a restart |
+| `player_ids.json` | player ids and names, used to name a builder in the census |
+| `lore.txt` | your lore lines, one per line |
+| `BarrkBOT_data1.json` · `BarrkBOT_data2.json` | the bot export; rebuilt after a boot, no need to copy |
 
-As of this release the 1.6.0 push has run against a local receiver (`netlify dev`) from a Windows test server and from a Linux dedicated server (Valheim 1.0.15, under WSL2), including the change gate, heartbeat, backoff and recovery, the four named refusals and the hosted page's waiting and stale states (`docs/TESTPLAN-local-1.6.0-2026-09-22.md`). The same Linux server then pushed over https, with certificate validation, to the RavenIron receiver (§8 step 9 of the scope, the release gate). Not yet run on a rented host. Since 2026-09-22 a real dedicated server (Windows, on another host, over the internet) pushes to the hosted receiver at `https://trc.ravenirongames.com`: state, feed and a census of about 1.1 million objects (370 ms), on the default 60 s interval and 10 min heartbeat.
-
----
-
-## 📖 The Chronicle
-
-Every realm event is recorded as a structured JSON line in:
-
-```
-BepInEx/config/TheRavensCall/Chronicle/TheRavensCall_Chronicle_{yyyy-MM-dd}.log
-```
-
-Rotates daily at UTC midnight. Enable or disable with `EnableChronicleLog`. Provides a permanent, grep-friendly audit trail for your server.
+</details>
 
 ---
 
-## 🏆 Titles & Milestones
+![MULTIPLAYER](https://img.shields.io/badge/MULTIPLAYER-ONE_SERVER%2C_EVERY_SAGA-1f4e79?style=for-the-badge&labelColor=1b1b1b)
 
-Players unlock titles by slaying creature families (100, 500, 1000 kills) and defeating Valheim's world bosses (*Stag Breaker*, *Bane of the Swamp*, *The Ashen*, etc.). Felling all seven gods awards the legendary title *Slayer of Gods*. Unlocked titles are added to `titles_earned` in the export data; a player's very first title also becomes `active_title`, and after that the player chooses which one is active (see below).
+| Works for players with no mod | Needs The Raven's Call on the server | Needs WhereTheCrowFlies on the player's game |
+|---|---|---|
+| joins, leaves and playtime · biome discoveries · the census count of what they built · seasons, and titles set by an admin from the server console · the dashboard, Discord, the Chronicle and the bot export | everything: The Raven's Call runs only there | kills, deaths and their causes · damage, blocks and parries · fish · the vanilla stats and skills · build, craft and harvest counters · `/title` and `/titles` · `ravenscall` commands from a game |
 
-**Choosing your title.** Since 1.7.0 a player picks which earned title the server uses — in its Discord/Chronicle narration and on the dashboard/export — rather than always the first one earned. Nothing changes on the in-game nameplate. With `WhereTheCrowFlies` 1.2.0+: `/title` lists what you've earned, `/title Wolf Hunter` sets it (only to a title you've already earned), `/title clear` shows no title, and stays that way: titles you earn later are listed but not shown until you pick one (only your very first title ever activates itself). The same `WhereTheCrowFlies` 1.2.0 also has a `/titles` panel — a small window that lists your earned titles as buttons (or opens with the key you've set in its config) instead of typing the title's name; it asks the server on open and refreshes after every click. An admin can do the same for anyone, online or not, with `ravenscall title <player> [<title>|clear]` — from the server console with no client mod needed, or from an admin's game client that has WhereTheCrowFlies 1.1.3+ installed. Either way the change shows up on the dashboard and export at the next poll.
-
----
-
-## 🗓️ Seasons & Titles
-
-Manage server wipes and eras, or set a player's title, using in-game console commands:
-
-```
-ravenscall season start [name]
-ravenscall season end
-ravenscall title <player>
-ravenscall title <player> <title>
-ravenscall title <player> clear
-```
-
-Seasons archive Chronicle logs into dated season folders and write summary stats on completion. Since 1.6.1 `season start` refuses while a season is running: end it first.
-
-`ravenscall title` lists, sets or clears a player's active title from the titles they've already earned — the same rule the player's own `/title` follows. The player need not be online. From the server console it needs no client mod; from an admin's game client it goes through WhereTheCrowFlies' `ravenscall` routing stub, the same as the season commands above.
+**Update together.** The server and every player's game must run the same Valheim version, so update them together. WhereTheCrowFlies on a server without The Raven's Call stays silent.
 
 ---
 
-## ⚙️ Configuration
+![COMPATIBILITY](https://img.shields.io/badge/COMPATIBILITY-PLAYS_WELL_WITH_OTHERS-2e5e3a?style=for-the-badge&labelColor=1b1b1b)
 
-Configuration is located at `BepInEx/config/com.raveniron.theravenscall.cfg`:
-
-| Section | Setting | Default | Description |
-| :--- | :--- | :--- | :--- |
-| **Combat** | `AcceptClientReports` | `true` | Accepts telemetry RPC reports from *WhereTheCrowFlies* client mods. Set to `false` it also disables the player's `/title` picker (the admin's `ravenscall title` still works). |
-| **Combat** | `LogCombatReports` | `false` | Enables verbose console logging for incoming combat reports. |
-| **Events** | `EnablePlayerDeath` ... `EnableTitleEarned` | `true` | Independently toggles narration/Chronicle for each event type. |
-| **Events** | `EnableRaid` | `true` | Records raid start and end in the Chronicle and the dashboard feed (`raid_start`/`raid_end`). Not posted to Discord. The raid banner and `raid_active` in the API work either way — this only gates the narration. |
-| **Format** | `ShowDayNumber` / `ShowOnlineCount` | `true` | Appends `[Day N]` and `(N online)` to each event's line in the server log (Discord and the Chronicle get the plain message; the Chronicle and `/api/activity` rows carry the day and the count as their own `day` and `online_count` fields, however these two are set). The count is the connected players: since 1.7.1 a leave line no longer counts the player who just left, a player whose game crashed still counts until the server drops the dead connection (up to 30 s, or up to 90 s on a crossplay server), and the part is left off when nobody is online. |
-| **Format** | `MessagePrefix` | `⚔ ` | Prefix on each event's line in the server log (Discord and the Chronicle get the message without it). |
-| **Log** | `EnableChronicleLog` | `true` | Writes daily JSONL Chronicle logs. |
-| **Bosses** | `BossCreditRadius` | `100` | Proximity radius (meters) for crediting boss assists. |
-| **Discord** | `WebhookUrl` | `""` | Discord webhook URL for event embeds. |
-| **Narrative**| `EnableNarrativeMode` | `true` | Uses dynamic Norse flavor-text templates. |
-| **Companion**| `EnableHttpServer` | `true` | Runs the web dashboard and local HTTP API. |
-| **Companion**| `HttpServerPort` | `2112` | Port for web dashboard and API access. |
-| **Companion**| `HttpBindAllInterfaces` | `false` | Also listen on every interface. Off by default since 1.2.4; the API has no login. |
-| **Companion**| `HttpApiToken` | `""` | If set, `/api/state`, `/api/gamedata`, `/api/activity`, `/api/census` and `/api/pins` require `?token=` or `X-Api-Token`. |
-| **Companion**| `StatsPushIntervalSeconds` | `10` | Frequency (seconds) for updating `BarrkBOT_data1.json` / `BarrkBOT_data2.json`. |
-| **Companion**| `EventFeedCapacity` | `200` | Number of recent events kept in memory and served by `/api/activity`, newest first (0 to 1000). Saved to `event_feed.json` so the feed survives a restart. `0` turns the feed off; the endpoint still answers, with an empty `events` array. |
-| **Census** | `CensusIntervalMinutes` | `5` | How often (minutes) the server counts portals, beds, wards, ships, carts, chests and crafting stations standing in the world and rebuilds `/api/census`. `0` turns the census off; the endpoint still answers, with `enabled: false`. |
-| **Push** | `PushUrl` | `""` | Since 1.6.0. The hosted receiver's base URL to push to (e.g. `https://trc.ravenirongames.com`). Empty (the default) disables the push entirely — the server behaves exactly like 1.5.0. See [Hosted Servers](#-hosted-servers-nitrado-g-portal). |
-| **Push** | `PushToken` | `""` | Since 1.6.0. Bearer token sent with every push, checked against the receiver's registry. |
-| **Push** | `PushServerId` | `""` | Since 1.6.0. This server's id in the receiver's registry. No default — required to push, and must match `[a-z0-9-]{1,32}` and the id registered in `TRC_SERVERS`. |
-| **Push** | `PushIntervalSeconds` | `60` | Since 1.6.0. How often (seconds) to push, clamped 15..3600. The effective cadence rounds up to the next multiple of `StatsPushIntervalSeconds`. |
-| **Push** | `PushHeartbeatMinutes` | `10` | Since 1.6.0. How often (minutes) to push all three envelopes even when nothing changed, clamped 1..1440. |
+| Mod or place | |
+|---|---|
+| **[WhereTheCrowFlies](https://valheim.thunderstore.io/package/RavenIron/WhereTheCrowFlies)** | The companion: it carries each player's combat and stats to the server. |
+| **BarrkBOT and other Discord bots** | Read the export files, or `/api/state` over HTTP. |
+| **Nitrado · G-Portal and other rented hosts** | Use the hosted push; the local dashboard port cannot be opened there. Not yet run on a rented host. |
+| **Linux dedicated servers** | Has run on one, the hosted push over HTTPS included. |
+| **Listen servers (hosting from the game)** | Loads, but not tested. |
 
 ---
 
-## 📁 Where Everything Lives
+![SETTINGS](https://img.shields.io/badge/SETTINGS-BEPINEX_CONFIG-b8860b?style=for-the-badge&labelColor=1b1b1b)
 
-```
-BepInEx/config/TheRavensCall/
-├── BarrkBOT_data1.json         ← Aggregate player export for Discord bots
-├── BarrkBOT_data2.json         ← Static game data export (items, recipes, buildables)
-├── event_feed.json             ← Since 1.4.0: recent events backing /api/activity, so the
-│                                   dashboard feed survives a restart
-├── season_baseline.json        ← Since 1.4.0: each player's counters at season start, so
-│                                   season standings can be reported as deltas; present only
-│                                   while a season is active
-├── players/                    ← Persistent JSON record per player
-├── player_ids.json             ← Since 1.5.0: known player profile IDs mapped to names, used
-│                                   to name a piece's builder in the world census
-├── Chronicle/
-│   └── TheRavensCall_Chronicle_2026-08-17.log
-├── theravenscall.html          ← OPTIONAL: only needed to override the dashboard page,
-│                                   which has shipped embedded inside TheRavensCall.dll since 1.3.0;
-│                                   a copy from before 1.3.0 shadows the bundled page - delete it
-├── lore.txt                    ← Lore broadcast repository
-└── seasons.json                ← Active and historical season metadata
-```
+All in `BepInEx/config/com.raveniron.theravenscall.cfg` on the server, and all safe to leave alone.
 
----
+<details>
+<summary>🔒 <b>On the server</b> — the server's own file decides</summary>
 
-## 📦 Installation & Dependencies
+| Section | Setting | What it does |
+|---|---|---|
+| Events | `EnablePlayerDeath` · `EnableBossKill` · `EnablePlayerJoin` · `EnablePlayerLeave` · `EnableBiomeDiscovery` · `EnableKillMilestone` · `EnableDeathMilestone` · `EnableGearTier` · `EnableTitleEarned` | switch each kind of event's narration on or off |
+| Events | `EnableRaid` | record raid starts and ends in the Chronicle and the feed (the raid banner works either way) |
+| Format | `ShowDayNumber` · `ShowOnlineCount` · `MessagePrefix` | the day, the online count and a prefix on each server log line |
+| Log | `EnableChronicleLog` · `LogServerStartStop` | write the daily Chronicle; record the server's start and stop |
+| Bosses | `BossCreditRadius` | how near a boss's death, in metres, a player must be to share the kill |
+| Discord | `WebhookUrl` | where to post the news; empty posts nothing |
+| Narrative | `EnableNarrativeMode` | the Norse flavour templates, or plain lines |
+| Seasons | `AppendSeasonNameToMessages` | the season's name in front of each server log line |
+| WorldEvents | `Eikthyr` · `TheElder` · `Bonemass` · `Moder` · `Yagluth` · `TheQueen` · `Fader` | your own message after each boss falls; empty for none |
+| Lore | `LoreBroadcastIntervalMinutes` | recite a random `lore.txt` line this often; 0 is off |
+| Companion | `EnableHttpServer` · `HttpServerPort` | the dashboard and API, and their port |
+| Companion | `HttpBindAllInterfaces` · `HttpApiToken` | answer other machines too; the token the API asks for |
+| Companion | `StatsPushIntervalSeconds` | how often the records and the bot export refresh |
+| Companion | `EventFeedCapacity` | how many recent events the feed keeps; 0 turns it off |
+| Census | `CensusIntervalMinutes` | how often the census runs; 0 turns it off |
+| Push | `PushUrl` · `PushToken` · `PushServerId` · `PushIntervalSeconds` · `PushHeartbeatMinutes` | the hosted dashboard: where, as whom, how often |
+| Combat | `AcceptClientReports` | take reports from WhereTheCrowFlies (off also turns off the player's `/title`) |
+| Combat | `LogCombatReports` | log every report, for checking a rollout |
 
-### Server Setup (Admins)
-1. Install [BepInExPack Valheim](https://valheim.thunderstore.io/package/denikson/BepInExPack_Valheim/) on your dedicated server.
-2. Place `TheRavensCall.dll` into `BepInEx/plugins/`.
-3. Launch server to generate configuration files.
+</details>
 
-### Client Setup (Players)
-1. Players install [WhereTheCrowFlies](https://valheim.thunderstore.io/package/RavenIron/WhereTheCrowFlies) on their Valheim game clients.
-2. Combat, deaths, boss encounters, and stats will automatically transmit to The Raven's Call.
+🖥️ **Nothing to set on a player's game:** The Raven's Call runs on the server only. WhereTheCrowFlies has its own settings.
 
 ---
 
-## ❓ FAQ
+![CREDITS](https://img.shields.io/badge/CREDITS-THANK_YOU-1b1b1b?style=for-the-badge&labelColor=c9a227)
 
-**Do players have to install anything?**
-No. The server mod works on its own. But a dedicated server never sees combat: kills, deaths, damage, fish and the ~205 vanilla stats reach the server only from [WhereTheCrowFlies](https://valheim.thunderstore.io/package/RavenIron/WhereTheCrowFlies) on a player's client. Without it a player still shows up with joins, leaves, biome discoveries and playtime, and the world census still credits them with the structures they have standing; but their kills, deaths, and their build, craft and harvest counters stay at zero.
+**Needs:** [BepInExPack Valheim](https://valheim.thunderstore.io/package/denikson/BepInExPack_Valheim/) `5.4.2360` on the server · **Companion:** [WhereTheCrowFlies](https://valheim.thunderstore.io/package/RavenIron/WhereTheCrowFlies) on each player · **Source:** [GitHub](https://github.com/RavenIron-Games/TheRavensCall)
 
-**Why are a player's kills and deaths zero, or far too low?**
-See above: that player is not running WhereTheCrowFlies. Once they install it, their vanilla stats arrive as an absolute snapshot, so everything they earned before the mod existed is backfilled rather than starting from zero.
+*The Raven's Call is a RavenIron mod.* Every Raven Iron mod is free, and stays free: all of it, always. Nothing is held back for patrons, and nothing ever will be. If you'd like to help cover server hosting and test hardware:
 
-**Where is the dashboard?**
-`http://localhost:2112` on the server machine. Since 1.2.4 the server listens on localhost only. To open it from another PC set `HttpBindAllInterfaces = true` together with `HttpApiToken`, and keep the port behind a firewall: the API has no login of its own and hands every known player's stats, skills, titles and death coordinates to anyone who can reach it.
-
-**The dashboard says "Needs the API token (Settings)." What do I enter?**
-The `HttpApiToken` value from `com.raveniron.theravenscall.cfg`, once, in the page's Settings panel (the gear icon, top right). It is kept in that browser only. `/api/health` and the page itself never need it.
-
-**My server is on Nitrado or G-Portal and I cannot open port 2112. Can I still get the dashboard?**
-Yes, since 1.6.0: the mod pushes its data out over HTTPS to a small receiver site, and the same dashboard page is served from there. It needs nothing but outbound HTTPS, the same path out of the host the Discord webhook already uses — though it has not yet been run on a rented host. Raven Iron Games' own receiver is not open to other servers, so deploy your own private copy of `hosting/netlify/` from the [GitHub repo](https://github.com/RavenIron-Games/TheRavensCall); its README has the steps. See [Hosted Servers](#-hosted-servers-nitrado-g-portal).
-
-**Does pushing make my server's data public?**
-Only to whoever holds that server's read token, and only for that server. They see everything the three pushed routes serve: every known player's stats, skills, titles and death coordinates, the event feed and season standings, and the census with the position of every portal, bed and ward. With `PushUrl` empty, the default, nothing leaves the box.
-
-**The push is set up but the hosted page shows nothing.**
-Read the BepInEx log. A working push logs one `Push enabled: server_id='…'` line at boot and then stays quiet. A `Push disabled:` line names the config key that is missing or malformed; a `Push rejected:` line names one of the four receiver refusals listed under [When the push is refused](#when-the-push-is-refused); a `Push failed:` line means the receiver could not be reached, and the mod keeps retrying on its own. Until the first push lands the hosted page reads "Registered, waiting for <id> to report"; "server silent since …" means no push has arrived for three heartbeats.
-
-**How do I start or end a season?**
-From an admin's game client that has WhereTheCrowFlies installed, in the console (F5): `ravenscall season start Autumn`, later `ravenscall season end`. The server checks its admin list before running it. Leave the name off and the season is named `Season_` plus today's date; the name becomes the Chronicle's season folder, so trailing periods and spaces are trimmed and it is capped at 64 characters. End the running season first: since 1.6.1 `season start` refuses while a season is running and names it (before 1.6.1 it replaced the running season in place: the console still answered "Season started", but the old season got no summary and no season-end line). See [Seasons & Titles](#-seasons--titles).
-
-**Does the world census slow the server down?**
-It walks the loaded world's objects on the main thread, on a timer, every 5 minutes by default; a real server with about 1.1 million objects finishes in under half a second, so it costs one short hitch every five minutes. `CensusIntervalMinutes = 0` turns it off, and `/api/census` then answers with `enabled: false`.
-
-**What are `BarrkBOT_data1.json` and `BarrkBOT_data2.json`? Can I delete them?**
-The exports a Discord bot reads: all players in one file, the game's items, recipes and buildables in the other. `BarrkBOT_data1.json` is rewritten every `StatsPushIntervalSeconds` (10 s by default), so deleting it does no harm — it is back on the next tick. `BarrkBOT_data2.json` is written once per server boot, so deleting it leaves `/api/gamedata` serving empty arrays until the next restart. Renaming them does: a bot finds them by name. See [BarrkBOT & Discord AI Bot Integration](#-barrkbot--discord-ai-bot-integration).
-
-**Do I need a Discord webhook?**
-No. With `WebhookUrl` empty nothing is posted to Discord and everything else, the Chronicle, the dashboard and the exports, works unchanged.
-
-**I upgraded from 1.2.x and the dashboard is broken, or the log warns about `theravenscall.html`.**
-Delete any `theravenscall.html` you placed in `BepInEx/config/TheRavensCall/` or next to the DLL. The page has shipped inside the DLL since 1.3.0; an older loose copy still overrides it and cannot read the current API.
-
-**Does it run on a Linux server?**
-Yes. 1.6.0 has run on a Linux dedicated server on Valheim 1.0.15 (under WSL2), including the push over HTTPS with certificate validation on.
-
-**Which Valheim version does it need?**
-Valheim 1.0. The 1.6.0 build and later have run on 1.0.15, on a Windows dedicated server and a Linux one. The older 0.22x builds are not supported: on them the `ravenscall` console command fails to register at load, and the world census throws on its first run.
-
-**Can I run it on a listen server hosted from the game?**
-It is built and tested for dedicated servers. It loads on a listen-server host, but that setup has not been tested.
-
-**How do I take a server off a hosted dashboard?**
-Send `DELETE /s/<id>/api` to the receiver with the write token in the `Authorization: Bearer` header; the stored copy is removed and the page reads "no data" again. Then remove the id from the receiver's registry and redeploy, so the tokens are dead too. Clearing `PushUrl` on the server stops new pushes at the next restart.
-
-**Why does the dashboard show no health, inventory or position for a player who is online right now?**
-Because a dedicated server never has them: it relays the world, while a player's health, inventory and position live on that player's own client. The dashboard shows each player's stored record instead: totals, titles, skills, milestones, the death history and everything WhereTheCrowFlies reported. The only positions it keeps are where players died.
-
-**Can I turn the web dashboard off and keep only the file exports?**
-Yes: `EnableHttpServer = false`. The BarrkBOT exports, the Chronicle, the Discord webhook and, since 1.6.0, the push all keep running without it.
-
-**Where does the mod keep its data, and what do I copy when I move or rebuild the server?**
-Everything lives under `BepInEx/config/TheRavensCall/` (the per-player records in `players/`, the Chronicle, `seasons.json`, `season_baseline.json`, `event_feed.json`, `player_ids.json`, `lore.txt`) plus the settings file `BepInEx/config/com.raveniron.theravenscall.cfg`. Copy that folder and that file. The two BarrkBOT files are rebuilt after a boot, and the dashboard page ships inside the DLL. See [Where Everything Lives](#-where-everything-lives).
-
----
-## 💜 Support Raven Iron
-
-Every Raven Iron mod is free, and stays free — all of it, always. Nothing is held
-back for patrons, and nothing ever will be.
-
-If you'd like to help cover server hosting and test hardware:
-
-- **Website** — <https://ravenirongames.com/>
-- **Patreon** — <https://www.patreon.com/cw/RavenIronGames>
-- **Discord** — <https://discord.gg/AGKDEurAVa> — a channel per mod, and where the
-  testing happens
+- **Website**: <https://ravenirongames.com/>
+- **Patreon**: <https://www.patreon.com/cw/RavenIronGames>
+- **Discord**: <https://discord.gg/AGKDEurAVa>, a channel per mod, and where the testing happens
