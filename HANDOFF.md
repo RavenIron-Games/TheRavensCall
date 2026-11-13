@@ -23,7 +23,7 @@ Root cause and fix are `KILL_TRACKING_FINDINGS.md` and `IMPLEMENTATION_HANDOFF.m
 folder) — short version: those methods are owner-side simulation, the dedicated server owns no
 zone with a player in it, so the patches were correct code wired to methods that never execute
 here. v1.1.0 adds a server-side RPC receiver (`RavensCall_CombatReport_V1`, in this repo) fed by
-a new sibling client mod, **WhereTheCrowFlies** (`/home/rohan/WubarrkCODING/WhereTheCrowFlies`,
+a new sibling client mod, **WhereTheCrowFlies** (`/home/rohan/WubarrkCODING/ValheimMods/WhereTheCrowFlies`,
 separate repo, separate BepInEx plugin) — TheRavensCall itself is still server-only, per the
 "twice-settled" rule below; see that project's own handoff for its half.
 
@@ -155,7 +155,7 @@ Implemented `IMPLEMENTATION_HANDOFF.md`'s Work item A (this repo) in full, plus 
 that doc originally suggested — the owner's call, made explicitly when asked whether to keep the
 server/client split or collapse TheRavensCall into a client+server mod (kept the split; see
 `[[project-ravenscall-server-side]]`). The new mod is **WhereTheCrowFlies**
-(`/home/rohan/WubarrkCODING/WhereTheCrowFlies`), a small RavenIron-branded client mod whose only
+(`/home/rohan/WubarrkCODING/ValheimMods/WhereTheCrowFlies`), a small RavenIron-branded client mod whose only
 job is reporting combat back to this one — see its own `HANDOFF.md` for details; not duplicated
 here.
 
@@ -308,10 +308,10 @@ requested and would need their own retention/size decision if wanted later.
 
 - **Build was broken for anyone else pulling this repo.** `TheRavensCall.csproj`'s `Reference`
   HintPaths were all `..\libs-Tools\...`, correct only when this project sat directly under
-  `WubarrkCODING/`. It now lives under `WubarrkCODING/PAUSED/TheRavensCall/`, so every Valheim/
+  `WubarrkCODING/`. It now lives under `WubarrkCODING/ValheimMods/PAUSED/TheRavensCall-OLD-1.2.1/`, so every Valheim/
   Unity/BepInEx type reference (`Player`, `Character`, `ZPackage`, `Vector3`, `HarmonyPatch`, etc.)
   failed to resolve — 131 compile errors. Fixed by repointing every HintPath to `..\..\libs-Tools\`.
-  Confirmed `libs-Tools` itself is untouched at `/home/rohan/WubarrkCODING/libs-Tools/` — only this
+  Confirmed `libs-Tools` itself is untouched at `/home/rohan/WubarrkCODING/ValheimMods/libs-Tools/` — only this
   project's own location moved.
 - **Leftover "SteveCompanion" startup branding.** `Companion.NAME`/`Companion.VERSION` were still
   the original SteveCompanionMod's own constants (`"SteveCompanion"`, `"0.2.3"`), logged verbatim

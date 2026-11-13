@@ -83,7 +83,7 @@ hiding.
 ## Fatty's feast export (added 22 Aug 2026, Fatty 1.1.11)
 
 A second mod now writes into this contract. It lives in a different config
-directory and is owned by a different repo (`/home/rohan/WubarrkCODING/Fatty`),
+directory and is owned by a different repo (`/home/rohan/WubarrkCODING/ValheimMods/Fatty`),
 but the same rules apply to it.
 
 | Path | Written by | BarrkBOT reads it as |
